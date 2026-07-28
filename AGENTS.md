@@ -181,6 +181,10 @@ Each returns its data (and also downloads a file when passed `{ download: true }
 Work is saved to `localStorage` automatically. Writes are **coalesced** — a burst of painting
 becomes one write a few hundred ms later, and a pending write is also flushed when the tab closes.
 
+On a first visit the editor seeds itself from `/examples.json` — an `examples` package holding the
+`frog16` and `frog32` jumping frogs, so the page opens on something rather than an empty grid. They
+are ordinary editable data; `reset()` clears them for good.
+
 - `flush()` — persist immediately. Call this before reloading the page, otherwise the last moment of
   work may still be queued.
 

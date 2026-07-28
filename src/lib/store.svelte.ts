@@ -146,6 +146,16 @@ class Editor {
 	load() {
 		this.packages = storage.load();
 	}
+
+	/** First visit only: drop the shipped examples in and select one, so the editor opens on a sprite. */
+	async seed() {
+		const packages = await storage.examples();
+		const set = packages[0]?.sets[0];
+		if (!set || this.packages.length) return;
+		this.packages = packages;
+		this.sel = { pkg: packages[0].name, set: set.name, sprite: set.sprites[0]?.name ?? '' };
+		this.save();
+	}
 }
 
 export const editor = new Editor();

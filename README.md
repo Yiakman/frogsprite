@@ -1,4 +1,4 @@
-# 🐸 frogsprite
+# <img src="frog-jump.svg" alt="" width="28" height="28" align="top"> frogsprite
 
 A pixel-sprite editor whose entire feature set is reachable from JavaScript, so an LLM agent can
 draw, animate and export sprites without ever touching the UI.
@@ -24,6 +24,10 @@ npm run dev
 ```
 
 Requires Node 23.6+ (the test runner uses native TypeScript type stripping).
+
+A first visit seeds itself from `public/examples.json` — the `frog16` and `frog32` jumping frogs, so
+the editor opens on real sprites instead of an empty grid. They are ordinary editable data, and the
+file is fetched rather than bundled, so it costs nothing on later visits.
 
 | script | |
 | --- | --- |
@@ -84,8 +88,8 @@ centred subjects, and smooth gradients will band visibly.
 ## Deploying
 
 **Static files only.** No backend, no API keys, no database, no server-side rendering. The build is
-six files totalling ~112 KB (28 KB gzipped JS), there is no router so no SPA-fallback rewrites are
-needed, and after page load the app makes no network requests at all.
+seven files totalling ~148 KB (29 KB gzipped JS), there is no router so no SPA-fallback rewrites are
+needed, and after the first visit fetches `examples.json` the app makes no network requests at all.
 
 Verified end to end against `python3 -m http.server`: drawing, animation, image import and all five
 export formats work with nothing but a static file server.
@@ -107,6 +111,8 @@ sharing between devices. That is the one feature that would genuinely require a 
 | `src/lib/grid.ts` | valid grid sizes and the reflect transform |
 | `src/lib/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
 | `src/lib/logic.test.ts` | `npm test` — self-checks for the DOM-free logic |
+| `public/examples.json` | the `frog16` / `frog32` sets seeded on a first visit |
+| `public/icon.svg` | the project icon — favicon, sidebar, README |
 
 ## Implementation notes
 

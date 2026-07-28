@@ -1,6 +1,28 @@
 <script lang="ts">
 	import { frogsprite as fs } from './commands';
 	import { editor, GRIDS, type GridSize } from './store.svelte';
+	// the same animation the README shows
+	import jumpSvg from '../../frog-jump.svg?raw';
+
+	const HOP_EVERY = 10_000;
+	const HOP_MS = 1330; // one loop of frog-jump.svg
+
+	/** blob: URL of the animation while the frog is hopping, otherwise null */
+	let hop = $state<string | null>(null);
+
+	// A fresh URL every hop: Chrome keeps one animation timeline per URL and lets it run in the
+	// background, so reusing the same src drops the frog in mid-jump instead of starting it sitting.
+	$effect(() => {
+		const id = setInterval(() => {
+			const url = URL.createObjectURL(new Blob([jumpSvg], { type: 'image/svg+xml' }));
+			hop = url;
+			setTimeout(() => {
+				hop = null;
+				URL.revokeObjectURL(url);
+			}, HOP_MS);
+		}, HOP_EVERY);
+		return () => clearInterval(id);
+	});
 
 	// ponytail: prompt() is the whole "new item" dialog. Swap for a real form if it ever needs validation UX.
 	const ask = (label: string, fn: (v: string) => void) => {
@@ -16,7 +38,7 @@
 </script>
 
 <aside>
-	<h1>🐸 frogsprite</h1>
+	<h1><img src={hop ?? '/icon.svg'} alt="" width="16" height="16" /> frogsprite</h1>
 
 	<section>
 		<header>
@@ -92,6 +114,10 @@
 	h1 {
 		font-size: 1rem;
 		margin: 0;
+	}
+	h1 img {
+		vertical-align: -2px;
+		image-rendering: pixelated;
 	}
 	header {
 		display: flex;
