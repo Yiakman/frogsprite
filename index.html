@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>frogsprite</title>
+    <meta
+      name="description"
+      content="Pixel-sprite editor driveable from JavaScript. Agents: see /AGENTS.md and the window.frogsprite API."
+    />
+  </head>
+  <body>
+    <!--
+      ── FOR AI AGENTS ────────────────────────────────────────────────────────
+      This editor is designed to be driven by you, not just clicked by a human.
+      Every feature is a JavaScript call on the global `window.frogsprite`.
+
+        frogsprite.help()        command list and a quick start, right in the page
+        /AGENTS.md               full reference: grids, palette, painting,
+                                 animation, image import, SVG/PNG/ICO/ZIP export
+        /llms.txt                short summary of the above
+
+      Nothing is saved to a server; work lives in localStorage for this origin.
+      ─────────────────────────────────────────────────────────────────────────
+    -->
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

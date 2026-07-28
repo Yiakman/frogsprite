@@ -1,0 +1,21 @@
+:root {
+	font-family: ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
+	font-size: 15px;
+	color-scheme: dark;
+	background: #161616;
+	color: #ddd;
+	-webkit-font-smoothing: antialiased;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+}
+
+code {
+	font-family: ui-monospace, Consolas, monospace;
+	font-size: 0.85em;
+}
