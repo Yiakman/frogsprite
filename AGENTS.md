@@ -185,6 +185,8 @@ On a first visit the editor seeds itself from `/examples.json` — an `examples`
 `frog16` and `frog32` jumping frogs, so the page opens on something rather than an empty grid. They
 are ordinary editable data; `reset()` clears them for good.
 
+The selection is not persisted: every load selects the first sprite of the first set, whatever it is. Call `select(pkg, set, sprite)` rather than assuming the page came back where you left it.
+
 - `flush()` — persist immediately. Call this before reloading the page, otherwise the last moment of
   work may still be queued.
 
