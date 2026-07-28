@@ -41,6 +41,61 @@ const SIG_CENTRAL = 0x02014b50;
 const SIG_EOCD = 0x06054b50;
 const UTF8_NAMES = 0x800; // general-purpose flag bit 11
 
+async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
+	const stream = new Blob([data as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+	return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/**
+ * Pull a single entry out of an archive by name, or null if it isn't there. Reads what this module
+ * writes — stored and deflated entries, no encryption, no zip64 — which covers every real .zip
+ * small enough to matter here. The central directory is the authority, as the format intends.
+ */
+export async function unzip(source: Blob | Uint8Array, name: string): Promise<Uint8Array | null> {
+	const bytes = source instanceof Blob ? new Uint8Array(await source.arrayBuffer()) : source;
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+	// The EOCD sits last, behind a comment of up to 64 KB, so it has to be searched for backwards.
+	let eocd = -1;
+	for (let i = bytes.length - 22; i >= 0 && i > bytes.length - 22 - 0xffff; i--)
+		if (view.getUint32(i, true) === SIG_EOCD) {
+			eocd = i;
+			break;
+		}
+	if (eocd < 0) throw new Error('not a zip archive (no end-of-central-directory record)');
+
+	const decoder = new TextDecoder();
+	let p = view.getUint32(eocd + 16, true);
+	for (let i = view.getUint16(eocd + 10, true); i > 0; i--) {
+		if (view.getUint32(p, true) !== SIG_CENTRAL) throw new Error('damaged zip central directory');
+		const nameLen = view.getUint16(p + 28, true);
+		if (decoder.decode(bytes.subarray(p + 46, p + 46 + nameLen)) !== name) {
+			p += 46 + nameLen + view.getUint16(p + 30, true) + view.getUint16(p + 32, true);
+			continue;
+		}
+		const method = view.getUint16(p + 10, true);
+		const crc = view.getUint32(p + 16, true);
+		const size = view.getUint32(p + 20, true);
+		const local = view.getUint32(p + 42, true);
+		if (view.getUint32(local, true) !== SIG_LOCAL) throw new Error(`damaged header for "${name}"`);
+		// the local header's own name and extra fields are allowed to differ in length from the central one
+		const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+		const stream = bytes.subarray(start, start + size);
+		if (method !== 0 && method !== 8)
+			throw new Error(`"${name}" uses unsupported zip compression method ${method}`);
+		// a corrupt deflate stream throws its own cryptic error, so it never reaches the crc check
+		const data =
+			method === 0
+				? stream
+				: await inflateRaw(stream).catch(() => {
+						throw new Error(`"${name}" is damaged — its compressed data would not decode`);
+					});
+		if (crc32(data) !== crc) throw new Error(`"${name}" failed its checksum — the archive is damaged`);
+		return data;
+	}
+	return null;
+}
+
 export async function zip(entries: ZipEntry[], now = new Date()): Promise<Blob> {
 	const [time, date] = dosStamp(now);
 	const encoder = new TextEncoder();

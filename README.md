@@ -73,6 +73,13 @@ short `/llms.txt` summary) so an agent that lands on a deployed instance can fin
 | `export_animated_svg` | the whole animation as one self-contained looping SVG |
 | `export_png` | one sprite at any scale |
 | `export_ico` | multi-size icon |
+| `export_json` | the set's raw pixel data on its own — no pictures, no archive |
+| `export_project` | every package, in the shape the editor persists |
+
+`import_set()` takes back an `export_json` payload **or a whole export ZIP** (it reads `set.json`
+out of it), and `import_project()` takes back a project. Both accept an object, JSON text or a
+dropped file, and both run the same validator that guards `localStorage`. That is the answer to
+work being stuck in one browser: save the JSON, open it somewhere else.
 
 ## Importing an image
 
@@ -88,7 +95,7 @@ centred subjects, and smooth gradients will band visibly.
 ## Deploying
 
 **Static files only.** No backend, no API keys, no database, no server-side rendering. The build is
-seven files totalling ~148 KB (29 KB gzipped JS), there is no router so no SPA-fallback rewrites are
+seven files totalling ~156 KB (30 KB gzipped JS), there is no router so no SPA-fallback rewrites are
 needed, and after the first visit fetches `examples.json` the app makes no network requests at all.
 
 Verified end to end against `python3 -m http.server`: drawing, animation, image import and all five
@@ -121,7 +128,9 @@ sharing between devices. That is the one feature that would genuinely require a 
 
 - **ZIP** — `CompressionStream('deflate-raw')` emits exactly the raw deflate stream that ZIP method
   8 expects, so the writer is ~100 lines (CRC-32, headers, central directory) with no JSZip.
-  Entries that don't shrink fall back to stored. Validated against the real `unzip` binary.
+  Entries that don't shrink fall back to stored. Validated against the real `unzip` binary. Reading
+  is the same trick in reverse — walk the central directory, `DecompressionStream` the one entry
+  asked for, check its CRC.
 - **ICO** — a container around canvas-produced PNGs, which Windows has accepted since Vista.
 - **Image downscaling** — the browser handles the coarse reduction, then an explicit box average
   does the final step. Browser downscaling is not a defined box average and aliases badly at the

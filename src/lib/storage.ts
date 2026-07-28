@@ -45,7 +45,8 @@ function readSprite(v: any, cells: number): Sprite | null {
 	return { name: n, pixels };
 }
 
-function readSet(v: any): SpriteSet | null {
+/** Also the validator for an imported `set.json` — same trust boundary, same repairs. */
+export function readSet(v: any): SpriteSet | null {
 	const n = name(v?.name);
 	if (!n || !GRIDS.includes(v?.grid)) return null;
 	const grid = v.grid as GridSize;

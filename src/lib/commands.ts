@@ -3,8 +3,8 @@ import * as ex from './export.ts';
 import * as storage from './storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from './image.ts';
 import { reflect as reflectHalf, SIDES, type Side } from './grid.ts';
-import { zip, type ZipEntry } from './zip.ts';
-import { blank, editor, GRIDS, type Frame, type GridSize, type Sprite } from './store.svelte.ts';
+import { unzip, zip, type ZipEntry } from './zip.ts';
+import { blank, editor, GRIDS, type Frame, type GridSize, type Sprite, type SpriteSet } from './store.svelte.ts';
 
 type Color = number | string | null;
 
@@ -12,6 +12,49 @@ const taken = (list: { name: string }[], name: string, what: string) => {
 	if (!name || typeof name !== 'string') throw new Error(`${what} needs a name`);
 	if (list.some((x) => x.name === name)) throw new Error(`${what} "${name}" already exists`);
 };
+
+/** `base`, or `base-2`, `base-3`… — the first name nothing in `list` has taken. */
+function freeName(list: { name: string }[], base: string) {
+	let name = base;
+	for (let n = 2; list.some((x) => x.name === name); n++) name = `${base}-${n}`;
+	return name;
+}
+
+const safeFile = (s: string) => s.replace(/[^\w.-]+/g, '_') || 'unnamed';
+
+/** The interchange shape for one set: exactly what the ZIP carries as `set.json`. */
+const setPayload = (set: SpriteSet) => ({
+	name: set.name,
+	grid: set.grid,
+	sprites: set.sprites.map((s) => ({ name: s.name, pixels: [...s.pixels] })),
+	frames: set.frames.map((f) => ({ ...f }))
+});
+
+const downloadJSON = (data: unknown, filename: string) =>
+	ex.downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), filename);
+
+/**
+ * Whatever an agent or a file drop can hand us — a plain object, JSON text, a `.json` file, or a
+ * whole export `.zip` (its `set.json` is what matters) — resolved to the object inside.
+ */
+export async function readInterchange(input: unknown): Promise<any> {
+	let text: unknown = input;
+	if (input instanceof Blob) {
+		const bytes = new Uint8Array(await input.arrayBuffer());
+		const zipped = bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
+		const json = zipped ? await unzip(bytes, 'set.json') : bytes;
+		if (!json) throw new Error('that .zip has no set.json in it — is it a frogsprite export?');
+		text = new TextDecoder().decode(json);
+	}
+	if (typeof text !== 'string') return text; // already an object
+	try {
+		return JSON.parse(text);
+	} catch {
+		throw new Error('that is not JSON');
+	}
+}
+
+const isProject = (v: any) => !!v && typeof v === 'object' && 'packages' in v;
 
 function target(name?: string): { sprite: Sprite; grid: GridSize } {
 	const set = editor.requireSet();
@@ -248,24 +291,10 @@ const api = {
 		const set = editor.requireSet();
 		if (!set.sprites.length) throw new Error(`set "${set.name}" has no sprites to export`);
 		const text = new TextEncoder();
-		const safe = (s: string) => s.replace(/[^\w.-]+/g, '_') || 'unnamed';
+		const safe = safeFile;
 
 		const entries: ZipEntry[] = [
-			{
-				name: 'set.json',
-				data: text.encode(
-					JSON.stringify(
-						{
-							name: set.name,
-							grid: set.grid,
-							sprites: set.sprites.map((s) => ({ name: s.name, pixels: [...s.pixels] })),
-							frames: set.frames.map((f) => ({ ...f }))
-						},
-						null,
-						2
-					)
-				)
-			}
+			{ name: 'set.json', data: text.encode(JSON.stringify(setPayload(set), null, 2)) }
 		];
 		for (const sprite of set.sprites) {
 			entries.push({
@@ -299,6 +328,69 @@ const api = {
 		return out;
 	},
 
+	// ---- interchange -----------------------------------------------------
+	/**
+	 * The active set as plain JSON — the same payload the ZIP carries as `set.json`, without the
+	 * pictures. This is the cheap way to save pixels: no archive to unpack, no base64 to chew.
+	 * Feed it back to `import_set()` anywhere.
+	 */
+	export_json({ download = false } = {} as any) {
+		const set = editor.requireSet();
+		const data = setPayload(set);
+		if (download) downloadJSON(data, `${safeFile(set.name)}.json`);
+		return data;
+	},
+
+	/**
+	 * Everything, in the exact shape the editor persists. `localStorage` is per-origin and
+	 * per-browser; this is how work moves to another one.
+	 */
+	export_project({ download = false } = {} as any) {
+		const data = JSON.parse(storage.serialise(editor.packages));
+		if (download) downloadJSON(data, 'frogsprite-project.json');
+		return data;
+	},
+
+	/**
+	 * Add a set from an export: the `set.json` object, its text, a `.json` file, or the whole
+	 * `.zip`. It lands in the active package under a free name (`frog`, `frog-2`, …) and is
+	 * selected. **Async — always `await` it.**
+	 */
+	async import_set(data: unknown) {
+		const pkg = editor.requirePackage();
+		const raw = await readInterchange(data);
+		if (isProject(raw)) throw new Error('that is a whole project — use import_project() instead');
+		const set = storage.readSet(raw);
+		if (!set)
+			throw new Error('not a set: expected { name, grid, sprites: [{ name, pixels }] }');
+		set.name = freeName(pkg.sets, set.name);
+		editor.stop();
+		pkg.sets.push(set);
+		editor.sel = { ...editor.sel, set: set.name, sprite: set.sprites[0]?.name ?? '' };
+		return { set: set.name, grid: set.grid, sprites: set.sprites.length, frames: set.frames.length };
+	},
+
+	/**
+	 * Load a whole project from `export_project()`. Packages arrive alongside what is already
+	 * here, duplicate names suffixed; `{ replace: true }` throws the current work away first —
+	 * there is no undo, so it has to be asked for. **Async — always `await` it.**
+	 */
+	async import_project(data: unknown, { replace = false } = {}) {
+		const raw = await readInterchange(data);
+		// parse() is the same validator that reads localStorage, so imports get the same repairs
+		const incoming = storage.parse(JSON.stringify(raw));
+		if (!incoming.length)
+			throw new Error('no readable packages in that — expected { version, packages: [...] }');
+		editor.stop();
+		if (replace) editor.packages = [];
+		for (const p of incoming) {
+			p.name = freeName(editor.packages, p.name);
+			editor.packages.push(p);
+		}
+		editor.selectFirst(editor.packages.find((p) => p.name === incoming[0].name));
+		return { packages: incoming.map((p) => p.name), replaced: replace };
+	},
+
 	/** The whole set's animation as one self-contained looping SVG. */
 	export_animated_svg({ scale = 1, download = false } = {} as any) {
 		const set = editor.requireSet();
@@ -329,6 +421,7 @@ const api = {
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'reflect', 'shift', 'clear', 'import_image'],
 				animation: ['set_animation', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
+				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
 				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'help'],
 				storage: ['flush', 'reset']
 			},
@@ -409,15 +502,21 @@ export const frogsprite = Object.fromEntries(
 ) as typeof api;
 
 /**
- * UI entry point for the file picker, drag-and-drop and paste: import the first image in a
- * file list into a new sprite named after the file. Throws with a readable message.
+ * UI entry point for the file picker, drag-and-drop and paste. A `.json` or `.zip` is frogsprite's
+ * own data — a project or a single set, whichever it turns out to be; anything else is treated as
+ * an image and imported into a new sprite named after the file. Throws with a readable message.
  */
 export async function importFiles(files: Iterable<File> | null | undefined) {
-	const file = [...(files ?? [])].find((f) => f.type.startsWith('image/'));
-	if (!file) throw new Error('no image in that drop — expected a PNG, JPEG, GIF, WebP or SVG');
+	const list = [...(files ?? [])];
+	const data = list.find((f) => /\.(json|zip)$/i.test(f.name));
+	if (data) {
+		const raw = await readInterchange(data);
+		return isProject(raw) ? frogsprite.import_project(raw) : frogsprite.import_set(raw);
+	}
+	const file = list.find((f) => f.type.startsWith('image/'));
+	if (!file)
+		throw new Error('nothing importable in that — expected an image, or a .json / .zip export');
 	const set = editor.requireSet();
 	const base = (file.name.replace(/\.[^.]+$/, '').trim() || 'image').slice(0, 24);
-	let name = base;
-	for (let n = 2; set.sprites.some((s) => s.name === name); n++) name = `${base}-${n}`;
-	return frogsprite.import_image(file, { newSprite: name });
+	return frogsprite.import_image(file, { newSprite: freeName(set.sprites, base) });
 }
