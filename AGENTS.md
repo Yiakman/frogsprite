@@ -202,6 +202,26 @@ cannot. In the UI: **Project → Save all… / Load…**, or drop a `.json` / `.
 - `print_sprite(sprite?)` — the same as ASCII rows plus a legend; easiest to eyeball
 - `palette()` — all 256 colours
 
+#### Checking a sprite against a background
+
+`background(color?)` sets what shows through the **transparent** pixels on the canvas — the
+checkerboard by default. It paints nothing: pixels, exports and `print_sprite()` are untouched, and
+it is not saved with your work.
+
+```js
+frogsprite.background('#ff00ff');   // magenta — nothing in a sprite is meant to be magenta
+frogsprite.background('#ffffff');   // …then screenshot the canvas again
+frogsprite.background();            // back to the checkerboard
+```
+
+Reviewing on two or three backgrounds catches what one hides: a hole inside a filled shape, a
+stray pixel in the margin, an outline that vanishes against what the sprite will actually sit on.
+Colours snap to the palette like everywhere else, and `background()` returns the resolved one.
+
+**If you review by screenshot, read the background back before you judge the pixels.** Both
+`state().view.background` and the caption under the canvas name it, so a magenta field is never
+mistaken for something you painted. The UI has the same presets as swatches under the canvas.
+
 ### Storage
 
 Work is saved to `localStorage` automatically. Writes are **coalesced** — a burst of painting

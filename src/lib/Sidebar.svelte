@@ -10,8 +10,7 @@
 	/** blob: URL of the animation while the frog is hopping, otherwise null */
 	let hop = $state<string | null>(null);
 
-	// A fresh URL every hop: Chrome keeps one animation timeline per URL and lets it run in the
-	// background, so reusing the same src drops the frog in mid-jump instead of starting it sitting.
+	// a fresh URL every hop: one animation timeline per URL, and it keeps running while detached
 	$effect(() => {
 		const id = setInterval(() => {
 			const url = URL.createObjectURL(new Blob([jumpSvg], { type: 'image/svg+xml' }));
