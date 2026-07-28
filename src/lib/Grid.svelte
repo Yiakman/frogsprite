@@ -1,7 +1,13 @@
 <script lang="ts">
-	import { importFiles } from './commands';
+	import { frogsprite as fs, importFiles } from './commands';
 	import { PALETTE } from './palette';
 	import { editor } from './store.svelte';
+
+	// exact palette entries, so a swatch shows what the command will resolve to
+	const BACKDROPS = [null, '#ffffff', '#999999', '#000000', '#ff00ff'];
+	const SILHOUETTES = ['#000000', '#ffffff'];
+	const backdrop = $derived(editor.background ? PALETTE[editor.background] : null);
+	const silhouette = $derived(editor.silhouette ? PALETTE[editor.silhouette] : null);
 
 	let painting = $state(false);
 	let dropping = $state(false);
@@ -59,6 +65,7 @@
 			class:live
 			data-testid="grid"
 			style:--n={grid}
+			style:background={backdrop}
 			role="img"
 			aria-label="{grid} by {grid} pixel canvas showing {sprite.name}"
 			onpointerdown={(e) => {
@@ -77,7 +84,7 @@
 					class="px"
 					data-i={i}
 					aria-hidden="true"
-					style:background={p === 0 ? 'transparent' : PALETTE[p]}
+					style:background={p === 0 ? 'transparent' : (silhouette ?? PALETTE[p])}
 				></div>
 			{/each}
 		</div>
@@ -89,7 +96,37 @@
 					{editor.running ? '· playing' : '· paused, editable'}
 				</em>
 			{/if}
+			<!-- named, not just shown: a screenshot has to say what it was taken under -->
+			<span class="on" data-testid="backdrop"
+				>· on {backdrop ?? 'checkerboard'}{silhouette ? ` · silhouette ${silhouette}` : ''}</span
+			>
 		</p>
+		<div class="backdrops" role="group" aria-label="Review view — the sprite itself is unchanged">
+			{#each BACKDROPS as c (c ?? 'checker')}
+				<button
+					class="sw"
+					class:checker={!c}
+					class:sel={backdrop === c}
+					style:background={c}
+					aria-pressed={backdrop === c}
+					aria-label="{c ?? 'checkerboard'} background"
+					title="Show {c ?? 'the checkerboard'} through transparent pixels"
+					onclick={() => fs.background(c)}
+				></button>
+			{/each}
+			<span class="split" aria-hidden="true"></span>
+			{#each SILHOUETTES as c (c)}
+				<button
+					class="sw sil"
+					class:sel={silhouette === c}
+					style:background={c}
+					aria-pressed={silhouette === c}
+					aria-label="{c} silhouette"
+					title="Show every painted pixel as {c} — preview only, nothing is painted"
+					onclick={() => fs.silhouette(silhouette === c ? null : c)}
+				></button>
+			{/each}
+		</div>
 	{:else}
 		<p class="empty">No sprite selected. Create one in the sidebar, or run <code>frogsprite.new_package('demo')</code> in the console.</p>
 	{/if}
@@ -108,16 +145,23 @@
 		border-color: #7cf;
 		background: #7cf1;
 	}
+	.grid,
+	.sw.checker {
+		/* what shows through transparent pixels, until `background()` replaces it */
+		background-image: conic-gradient(
+			#2a2a2a 90deg,
+			#232323 90deg 180deg,
+			#2a2a2a 180deg 270deg,
+			#232323 270deg
+		);
+	}
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(var(--n), 1fr);
 		width: min(64vh, 100%);
 		aspect-ratio: 1;
 		border: 1px solid #444;
-		/* checkerboard shows through transparent pixels */
-		background:
-			conic-gradient(#2a2a2a 90deg, #232323 90deg 180deg, #2a2a2a 180deg 270deg, #232323 270deg)
-			0 0 / calc(200% / var(--n)) calc(200% / var(--n));
+		background-size: calc(200% / var(--n)) calc(200% / var(--n));
 		touch-action: none;
 	}
 	.px {
@@ -135,6 +179,38 @@
 	}
 	.caption em {
 		color: #7cf;
+	}
+	.caption .on {
+		color: #666;
+	}
+	.backdrops {
+		display: flex;
+		gap: 0.3rem;
+		margin-top: -0.35rem;
+	}
+	.sw {
+		width: 1.1rem;
+		height: 1.1rem;
+		padding: 0;
+		border: 1px solid #444;
+		border-radius: 3px;
+		cursor: pointer;
+	}
+	.sw.checker {
+		background-size: 50% 50%;
+	}
+	/* round = the sprite, square = what is behind it */
+	.sw.sil {
+		border-radius: 50%;
+	}
+	.split {
+		width: 1px;
+		background: #444;
+		margin: 0.1rem 0.15rem;
+	}
+	.sw.sel {
+		outline: 2px solid #7cf;
+		outline-offset: 1px;
 	}
 	.empty {
 		color: #888;

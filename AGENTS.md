@@ -202,6 +202,41 @@ cannot. In the UI: **Project → Save all… / Load…**, or drop a `.json` / `.
 - `print_sprite(sprite?)` — the same as ASCII rows plus a legend; easiest to eyeball
 - `palette()` — all 256 colours
 
+#### Reviewing what you drew
+
+Two view settings change how the canvas *looks* without touching a single pixel. Neither is saved
+with your work, and neither affects exports or `print_sprite()`.
+
+- `background(color?)` — what shows through the **transparent** pixels; `background()` restores the
+  checkerboard
+- `silhouette(color?)` — draws every **painted** pixel in one colour, so only the shape is left;
+  defaults to black, and `silhouette(null)` turns it off
+
+```js
+frogsprite.background('#ff00ff');   // magenta — nothing in a sprite is meant to be magenta
+frogsprite.silhouette('#ffffff');   // …and the shape alone, against it
+frogsprite.background();
+frogsprite.silhouette(null);
+```
+
+Each catches a different mistake. Backgrounds find holes inside a filled shape, stray pixels in the
+margin, and outlines that vanish against what the sprite will sit on. The silhouette finds the ones
+colour hides — a lumpy edge, a leg one pixel too short, a pose that doesn't read at all — which is
+also how you check that two animation frames differ where you meant them to. Pick a silhouette that
+contrasts with the background you're on; black on the default checkerboard is deliberately dim.
+
+**If you review by screenshot, read the view back before you judge the pixels.** Both
+`state().view` and the caption under the canvas name the background and the silhouette, so a
+magenta field or a black frog is never mistaken for something you painted.
+
+`silhouette(color, { permanent: true, sprite })` is the one exception: it **paints**, flattening
+every non-transparent pixel of one sprite (the active one by default) to that colour for good.
+There is no undo. It returns `{ sprite, painted, color, permanent }`; a `null` colour is refused,
+since that would erase the sprite rather than flatten it.
+
+The UI has all of this under the canvas: square swatches set the background, round ones toggle the
+silhouette.
+
 ### Storage
 
 Work is saved to `localStorage` automatically. Writes are **coalesced** — a burst of painting

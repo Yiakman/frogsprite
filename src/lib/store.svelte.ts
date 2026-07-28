@@ -1,4 +1,4 @@
-import { TRANSPARENT } from './palette.ts';
+import { PALETTE, TRANSPARENT } from './palette.ts';
 import * as storage from './storage.ts';
 
 import type { GridSize } from './grid.ts';
@@ -16,6 +16,10 @@ class Editor {
 	packages = $state<Package[]>([]);
 	sel = $state({ pkg: '', set: '', sprite: '' });
 	color = $state(1);
+	/** Canvas backdrop: a palette index, or 0 for the checkerboard. A view setting, not persisted. */
+	background = $state(0);
+	/** Show every painted pixel as this index instead of its own colour. 0 is off. Also a view setting. */
+	silhouette = $state(0);
 	/** index into the active set's frames, or -1 when not looking at the animation at all */
 	frame = $state(-1);
 	/** true only while the timer is advancing frames — paused still holds a frame */
@@ -127,6 +131,10 @@ class Editor {
 		return {
 			selection: { ...this.sel },
 			playback: { frame: this.frame, running: this.running, showing: this.shown?.name ?? null },
+			view: {
+				background: this.background ? PALETTE[this.background] : 'checkerboard',
+				silhouette: this.silhouette ? PALETTE[this.silhouette] : 'off'
+			},
 			packages: this.packages.map((p) => ({
 				name: p.name,
 				sets: p.sets.map((s) => ({
@@ -157,11 +165,7 @@ class Editor {
 		this.save();
 	}
 
-	/**
-	 * Open on the first sprite of a package (the first package by default). The selection itself
-	 * isn't persisted — reloading into "no sprite selected" with a full sidebar is just a worse
-	 * blank page — and an import wants to land on what it just brought in.
-	 */
+	/** Open on the first sprite of a package — the selection isn't persisted, so every load needs one. */
 	selectFirst(pkg = this.packages[0]) {
 		if (!pkg) return;
 		const set = pkg.sets[0];

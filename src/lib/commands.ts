@@ -1,4 +1,4 @@
-import { PALETTE, toIndex } from './palette.ts';
+import { PALETTE, toIndex, TRANSPARENT } from './palette.ts';
 import * as ex from './export.ts';
 import * as storage from './storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from './image.ts';
@@ -33,10 +33,7 @@ const setPayload = (set: SpriteSet) => ({
 const downloadJSON = (data: unknown, filename: string) =>
 	ex.downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), filename);
 
-/**
- * Whatever an agent or a file drop can hand us — a plain object, JSON text, a `.json` file, or a
- * whole export `.zip` (its `set.json` is what matters) — resolved to the object inside.
- */
+/** An object, JSON text, a `.json` file or an export `.zip`, resolved to the object inside. */
 export async function readInterchange(input: unknown): Promise<any> {
 	let text: unknown = input;
 	if (input instanceof Blob) {
@@ -329,11 +326,7 @@ const api = {
 	},
 
 	// ---- interchange -----------------------------------------------------
-	/**
-	 * The active set as plain JSON — the same payload the ZIP carries as `set.json`, without the
-	 * pictures. This is the cheap way to save pixels: no archive to unpack, no base64 to chew.
-	 * Feed it back to `import_set()` anywhere.
-	 */
+	/** The active set as plain JSON — the ZIP's `set.json`, without the pictures. */
 	export_json({ download = false } = {} as any) {
 		const set = editor.requireSet();
 		const data = setPayload(set);
@@ -341,21 +334,14 @@ const api = {
 		return data;
 	},
 
-	/**
-	 * Everything, in the exact shape the editor persists. `localStorage` is per-origin and
-	 * per-browser; this is how work moves to another one.
-	 */
+	/** Every package, in the exact shape the editor persists. */
 	export_project({ download = false } = {} as any) {
 		const data = JSON.parse(storage.serialise(editor.packages));
 		if (download) downloadJSON(data, 'frogsprite-project.json');
 		return data;
 	},
 
-	/**
-	 * Add a set from an export: the `set.json` object, its text, a `.json` file, or the whole
-	 * `.zip`. It lands in the active package under a free name (`frog`, `frog-2`, …) and is
-	 * selected. **Async — always `await` it.**
-	 */
+	/** Add a set from an export — object, text, `.json` file or whole `.zip`. Async. */
 	async import_set(data: unknown) {
 		const pkg = editor.requirePackage();
 		const raw = await readInterchange(data);
@@ -370,11 +356,7 @@ const api = {
 		return { set: set.name, grid: set.grid, sprites: set.sprites.length, frames: set.frames.length };
 	},
 
-	/**
-	 * Load a whole project from `export_project()`. Packages arrive alongside what is already
-	 * here, duplicate names suffixed; `{ replace: true }` throws the current work away first —
-	 * there is no undo, so it has to be asked for. **Async — always `await` it.**
-	 */
+	/** Load a project. Merges by default; `replace` wipes first, since there is no undo. Async. */
 	async import_project(data: unknown, { replace = false } = {}) {
 		const raw = await readInterchange(data);
 		// parse() is the same validator that reads localStorage, so imports get the same repairs
@@ -422,7 +404,7 @@ const api = {
 				animation: ['set_animation', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
-				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'help'],
+				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'background', 'silhouette', 'help'],
 				storage: ['flush', 'reset']
 			},
 			// derived, so this stays true even if the curated groups above fall behind
@@ -434,6 +416,31 @@ const api = {
 				'To import an image you have no file picker for, pass a data: URL.'
 			]
 		};
+	},
+
+	/** Canvas backdrop for reviewing a sprite; `background()` restores the checkerboard. Paints nothing. */
+	background(color: Color = null) {
+		editor.background = toIndex(color);
+		return { background: editor.background ? PALETTE[editor.background] : 'checkerboard' };
+	},
+
+	/** Every painted pixel as one colour. Preview only unless `permanent`; `silhouette(null)` is off. */
+	silhouette(color: Color = '#000000', { permanent = false, sprite }: { permanent?: boolean; sprite?: string } = {}) {
+		const index = toIndex(color);
+		if (!permanent) {
+			editor.silhouette = index;
+			return { silhouette: index ? PALETTE[index] : 'off' };
+		}
+		if (index === TRANSPARENT)
+			throw new Error('a permanent silhouette needs a colour — null would erase the sprite');
+		const t = target(sprite);
+		let painted = 0;
+		for (let i = 0; i < t.sprite.pixels.length; i++) {
+			if (t.sprite.pixels[i] === TRANSPARENT) continue;
+			t.sprite.pixels[i] = index;
+			painted++;
+		}
+		return { sprite: t.sprite.name, painted, color: PALETTE[index], permanent: true };
 	},
 
 	state: () => editor.snapshot(),
@@ -502,9 +509,8 @@ export const frogsprite = Object.fromEntries(
 ) as typeof api;
 
 /**
- * UI entry point for the file picker, drag-and-drop and paste. A `.json` or `.zip` is frogsprite's
- * own data — a project or a single set, whichever it turns out to be; anything else is treated as
- * an image and imported into a new sprite named after the file. Throws with a readable message.
+ * UI entry point for the picker, drag-and-drop and paste: a `.json` / `.zip` is our own data,
+ * anything else is an image for a new sprite. Throws with a readable message.
  */
 export async function importFiles(files: Iterable<File> | null | undefined) {
 	const list = [...(files ?? [])];

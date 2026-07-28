@@ -46,11 +46,7 @@ async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
 	return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-/**
- * Pull a single entry out of an archive by name, or null if it isn't there. Reads what this module
- * writes — stored and deflated entries, no encryption, no zip64 — which covers every real .zip
- * small enough to matter here. The central directory is the authority, as the format intends.
- */
+/** One entry by name, or null. Stored and deflated only — what this module writes. */
 export async function unzip(source: Blob | Uint8Array, name: string): Promise<Uint8Array | null> {
 	const bytes = source instanceof Blob ? new Uint8Array(await source.arrayBuffer()) : source;
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

@@ -57,6 +57,11 @@ a hex string (snapped to the nearest entry), or `null` for transparent.
 shades actually used in the current set, a frame timeline with thumbnails and transport controls
 (play / pause / step / stop), and export buttons.
 
+Under the canvas are the review controls: square swatches set what shows through transparent pixels
+(`background('#ff00ff')` finds holes and stray pixels), round ones flatten the sprite to a
+silhouette (`silhouette()` finds a lumpy edge or a pose that doesn't read). Both are view settings —
+nothing is painted and nothing is saved, unless you ask for `silhouette(color, { permanent: true })`.
+
 **JavaScript** — everything above, plus batch drawing. `paint_map()` takes ASCII art and is by far
 the fastest way to draw a sprite; `reflect()` mirrors half the grid onto the other half;
 `print_sprite()` renders a sprite back as ASCII so an agent can check its own work.
@@ -95,7 +100,7 @@ centred subjects, and smooth gradients will band visibly.
 ## Deploying
 
 **Static files only.** No backend, no API keys, no database, no server-side rendering. The build is
-seven files totalling ~156 KB (30 KB gzipped JS), there is no router so no SPA-fallback rewrites are
+seven files totalling ~160 KB (30 KB gzipped JS), there is no router so no SPA-fallback rewrites are
 needed, and after the first visit fetches `examples.json` the app makes no network requests at all.
 
 Verified end to end against `python3 -m http.server`: drawing, animation, image import and all five
