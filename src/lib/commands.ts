@@ -1,4 +1,4 @@
-import { PALETTE, toIndex } from './palette.ts';
+import { PALETTE, toIndex, TRANSPARENT } from './palette.ts';
 import * as ex from './export.ts';
 import * as storage from './storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from './image.ts';
@@ -404,7 +404,7 @@ const api = {
 				animation: ['set_animation', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
-				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'background', 'help'],
+				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'background', 'silhouette', 'help'],
 				storage: ['flush', 'reset']
 			},
 			// derived, so this stays true even if the curated groups above fall behind
@@ -422,6 +422,25 @@ const api = {
 	background(color: Color = null) {
 		editor.background = toIndex(color);
 		return { background: editor.background ? PALETTE[editor.background] : 'checkerboard' };
+	},
+
+	/** Every painted pixel as one colour. Preview only unless `permanent`; `silhouette(null)` is off. */
+	silhouette(color: Color = '#000000', { permanent = false, sprite }: { permanent?: boolean; sprite?: string } = {}) {
+		const index = toIndex(color);
+		if (!permanent) {
+			editor.silhouette = index;
+			return { silhouette: index ? PALETTE[index] : 'off' };
+		}
+		if (index === TRANSPARENT)
+			throw new Error('a permanent silhouette needs a colour — null would erase the sprite');
+		const t = target(sprite);
+		let painted = 0;
+		for (let i = 0; i < t.sprite.pixels.length; i++) {
+			if (t.sprite.pixels[i] === TRANSPARENT) continue;
+			t.sprite.pixels[i] = index;
+			painted++;
+		}
+		return { sprite: t.sprite.name, painted, color: PALETTE[index], permanent: true };
 	},
 
 	state: () => editor.snapshot(),

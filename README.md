@@ -57,9 +57,10 @@ a hex string (snapped to the nearest entry), or `null` for transparent.
 shades actually used in the current set, a frame timeline with thumbnails and transport controls
 (play / pause / step / stop), and export buttons.
 
-Transparent pixels show a checkerboard; the swatches under the canvas (or `background('#ff00ff')`)
-swap that for a flat colour, which is how you spot a hole in a shape or a stray pixel in the
-margin. It is a view setting — nothing is painted and nothing is saved.
+Under the canvas are the review controls: square swatches set what shows through transparent pixels
+(`background('#ff00ff')` finds holes and stray pixels), round ones flatten the sprite to a
+silhouette (`silhouette()` finds a lumpy edge or a pose that doesn't read). Both are view settings —
+nothing is painted and nothing is saved, unless you ask for `silhouette(color, { permanent: true })`.
 
 **JavaScript** — everything above, plus batch drawing. `paint_map()` takes ASCII art and is by far
 the fastest way to draw a sprite; `reflect()` mirrors half the grid onto the other half;

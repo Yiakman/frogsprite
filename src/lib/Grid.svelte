@@ -3,9 +3,11 @@
 	import { PALETTE } from './palette';
 	import { editor } from './store.svelte';
 
-	// exact palette entries, so a swatch shows what background() will resolve to
+	// exact palette entries, so a swatch shows what the command will resolve to
 	const BACKDROPS = [null, '#ffffff', '#999999', '#000000', '#ff00ff'];
+	const SILHOUETTES = ['#000000', '#ffffff'];
 	const backdrop = $derived(editor.background ? PALETTE[editor.background] : null);
+	const silhouette = $derived(editor.silhouette ? PALETTE[editor.silhouette] : null);
 
 	let painting = $state(false);
 	let dropping = $state(false);
@@ -82,7 +84,7 @@
 					class="px"
 					data-i={i}
 					aria-hidden="true"
-					style:background={p === 0 ? 'transparent' : PALETTE[p]}
+					style:background={p === 0 ? 'transparent' : (silhouette ?? PALETTE[p])}
 				></div>
 			{/each}
 		</div>
@@ -94,10 +96,12 @@
 					{editor.running ? '· playing' : '· paused, editable'}
 				</em>
 			{/if}
-			<!-- named, not just shown: a screenshot has to say which backdrop it was taken on -->
-			<span class="on" data-testid="backdrop">· on {backdrop ?? 'checkerboard'}</span>
+			<!-- named, not just shown: a screenshot has to say what it was taken under -->
+			<span class="on" data-testid="backdrop"
+				>· on {backdrop ?? 'checkerboard'}{silhouette ? ` · silhouette ${silhouette}` : ''}</span
+			>
 		</p>
-		<div class="backdrops" role="group" aria-label="Canvas background — review only, the sprite is unchanged">
+		<div class="backdrops" role="group" aria-label="Review view — the sprite itself is unchanged">
 			{#each BACKDROPS as c (c ?? 'checker')}
 				<button
 					class="sw"
@@ -105,9 +109,21 @@
 					class:sel={backdrop === c}
 					style:background={c}
 					aria-pressed={backdrop === c}
-					aria-label={c ?? 'checkerboard'}
+					aria-label="{c ?? 'checkerboard'} background"
 					title="Show {c ?? 'the checkerboard'} through transparent pixels"
 					onclick={() => fs.background(c)}
+				></button>
+			{/each}
+			<span class="split" aria-hidden="true"></span>
+			{#each SILHOUETTES as c (c)}
+				<button
+					class="sw sil"
+					class:sel={silhouette === c}
+					style:background={c}
+					aria-pressed={silhouette === c}
+					aria-label="{c} silhouette"
+					title="Show every painted pixel as {c} — preview only, nothing is painted"
+					onclick={() => fs.silhouette(silhouette === c ? null : c)}
 				></button>
 			{/each}
 		</div>
@@ -182,6 +198,15 @@
 	}
 	.sw.checker {
 		background-size: 50% 50%;
+	}
+	/* round = the sprite, square = what is behind it */
+	.sw.sil {
+		border-radius: 50%;
+	}
+	.split {
+		width: 1px;
+		background: #444;
+		margin: 0.1rem 0.15rem;
 	}
 	.sw.sel {
 		outline: 2px solid #7cf;

@@ -18,6 +18,8 @@ class Editor {
 	color = $state(1);
 	/** Canvas backdrop: a palette index, or 0 for the checkerboard. A view setting, not persisted. */
 	background = $state(0);
+	/** Show every painted pixel as this index instead of its own colour. 0 is off. Also a view setting. */
+	silhouette = $state(0);
 	/** index into the active set's frames, or -1 when not looking at the animation at all */
 	frame = $state(-1);
 	/** true only while the timer is advancing frames — paused still holds a frame */
@@ -129,7 +131,10 @@ class Editor {
 		return {
 			selection: { ...this.sel },
 			playback: { frame: this.frame, running: this.running, showing: this.shown?.name ?? null },
-			view: { background: this.background ? PALETTE[this.background] : 'checkerboard' },
+			view: {
+				background: this.background ? PALETTE[this.background] : 'checkerboard',
+				silhouette: this.silhouette ? PALETTE[this.silhouette] : 'off'
+			},
 			packages: this.packages.map((p) => ({
 				name: p.name,
 				sets: p.sets.map((s) => ({
