@@ -6,7 +6,7 @@ import { PALETTE, toIndex } from './palette.ts';
 import { toAnimatedSVG, toSVG } from './export.ts';
 import { parse, serialise } from './storage.ts';
 import { GRIDS, reflect, SIDES } from './grid.ts';
-import { crc32, zip } from './zip.ts';
+import { crc32, unzip, zip } from './zip.ts';
 import { adjust, contentBounds, layout, sampleInto } from './image.ts';
 
 test('palette is 256 entries, index 0 transparent, gray ramp at the end', () => {
@@ -73,6 +73,27 @@ test('zip writes a well-formed archive', async () => {
 	const secondLocal = dv.getUint32(cdOffset + 46 + 5 + 42, true); // 2nd central entry's offset field
 	assert.equal(dv.getUint32(secondLocal, true), 0x04034b50, 'second local header where advertised');
 	assert.equal(dv.getUint16(secondLocal + 8, true), 0, 'tiny payload falls back to stored');
+});
+
+test('unzip reads back what zip wrote, deflated or stored', async () => {
+	const enc = new TextEncoder();
+	const text = JSON.stringify({ name: 'frog', pixels: Array.from({ length: 256 }, (_, i) => i % 7) });
+	const blob = await zip([
+		{ name: 'set.json', data: enc.encode(text) }, // compressible, so method 8
+		{ name: 'png/a.png', data: new Uint8Array([1, 2, 3]) } // too small to shrink, so method 0
+	]);
+
+	assert.equal(new TextDecoder().decode((await unzip(blob, 'set.json'))!), text);
+	assert.deepEqual([...(await unzip(blob, 'png/a.png'))!], [1, 2, 3]);
+	assert.equal(await unzip(blob, 'nope.json'), null, 'a missing entry is null, not a throw');
+	await assert.rejects(() => unzip(new Uint8Array(64), 'set.json'), /not a zip archive/);
+});
+
+test('unzip rejects an archive whose payload has been tampered with', async () => {
+	const blob = await zip([{ name: 'set.json', data: new TextEncoder().encode('x'.repeat(200)) }]);
+	const bytes = new Uint8Array(await blob.arrayBuffer());
+	bytes[40] ^= 0xff; // somewhere inside the deflate stream
+	await assert.rejects(() => unzip(bytes, 'set.json'), /damaged|checksum/);
 });
 
 // --- reflect ----------------------------------------------------------------

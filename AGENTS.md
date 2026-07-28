@@ -169,6 +169,32 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   closest thing to a project file. Returns `{ filename, bytes, files }`; pass `base64: true` to also
   get the archive bytes back (large — a 10-sprite 32×32 set is ~55 KB, so ~74 K characters).
 
+### Moving work in and out
+
+JSON in the shape the editor already persists — no archive to unpack, no base64 to chew. This is
+how a set or a whole project crosses to another browser, machine or agent, and the only answer to
+`localStorage` being per-origin.
+
+- `export_json({ download? })` → the active set as `{ name, grid, sprites: [{ name, pixels }],
+  frames }` — the same payload the ZIP carries as `set.json`
+- `import_set(data)` — **async.** Adds a set to the active package. `data` is that object, its
+  text, a `.json` `File`, or a whole export `.zip` (its `set.json` is read straight out of it).
+  The set takes the first free name (`frog`, `frog-2`, …); returns `{ set, grid, sprites, frames }`
+- `export_project({ download? })` → `{ version, packages }` — **everything**, exactly as saved
+- `import_project(data, { replace = false })` — **async.** Packages arrive alongside what is
+  already here, duplicate names suffixed. `{ replace: true }` throws the current work away first;
+  there is no undo, so it has to be asked for. Returns `{ packages, replaced }`
+
+```js
+const set = frogsprite.export_json();          // hand this text to another instance
+await frogsprite.import_set(set);              // …and it is a second copy here, named "frog-2"
+await frogsprite.import_project(text, { replace: true });
+```
+
+Imports go through the same validator as `localStorage`, so a damaged or half-edited file is
+repaired where it can be (bad pixels → transparent) and rejected with a readable message where it
+cannot. In the UI: **Project → Save all… / Load…**, or drop a `.json` / `.zip` onto the canvas.
+
 ### Inspection
 
 - `state()` — JSON snapshot of every package, set, sprite name and frame
@@ -223,6 +249,6 @@ frogsprite.export_animated_svg();
 | `src/lib/palette.ts` | the 256-colour palette and colour resolution |
 | `src/lib/export.ts` | SVG / animated SVG / PNG / ICO encoders |
 | `src/lib/image.ts` | image import: trim, box-average, palette snap |
-| `src/lib/zip.ts` | dependency-free ZIP writer (deflate via `CompressionStream`) |
+| `src/lib/zip.ts` | dependency-free ZIP writer and single-entry reader (`Compression`/`DecompressionStream`) |
 | `src/lib/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
 | `src/lib/logic.test.ts` | `npm test` — self-check for the DOM-free logic |

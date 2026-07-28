@@ -15,6 +15,12 @@
 			alert((e as Error).message);
 		}
 	};
+
+	/** One hidden input for both jobs — the dialog just filters differently. */
+	const pick = (accept: string) => {
+		picker.accept = accept;
+		picker.click();
+	};
 </script>
 
 <svelte:window
@@ -27,7 +33,6 @@
 <input
 	bind:this={picker}
 	type="file"
-	accept="image/*"
 	hidden
 	onchange={(e) => {
 		const input = e.currentTarget;
@@ -45,7 +50,7 @@
 		<Animator />
 		<div class="exports">
 			<h2>Image</h2>
-			<button onclick={() => picker.click()} data-testid="import">Import image…</button>
+			<button onclick={() => pick('image/*')} data-testid="import">Import image…</button>
 			<span class="note">or drop / paste onto the canvas</span>
 		</div>
 		<div class="exports">
@@ -63,6 +68,18 @@
 				onclick={() => run(() => fs.export_zip({ download: true }))}
 				data-testid="export-zip">ZIP (whole set)</button
 			>
+			<button
+				disabled={!editor.set}
+				title="The set's raw pixel data — the small file to hand to another browser"
+				onclick={() => run(() => fs.export_json({ download: true }))}
+				data-testid="export-json">JSON (set)</button
+			>
+		</div>
+		<div class="exports">
+			<h2>Project</h2>
+			<button onclick={() => run(() => fs.export_project({ download: true }))}>Save all…</button>
+			<button onclick={() => pick('.json,.zip')} data-testid="import-data">Load…</button>
+			<span class="note">a project .json, a set .json, or an export .zip</span>
 		</div>
 	</section>
 </main>
