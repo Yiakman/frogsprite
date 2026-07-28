@@ -109,6 +109,28 @@ export function load(): Package[] {
 	}
 }
 
+/** False only on a first visit — after that the key exists, even if the user emptied it. */
+export function stored(): boolean {
+	try {
+		return localStorage.getItem(KEY) !== null;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * The example sets shipped with the app, fetched rather than bundled so they cost nothing
+ * after the first visit. Same format as what we save, so parse() validates them too.
+ */
+export async function examples(): Promise<Package[]> {
+	try {
+		const res = await fetch(`${import.meta.env.BASE_URL}examples.json`);
+		return res.ok ? parse(await res.text()) : [];
+	} catch {
+		return [];
+	}
+}
+
 /** Queue a write. `packages` is held live, so the flush always persists the latest state. */
 export function save(packages: Package[]) {
 	pending = packages;

@@ -3,8 +3,11 @@ import './app.css';
 import App from './App.svelte';
 import { frogsprite } from './lib/commands';
 import { editor } from './lib/store.svelte';
+import { stored } from './lib/storage';
 
+const firstVisit = !stored();
 editor.load();
+if (firstVisit) editor.seed();
 
 // The agent-facing API — everything the UI can do is reachable from here.
 (globalThis as any).frogsprite = frogsprite;

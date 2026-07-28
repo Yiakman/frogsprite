@@ -145,6 +145,27 @@ class Editor {
 
 	load() {
 		this.packages = storage.load();
+		this.#selectFirst();
+	}
+
+	/** First visit only: drop the shipped examples in, so the editor opens on a sprite. */
+	async seed() {
+		const packages = await storage.examples();
+		if (!packages.length || this.packages.length) return;
+		this.packages = packages;
+		this.#selectFirst();
+		this.save();
+	}
+
+	/**
+	 * Open on the first sprite there is. The selection itself isn't persisted — reloading into
+	 * "no sprite selected" with a full sidebar is just a worse blank page.
+	 */
+	#selectFirst() {
+		const pkg = this.packages[0];
+		const set = pkg?.sets[0];
+		if (!set) return;
+		this.sel = { pkg: pkg.name, set: set.name, sprite: set.sprites[0]?.name ?? '' };
 	}
 }
 
