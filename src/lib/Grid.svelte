@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { beginStroke, endStroke, importFiles } from './commands';
+	import { notify } from './Dialog.svelte';
 	import { PALETTE } from './palette';
 	import { editor } from './store.svelte';
 
@@ -21,7 +22,7 @@
 		try {
 			await importFiles(e.dataTransfer?.files);
 		} catch (err) {
-			alert((err as Error).message);
+			notify((err as Error).message);
 		}
 	}
 

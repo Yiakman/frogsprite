@@ -135,8 +135,8 @@ Blocking a sprite out with shapes and then detailing it with `paint_map()` is us
 plotting pixels by hand, and much easier to correct.
 
 In the UI these are under **Tools → Shapes** in the sidebar: one dialog per shape, filled, in the
-current colour. Outlines are JS-only. **Tools → Rotate** takes an angle on its own, or
-`angle, cx, cy`, and warns when a turn loses pixels.
+current colour. Outlines are JS-only. **Tools → Rotate** takes an angle, and optionally a `cx` and
+`cy` centre, and warns when a turn loses pixels.
 
 ### Importing an image
 

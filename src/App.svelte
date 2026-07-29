@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Animator from './lib/Animator.svelte';
 	import { frogsprite as fs, importFiles } from './lib/commands';
+	import Dialog, { notify } from './lib/Dialog.svelte';
 	import Grid from './lib/Grid.svelte';
 	import Palette from './lib/Palette.svelte';
 	import Sidebar from './lib/Sidebar.svelte';
@@ -12,7 +13,7 @@
 		try {
 			await fn();
 		} catch (e) {
-			alert((e as Error).message);
+			notify((e as Error).message);
 		}
 	};
 
@@ -90,6 +91,9 @@
 		</div>
 	</section>
 </main>
+
+<!-- mounted once; every prompt and warning in the app goes through it -->
+<Dialog />
 
 <style>
 	main {
