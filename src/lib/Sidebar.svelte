@@ -84,6 +84,21 @@
 			t.eg
 		);
 
+	// ponytail: one prompt straight off the button, no panel until a second transform needs one.
+	const spin = () =>
+		ask(
+			'Rotate — angle, or angle, cx, cy (multiples of 30°, clockwise)',
+			(v) => {
+				const n = v.split(/[\s,;]+/).filter(Boolean).map(Number);
+				if (!(n.length === 1 || n.length === 3) || n.some((x) => !Number.isFinite(x)))
+					throw new Error('Rotate needs an angle, or an angle and a centre: angle, cx, cy');
+				const { lost } = fs.rotate(n[0], n.length === 3 ? { cx: n[1], cy: n[2] } : {});
+				// the API warns about this, so the UI has to as well — undo is one keystroke away
+				if (lost > 0) alert(`${lost} pixel${lost === 1 ? '' : 's'} did not survive the turn.`);
+			},
+			'90'
+		);
+
 	// Same swatches the canvas used to carry: exact palette entries, so a swatch shows what the
 	// command will resolve to.
 	const BACKDROPS = [null, '#ffffff', '#999999', '#000000', '#ff00ff'];
@@ -209,6 +224,12 @@
 					title="Background and silhouette — how the canvas is shown"
 					onclick={() => (view = 'view')}
 					data-testid="tool-view">View</button
+				>
+				<button
+					class="tool"
+					title="Rotate — a multiple of 30 degrees, clockwise"
+					onclick={spin}
+					data-testid="tool-rotate">Rotate</button
 				>
 				<button class="tool" disabled title="coming soon">Effects</button>
 				<button class="tool" disabled title="coming soon">Paint</button>

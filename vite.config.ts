@@ -22,6 +22,7 @@ Quick start, pasted into the browser console:
     frogsprite.new_sprite('idle');
     frogsprite.shapes.circle(8, 8, 5, '#22aa33');   // or a square, triangle, ellipse, polygon…
     frogsprite.paint_map(['.gg.', 'gggg'], { g: '#22aa33' });
+    frogsprite.rotate(90);              // turn it, in steps of 30°, clockwise
     frogsprite.undo();                  // every command is one step
     frogsprite.print_sprite();          // read your own work back as ASCII
     await frogsprite.export_zip({ download: true });
