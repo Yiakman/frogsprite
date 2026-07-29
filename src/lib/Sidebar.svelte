@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { frogsprite as fs } from './commands';
+	import { form, notify } from './Dialog.svelte';
 	import { PALETTE } from './palette';
 	import { editor, GRIDS, type GridSize } from './store.svelte';
 	// the same animation the README shows
@@ -24,16 +25,22 @@
 		return () => clearInterval(id);
 	});
 
-	// ponytail: prompt() is the whole "new item" dialog. Swap for a real form if it ever needs validation UX.
-	const ask = (label: string, fn: (v: string) => void, initial?: string) => {
-		const v = prompt(label, initial)?.trim();
-		if (v) try { fn(v); } catch (e) { alert((e as Error).message); }
-	};
+	/** Packages and sprites: one required name, nothing else. */
+	const named = (title: string, fn: (name: string) => void) =>
+		form({
+			title,
+			fields: [{ name: 'name', required: true }],
+			submit: (v) => fn(v.name.trim())
+		});
 
 	const newSet = () =>
-		ask('Set name', (name) => {
-			const g = Number(prompt(`Grid size — ${GRIDS.join(', ')}`, '16')) as GridSize;
-			fs.new_set(name, g);
+		form({
+			title: 'New set',
+			fields: [
+				{ name: 'name', required: true },
+				{ name: 'grid', options: GRIDS, value: 16 }
+			],
+			submit: (v) => fs.new_set(v.name.trim(), Number(v.grid) as GridSize)
 		});
 
 	// ---- tools -------------------------------------------------------------
@@ -42,62 +49,75 @@
 
 	type Tool = {
 		name: string;
+		/** the argument names, comma separated — the dialog turns these into one field each */
 		hint: string;
 		eg: string;
-		/** how many numbers the shape takes, or null for "pairs, at least three" */
-		args: number | null;
+		/** a point list of no fixed length: one text field instead */
+		list?: true;
 		draw: (n: number[]) => void;
 	};
 
 	const pairs = (n: number[]) =>
 		Array.from({ length: n.length / 2 }, (_, i): [number, number] => [n[i * 2], n[i * 2 + 1]]);
 
-	// ponytail: one dialog per shape, numbers in one field — a prompt per argument is six clicks
-	// for a triangle, and polygon's point list has no fixed length to ask for.
 	const SHAPES: Tool[] = [
-		{ name: 'Line', hint: 'x0, y0, x1, y1', eg: '2,2,13,13', args: 4,
+		{ name: 'Line', hint: 'x0, y0, x1, y1', eg: '2,2,13,13',
 			draw: (n) => fs.shapes.line(n[0], n[1], n[2], n[3], editor.color) },
-		{ name: 'Square', hint: 'x, y, size', eg: '4,4,8', args: 3,
+		{ name: 'Square', hint: 'x, y, size', eg: '4,4,8',
 			draw: (n) => fs.shapes.square(n[0], n[1], n[2], editor.color) },
-		{ name: 'Circle', hint: 'cx, cy, r', eg: '8,8,5', args: 3,
+		{ name: 'Circle', hint: 'cx, cy, r', eg: '8,8,5',
 			draw: (n) => fs.shapes.circle(n[0], n[1], n[2], editor.color) },
-		{ name: 'Ellipse', hint: 'cx, cy, rx, ry', eg: '8,8,6,3', args: 4,
+		{ name: 'Ellipse', hint: 'cx, cy, rx, ry', eg: '8,8,6,3',
 			draw: (n) => fs.shapes.ellipse(n[0], n[1], n[2], n[3], editor.color) },
-		{ name: 'Triangle', hint: 'x0, y0, x1, y1, x2, y2', eg: '2,14,8,2,14,14', args: 6,
+		{ name: 'Triangle', hint: 'x0, y0, x1, y1, x2, y2', eg: '2,14,8,2,14,14',
 			draw: (n) => fs.shapes.triangle(n[0], n[1], n[2], n[3], n[4], n[5], editor.color) },
-		{ name: 'Polygon', hint: 'x1,y1; x2,y2; x3,y3 …', eg: '2,2; 13,5; 8,14', args: null,
+		{ name: 'Polygon', hint: 'x1,y1; x2,y2; x3,y3 …', eg: '2,2; 13,5; 8,14', list: true,
 			draw: (n) => fs.shapes.polygon(pairs(n), editor.color) }
 	];
 
-	const draw = (t: Tool) =>
-		ask(
-			`${t.name} — ${t.hint}`,
-			(v) => {
-				const n = v.split(/[\s,;]+/).filter(Boolean).map(Number);
-				const enough = t.args === null ? n.length >= 6 && n.length % 2 === 0 : n.length === t.args;
-				if (!enough || n.some((x) => !Number.isFinite(x)))
-					throw new Error(
-						`${t.name} needs ${t.args ?? 'an even count of at least 6'} numbers: ${t.hint}`
-					);
-				t.draw(n);
-			},
-			t.eg
-		);
+	const argsOf = (t: Tool) => t.hint.split(', ');
 
-	// ponytail: one prompt straight off the button, no panel until a second transform needs one.
+	// required number inputs mean the browser rejects blanks and non-numbers before submit ever
+	// runs — only the variable-length point list still has to check itself.
+	const draw = (t: Tool) =>
+		form({
+			title: t.name,
+			fields: t.list
+				? [{ name: 'points', value: t.eg, placeholder: t.hint, required: true }]
+				: argsOf(t).map((a, i) => ({
+						name: a,
+						type: 'number',
+						value: Number(t.eg.split(',')[i]),
+						required: true
+					})),
+			submit: (v) => {
+				if (!t.list) return t.draw(argsOf(t).map((a) => Number(v[a])));
+				const n = v.points.split(/[\s,;]+/).filter(Boolean).map(Number);
+				if (n.length < 6 || n.length % 2 || n.some((x) => !Number.isFinite(x)))
+					throw new Error(`${t.name} needs an even count of at least 6 numbers: ${t.hint}`);
+				t.draw(n);
+			}
+		});
+
+	// ponytail: one form straight off the button, no panel until a second transform needs one.
 	const spin = () =>
-		ask(
-			'Rotate — angle, or angle, cx, cy (multiples of 30°, clockwise)',
-			(v) => {
-				const n = v.split(/[\s,;]+/).filter(Boolean).map(Number);
-				if (!(n.length === 1 || n.length === 3) || n.some((x) => !Number.isFinite(x)))
-					throw new Error('Rotate needs an angle, or an angle and a centre: angle, cx, cy');
-				const { lost } = fs.rotate(n[0], n.length === 3 ? { cx: n[1], cy: n[2] } : {});
+		form({
+			title: 'Rotate — clockwise, about the centre unless one is given',
+			fields: [
+				{ name: 'angle', type: 'number', step: 30, value: 90, required: true },
+				{ name: 'cx', type: 'number', placeholder: 'optional' },
+				{ name: 'cy', type: 'number', placeholder: 'optional' }
+			],
+			submit: (v) => {
+				if (Boolean(v.cx) !== Boolean(v.cy)) throw new Error('A centre needs both cx and cy.');
+				const { lost } = fs.rotate(
+					Number(v.angle),
+					v.cx ? { cx: Number(v.cx), cy: Number(v.cy) } : {}
+				);
 				// the API warns about this, so the UI has to as well — undo is one keystroke away
-				if (lost > 0) alert(`${lost} pixel${lost === 1 ? '' : 's'} did not survive the turn.`);
-			},
-			'90'
-		);
+				if (lost > 0) notify(`${lost} pixel${lost === 1 ? '' : 's'} did not survive the turn.`);
+			}
+		});
 
 	// Same swatches the canvas used to carry: exact palette entries, so a swatch shows what the
 	// command will resolve to.
@@ -164,7 +184,7 @@
 		<section>
 			<header>
 				<h2>Packages</h2>
-				<button onclick={() => ask('Package name', fs.new_package)} data-testid="new-package">+</button>
+				<button onclick={() => named('New package', fs.new_package)} data-testid="new-package">+</button>
 			</header>
 			{#each editor.packages as p (p.name)}
 				<button class="row" class:sel={editor.sel.pkg === p.name} onclick={() => fs.select(p.name)}>
@@ -199,7 +219,7 @@
 			<section data-sprites>
 				<header>
 					<h2>Sprites</h2>
-					<button onclick={() => ask('Sprite name', fs.new_sprite)} data-testid="new-sprite">+</button>
+					<button onclick={() => named('New sprite', fs.new_sprite)} data-testid="new-sprite">+</button>
 				</header>
 				{#each editor.set.sprites as s (s.name)}
 					<button
