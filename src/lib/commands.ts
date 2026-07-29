@@ -76,11 +76,43 @@ function restore(entry: history.Entry | null) {
 	return true;
 }
 
-/** Snapshot before a change the UI is about to make in place, rather than through a command. */
-export const checkpoint = () => history.push(snap());
+/**
+ * Snapshot before a change the UI is about to make in place, rather than through a command.
+ * Hands back what it recorded, so a change that turns out not to happen can drop it again.
+ */
+export const checkpoint = () => {
+	const entry = snap();
+	history.push(entry);
+	return entry.raw;
+};
+
+/**
+ * Persist, and take the snapshot back if the document ended up exactly where it started. Without
+ * this a command that throws on its arguments — or paints entirely off the canvas — would cost a
+ * ⌘Z that visibly does nothing, and would throw away the redo branch on its way.
+ *
+ * ponytail: one extra serialise per mutating command. A revision counter on the store would be
+ * cheaper, but only by touching every mutation site, which is the bookkeeping snapshots exist to
+ * avoid. Swap if painting a 128 grid from an agent ever measures slow.
+ */
+const settle = (before: string | undefined) => {
+	if (before !== undefined && storage.serialise(editor.packages) === before) history.rollback();
+	editor.save();
+};
+
 /** A drag is one undo step: begin on pointerdown, end on pointerup. */
-export const beginStroke = () => history.begin(snap());
-export const endStroke = () => history.end();
+let stroke: string | undefined;
+export const beginStroke = () => {
+	const entry = snap();
+	history.begin(entry);
+	stroke = entry.raw;
+};
+export const endStroke = () => {
+	history.end();
+	// a click that landed on a pixel already the right colour painted nothing — leave no step
+	if (stroke !== undefined) settle(stroke);
+	stroke = undefined;
+};
 
 function target(name?: string): { sprite: Sprite; grid: GridSize } {
 	const set = editor.requireSet();
@@ -423,6 +455,7 @@ const api = {
 				"frogsprite.new_package('demo')",
 				"frogsprite.new_set('hero', 16)        // grid: 8, 16, 32, 64 or 128",
 				"frogsprite.new_sprite('idle')",
+				"frogsprite.shapes.circle(8, 8, 5, '#22aa33')   // whole forms in one call",
 				"frogsprite.paint_map(['.gg.', 'gggg'], { g: '#22aa33' })",
 				'frogsprite.print_sprite()             // read your own work back as ASCII',
 				'await frogsprite.export_zip({ download: true })'
@@ -466,7 +499,6 @@ const api = {
 		if (index === TRANSPARENT)
 			throw new Error('a permanent silhouette needs a colour — null would erase the sprite');
 		const t = target(sprite);
-		checkpoint(); // the preview branch above changes nothing, so this command snapshots itself
 		let painted = 0;
 		for (let i = 0; i < t.sprite.pixels.length; i++) {
 			if (t.sprite.pixels[i] === TRANSPARENT) continue;
@@ -574,45 +606,44 @@ const shapeApi = {
 	}
 };
 
-// Every shape paints, so each gets the same checkpoint/save treatment the flat mutators get —
-// one call, one undo step, however many cells it covers.
-const shapes = Object.fromEntries(
-	Object.entries(shapeApi).map(([k, fn]) => [
-		k,
-		(...args: any[]) => {
-			checkpoint();
-			const out = (fn as any)(...args);
-			editor.save();
-			return out;
-		}
-	])
-) as typeof shapeApi;
-
 /**
- * The commands that change the document, and so need an undo snapshot taken first. Everything
- * missing here only reads, or changes the view (`select`, playback, `background`, exports).
- * `silhouette` is absent because only its `permanent` branch paints — it checkpoints itself.
+ * The commands that can change the document, and so are worth an undo snapshot. This is only a
+ * shortlist for speed — `settle` drops the snapshot again when a command turns out to change
+ * nothing, so a command listed here that only sometimes paints (`silhouette`) costs nothing, and a
+ * command left off it by mistake is the only real error. Everything missing reads, or changes the
+ * view: `select`, playback, `background`, exports, `state`, `print_sprite`.
  */
 const MUTATING = new Set([
 	'new_package', 'new_set', 'new_sprite', 'clone_sprite',
 	'paint_pixel', 'paint_row', 'paint_column', 'paint_map', 'clear', 'reflect', 'shift',
-	'import_image', 'set_animation', 'import_set', 'import_project', 'reset'
+	'import_image', 'set_animation', 'import_set', 'import_project', 'silhouette', 'reset'
 ]);
 
 // Snapshot before, persist after, rather than repeating either in every command.
 // Async commands must save once they have actually finished, not when they hand back a promise.
+const wrap = (mutating: boolean, fn: any) => (...args: any[]) => {
+	const before = mutating ? checkpoint() : undefined;
+	let out: unknown;
+	try {
+		out = fn(...args);
+	} catch (e) {
+		settle(before); // a command that threw on its arguments changed nothing — no step for it
+		throw e;
+	}
+	if (out instanceof Promise) return out.finally(() => settle(before));
+	settle(before);
+	return out;
+};
+
 const wrapped = Object.fromEntries(
-	Object.entries(api).map(([k, fn]) => [
-		k,
-		(...args: any[]) => {
-			if (MUTATING.has(k)) checkpoint();
-			const out = (fn as any)(...args);
-			if (out instanceof Promise) return out.finally(() => editor.save());
-			editor.save();
-			return out;
-		}
-	])
+	Object.entries(api).map(([k, fn]) => [k, wrap(MUTATING.has(k), fn)])
 ) as typeof api;
+
+// Every shape paints, so each is always worth a snapshot: one call, one undo step, however many
+// cells it covers — and none at all when the geometry lands entirely off the canvas.
+const shapes = Object.fromEntries(
+	Object.entries(shapeApi).map(([k, fn]) => [k, wrap(true, fn)])
+) as typeof shapeApi;
 
 // Outside the wrapper on purpose: these replace the document, so snapshotting them first would
 // push the state they are undoing straight back onto the stack.

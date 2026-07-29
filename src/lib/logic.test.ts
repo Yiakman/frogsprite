@@ -367,6 +367,29 @@ test('history walks back and forward, coalesces strokes, and drops the future on
 	assert.equal(history.undo(at('now'))?.raw, 'x59', 'the newest steps are the ones kept');
 });
 
+test('a push can be taken back, redo branch and all', () => {
+	history.reset();
+	const sel = { pkg: 'p', set: 's', sprite: 'a' };
+	const at = (raw: string) => ({ raw, sel });
+
+	history.push(at('A'));
+	history.undo(at('B')); // past 0, future 1 — there is a redo branch to lose
+	history.push(at('A'));
+	assert.deepEqual(history.depth(), { past: 1, future: 0 }, 'the new edit cleared the future');
+
+	history.rollback();
+	assert.deepEqual(history.depth(), { past: 0, future: 1 }, 'and taking it back restored it');
+	assert.equal(history.redo(at('A'))?.raw, 'B', 'the restored branch is the one that was there');
+
+	history.reset();
+	history.push(at('A'));
+	history.push(at('A')); // deduped, so there is nothing to take back
+	history.rollback();
+	assert.deepEqual(history.depth(), { past: 1, future: 0 }, 'rollback never pops a push it did not make');
+	history.rollback();
+	assert.deepEqual(history.depth(), { past: 1, future: 0 }, 'and rolling back twice is not two pops');
+});
+
 // --- shapes -----------------------------------------------------------------
 
 /** Painted cells as (x,y) pairs, so an assertion reads like the picture. */
@@ -404,9 +427,12 @@ test('circle is symmetric, and r = 0 is a single pixel', () => {
 	const px = new Array(256).fill(0);
 	shapes.circle(px, 16, 8, 8, 4, 7);
 	const cells = drawn(px, 16);
+	// mirror through the centre; a mirror that lands off the grid proves nothing either way
 	for (const [x, y] of cells) {
-		assert.ok(px[y * 16 + (16 - x)] === 7 || x === 8, `mirrored across x at (${x},${y})`);
-		assert.equal(px[(16 - y) * 16 + x] === 7 || y === 8, true, `mirrored across y at (${x},${y})`);
+		const mx = 16 - x;
+		const my = 16 - y;
+		if (mx < 16) assert.equal(px[y * 16 + mx], 7, `mirrored across x at (${x},${y})`);
+		if (my < 16) assert.equal(px[my * 16 + x], 7, `mirrored across y at (${x},${y})`);
 	}
 	assert.ok(cells.length > 40 && cells.length < 60, `a radius-4 disc, got ${cells.length}`);
 
@@ -416,7 +442,7 @@ test('circle is symmetric, and r = 0 is a single pixel', () => {
 	assert.throws(() => shapes.circle(new Array(64).fill(0), 8, 3, 3, -1, 7), /at least 0/);
 });
 
-test('an outline is exactly the boundary of the same fill', () => {
+test('an outline is exactly the boundary of the same fill, on canvas', () => {
 	for (const [rx, ry] of [[4, 4], [6, 3], [1, 5]]) {
 		const filled = new Array(256).fill(0);
 		const outlined = new Array(256).fill(0);
@@ -429,6 +455,22 @@ test('an outline is exactly the boundary of the same fill', () => {
 			'an outline never paints more than its fill'
 		);
 	}
+});
+
+test('a clipped shape is cut open, not closed along the grid edge', () => {
+	// The outline follows the shape's own geometry. Where a shape runs off the canvas there is no
+	// edge to draw, so the cut side stays open — square and ellipse agree on this.
+	const sq = new Array(64).fill(0);
+	shapes.square(sq, 8, -1, -1, 4, 2, false);
+	assert.deepEqual(
+		drawn(sq, 8),
+		[[2, 0], [2, 1], [0, 2], [1, 2], [2, 2]],
+		'only the two edges that are actually on the canvas'
+	);
+
+	const el = new Array(64).fill(0);
+	shapes.ellipse(el, 8, 0, 0, 3, 3, 2, false);
+	assert.equal(el[0], 0, 'the centre of a clipped disc is not treated as an edge');
 });
 
 test('shapes clip to the grid instead of throwing or wrapping', () => {

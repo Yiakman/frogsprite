@@ -97,8 +97,12 @@ Two rules worth knowing:
   the pixels that land outside are dropped, so `circle(-2, -2, 6, …)` draws the corner of a circle
   rather than a squashed whole one. Arguments that are *nonsense* still throw: non-integers, a
   negative radius, `size` below 1, fewer than three polygon points, coordinates beyond ±4096.
-- **An outline is exactly the boundary of the same fill**, so drawing one over the other lines up
-  to the pixel.
+- **An outline is the boundary of the shape itself**, so an outline drawn over its own fill lines up
+  to the pixel. Where a shape runs off the canvas there is no edge to draw and the cut side stays
+  **open** — a clipped outline is not closed along the grid border. Every shape agrees on this.
+- **A zero radius collapses the shape rather than erasing it.** `circle(x, y, 0, …)` is one pixel,
+  and one zero axis is a straight run: `ellipse(8, 8, 0, 5, …)` is an 11-pixel vertical line. If
+  that wasn't the intent, it is usually a `line()` that was reached for by mistake.
 
 **One call is one undo step**, however many pixels it covers — `undo()` takes back a whole shape.
 Blocking a sprite out with shapes and then detailing it with `paint_map()` is usually faster than

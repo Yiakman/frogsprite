@@ -96,7 +96,7 @@
 	{#if view !== 'main'}
 		<!-- Child panel: the hierarchy is out of the way until the ← comes back to it. -->
 		<header class="back">
-			<button onclick={() => (view = 'main')} aria-label="Back to tools" data-testid="tools-back">←</button>
+			<button onclick={() => (view = 'main')} aria-label="Back to packages, sets and sprites" data-testid="tools-back">←</button>
 			<h2>{view === 'shapes' ? 'Shapes' : 'View'}</h2>
 		</header>
 

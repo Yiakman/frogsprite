@@ -12,15 +12,17 @@ const LLMS_TXT = `# frogsprite
 Open the page and call commands on the global \`window.frogsprite\`. There is no API key, no server,
 and no build step — the editor runs entirely in the page and saves to localStorage.
 
-- [AGENTS.md](/AGENTS.md): the full command reference — packages, sets, sprites, painting, grids,
-  the 256-colour palette, animation, image import, and the SVG/PNG/ICO/ZIP exports.
+- [AGENTS.md](/AGENTS.md): the full command reference — packages, sets, sprites, painting, shapes,
+  grids, the 256-colour palette, animation, undo, image import, and the SVG/PNG/ICO/ZIP exports.
 
 Quick start, pasted into the browser console:
 
     frogsprite.new_package('demo');
     frogsprite.new_set('hero', 16);
     frogsprite.new_sprite('idle');
+    frogsprite.shapes.circle(8, 8, 5, '#22aa33');   // or a square, triangle, ellipse, polygon…
     frogsprite.paint_map(['.gg.', 'gggg'], { g: '#22aa33' });
+    frogsprite.undo();                  // every command is one step
     frogsprite.print_sprite();          // read your own work back as ASCII
     await frogsprite.export_zip({ download: true });
 
