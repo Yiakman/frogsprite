@@ -2,6 +2,7 @@
 // validation of what comes back, and write scheduling. The rest of the app only calls
 // load() / save() / flush() / clear() and never touches localStorage.
 import { GRIDS, type GridSize } from './grid.ts';
+import { unzip } from './zip.ts';
 import type { Frame, Package, Sprite, SpriteSet } from './store.svelte.ts';
 
 const KEY = 'frogsprite';
@@ -61,6 +62,34 @@ export function readSet(v: any): SpriteSet | null {
 	}
 	return { name: n, grid, sprites, frames };
 }
+
+/** The interchange shape for one set: exactly what the ZIP carries as `set.json`, and readSet's inverse. */
+export const setPayload = (set: SpriteSet) => ({
+	name: set.name,
+	grid: set.grid,
+	sprites: set.sprites.map((s) => ({ name: s.name, pixels: [...s.pixels] })),
+	frames: set.frames.map((f) => ({ ...f }))
+});
+
+/** An object, JSON text, a `.json` file or an export `.zip`, resolved to the object inside. */
+export async function readInterchange(input: unknown): Promise<any> {
+	let text: unknown = input;
+	if (input instanceof Blob) {
+		const bytes = new Uint8Array(await input.arrayBuffer());
+		const zipped = bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
+		const json = zipped ? await unzip(bytes, 'set.json') : bytes;
+		if (!json) throw new Error('that .zip has no set.json in it — is it a frogsprite export?');
+		text = new TextDecoder().decode(json);
+	}
+	if (typeof text !== 'string') return text; // already an object
+	try {
+		return JSON.parse(text);
+	} catch {
+		throw new Error('that is not JSON');
+	}
+}
+
+export const isProject = (v: any) => !!v && typeof v === 'object' && 'packages' in v;
 
 function readPackage(v: any): Package | null {
 	const n = name(v?.name);
