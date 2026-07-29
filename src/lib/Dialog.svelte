@@ -66,6 +66,9 @@
 		}}
 		data-testid="dialog"
 	>
+		<!-- `form()` always hands over a new object, so keying on it rebuilds the fields per open —
+		     a request replacing another must not inherit the last one's typed-in DOM -->
+		{#key req}
 		<!-- the error describes the values as submitted; editing them makes it stale -->
 		<form onsubmit={submit} oninput={() => (error = '')}>
 			<h2>{req.title}</h2>
@@ -94,6 +97,7 @@
 				<button type="submit" class="go">OK</button>
 			</div>
 		</form>
+		{/key}
 	</dialog>
 {/if}
 

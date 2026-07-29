@@ -105,14 +105,17 @@
 			title: 'Rotate — clockwise, about the centre unless one is given',
 			fields: [
 				{ name: 'angle', type: 'number', step: 30, value: 90, required: true },
-				{ name: 'cx', type: 'number', placeholder: 'optional' },
-				{ name: 'cy', type: 'number', placeholder: 'optional' }
+				// a centre sits on a pixel or between two, so half steps — see grid.ts `half()`
+				{ name: 'cx', type: 'number', step: 0.5, placeholder: 'optional' },
+				{ name: 'cy', type: 'number', step: 0.5, placeholder: 'optional' }
 			],
 			submit: (v) => {
-				if (Boolean(v.cx) !== Boolean(v.cy)) throw new Error('A centre needs both cx and cy.');
+				const hasCx = v.cx !== '';
+				const hasCy = v.cy !== '';
+				if (hasCx !== hasCy) throw new Error('A centre needs both cx and cy.');
 				const { lost } = fs.rotate(
 					Number(v.angle),
-					v.cx ? { cx: Number(v.cx), cy: Number(v.cy) } : {}
+					hasCx ? { cx: Number(v.cx), cy: Number(v.cy) } : {}
 				);
 				// the API warns about this, so the UI has to as well — undo is one keystroke away
 				if (lost > 0) notify(`${lost} pixel${lost === 1 ? '' : 's'} did not survive the turn.`);
