@@ -58,14 +58,17 @@ shades actually used in the current set, a frame timeline with thumbnails and tr
 (play / pause / step / stop), and export buttons. **⌘Z / Ctrl+Z** undoes, **⇧⌘Z** redoes — a whole
 drag is one step.
 
-Under the canvas are the review controls: square swatches set what shows through transparent pixels
+Under **Tools** in the sidebar: **Shapes** draws a line, square, circle, ellipse, triangle or
+polygon from one dialog, filled in the current colour; **View** holds the review controls — square
+swatches set what shows through transparent pixels
 (`background('#ff00ff')` finds holes and stray pixels), round ones flatten the sprite to a
 silhouette (`silhouette()` finds a lumpy edge or a pose that doesn't read). Both are view settings —
 nothing is painted and nothing is saved, unless you ask for `silhouette(color, { permanent: true })`.
 
 **JavaScript** — everything above, plus batch drawing. `paint_map()` takes ASCII art and is by far
-the fastest way to draw a sprite; `reflect()` mirrors half the grid onto the other half;
-`print_sprite()` renders a sprite back as ASCII so an agent can check its own work.
+the fastest way to draw a sprite; `shapes.circle()` and friends fill a whole form in one call (and
+one undo step), with `{ fill: false }` for outlines; `reflect()` mirrors half the grid onto the
+other half; `print_sprite()` renders a sprite back as ASCII so an agent can check its own work.
 
 **[AGENTS.md](AGENTS.md) is the full command reference.** It is also served at `/AGENTS.md` (with a
 short `/llms.txt` summary) so an agent that lands on a deployed instance can find it.

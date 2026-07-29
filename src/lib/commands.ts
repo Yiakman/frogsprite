@@ -4,10 +4,14 @@ import * as history from './history.ts';
 import * as storage from './storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from './image.ts';
 import { reflect as reflectHalf, SIDES, type Side } from './grid.ts';
+import * as shape from './shapes.ts';
+import type { Point } from './shapes.ts';
 import { unzip, zip, type ZipEntry } from './zip.ts';
 import { blank, editor, GRIDS, type Frame, type GridSize, type Sprite, type SpriteSet } from './store.svelte.ts';
 
 type Color = number | string | null;
+/** Trailing options every shape shares: `fill` (ignored by `line`) and the usual sprite override. */
+type ShapeOpts = { fill?: boolean; sprite?: string };
 
 const taken = (list: { name: string }[], name: string, what: string) => {
 	if (!name || typeof name !== 'string') throw new Error(`${what} needs a name`);
@@ -426,6 +430,7 @@ const api = {
 			groups: {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select'],
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'reflect', 'shift', 'clear', 'import_image'],
+				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['set_animation', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
@@ -437,6 +442,7 @@ const api = {
 			all: Object.keys(frogsprite).sort(),
 			tips: [
 				'paint_map() is by far the fastest way to draw — one call per sprite.',
+				'shapes.circle/square/triangle/… fill a whole form in one call, and one undo step. Blocking a body out with shapes then detailing with paint_map beats plotting pixels by hand.',
 				'print_sprite() renders the sprite as ASCII so you can check your own work.',
 				'Async commands (import_image, export_zip, export_ico) must be awaited.',
 				'To import an image you have no file picker for, pass a data: URL.'
@@ -522,6 +528,67 @@ const api = {
 };
 
 /**
+ * Geometry, one call per shape. Kept off the flat `api` map because they live a level down as
+ * `frogsprite.shapes.*` — the maths is all in shapes.ts, so these are argument plumbing only.
+ * Coordinates outside the grid are clipped rather than refused; nonsense arguments still throw.
+ */
+const shapeApi = {
+	/** Straight line between two points, endpoints included. No fill — a line has no inside. */
+	line(x0: number, y0: number, x1: number, y1: number, color: Color, { sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.line(t.sprite.pixels, t.grid, x0, y0, x1, y1, toIndex(color));
+		return { sprite: t.sprite.name, shape: 'line', painted };
+	},
+
+	/** Axis-aligned square from its top-left corner. */
+	square(x: number, y: number, size: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.square(t.sprite.pixels, t.grid, x, y, size, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'square', painted };
+	},
+
+	circle(cx: number, cy: number, r: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.circle(t.sprite.pixels, t.grid, cx, cy, r, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'circle', painted };
+	},
+
+	/** Circle with separate radii — the way to draw a body, a head or an eye that isn't round. */
+	ellipse(cx: number, cy: number, rx: number, ry: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.ellipse(t.sprite.pixels, t.grid, cx, cy, rx, ry, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'ellipse', painted };
+	},
+
+	triangle(x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.triangle(t.sprite.pixels, t.grid, x0, y0, x1, y1, x2, y2, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'triangle', painted };
+	},
+
+	/** Any closed shape: `polygon([[2, 1], [13, 6], [7, 14]], '#22aa33')`. Three points or more. */
+	polygon(points: Point[], color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.polygon(t.sprite.pixels, t.grid, points, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'polygon', painted };
+	}
+};
+
+// Every shape paints, so each gets the same checkpoint/save treatment the flat mutators get —
+// one call, one undo step, however many cells it covers.
+const shapes = Object.fromEntries(
+	Object.entries(shapeApi).map(([k, fn]) => [
+		k,
+		(...args: any[]) => {
+			checkpoint();
+			const out = (fn as any)(...args);
+			editor.save();
+			return out;
+		}
+	])
+) as typeof shapeApi;
+
+/**
  * The commands that change the document, and so need an undo snapshot taken first. Everything
  * missing here only reads, or changes the view (`select`, playback, `background`, exports).
  * `silhouette` is absent because only its `permanent` branch paints — it checkpoints itself.
@@ -550,6 +617,7 @@ const wrapped = Object.fromEntries(
 // Outside the wrapper on purpose: these replace the document, so snapshotting them first would
 // push the state they are undoing straight back onto the stack.
 export const frogsprite = Object.assign(wrapped, {
+	shapes,
 	/** Step back one change. Selection and playback follow the document; view settings don't. */
 	undo: () => ({ ok: restore(history.undo(snap())), ...history.depth() }),
 	redo: () => ({ ok: restore(history.redo(snap())), ...history.depth() }),
