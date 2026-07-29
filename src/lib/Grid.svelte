@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { frogsprite as fs, importFiles } from './commands';
+	import { beginStroke, endStroke, frogsprite as fs, importFiles } from './commands';
 	import { PALETTE } from './palette';
 	import { editor } from './store.svelte';
 
@@ -11,6 +11,11 @@
 
 	let painting = $state(false);
 	let dropping = $state(false);
+
+	// Mac uses ⌘, everyone else Ctrl — same shortcut, just named for the keyboard it's on.
+	const mac = navigator.platform?.startsWith('Mac') ?? false;
+	const undoKey = mac ? '⌘Z' : 'Ctrl+Z';
+	const redoKey = mac ? '⇧⌘Z' : 'Ctrl+Shift+Z';
 
 	async function drop(e: DragEvent) {
 		e.preventDefault();
@@ -44,7 +49,12 @@
 	};
 </script>
 
-<svelte:window onpointerup={() => (painting = false)} />
+<svelte:window
+	onpointerup={() => {
+		painting = false;
+		endStroke();
+	}}
+/>
 
 <!-- drag-and-drop has no keyboard equivalent by nature; the Import button covers that path -->
 <div
@@ -70,6 +80,8 @@
 			aria-label="{grid} by {grid} pixel canvas showing {sprite.name}"
 			onpointerdown={(e) => {
 				painting = true;
+				// one snapshot for the whole drag, not one per cell it crosses
+				if (live) beginStroke();
 				paint(cellOf(e));
 			}}
 			onpointermove={(e) => painting && paint(cellOf(e))}
@@ -100,6 +112,7 @@
 			<span class="on" data-testid="backdrop"
 				>· on {backdrop ?? 'checkerboard'}{silhouette ? ` · silhouette ${silhouette}` : ''}</span
 			>
+			<span class="on" data-testid="undo-hint">· {undoKey} undo · {redoKey} redo</span>
 		</p>
 		<div class="backdrops" role="group" aria-label="Review view — the sprite itself is unchanged">
 			{#each BACKDROPS as c (c ?? 'checker')}

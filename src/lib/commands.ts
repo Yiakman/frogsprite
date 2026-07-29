@@ -1,5 +1,6 @@
 import { PALETTE, toIndex, TRANSPARENT } from './palette.ts';
 import * as ex from './export.ts';
+import * as history from './history.ts';
 import * as storage from './storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from './image.ts';
 import { reflect as reflectHalf, SIDES, type Side } from './grid.ts';
@@ -52,6 +53,30 @@ export async function readInterchange(input: unknown): Promise<any> {
 }
 
 const isProject = (v: any) => !!v && typeof v === 'object' && 'packages' in v;
+
+// ---- undo ------------------------------------------------------------------
+// The one place that turns live state into a history entry and back.
+
+const snap = (): history.Entry => ({
+	raw: storage.serialise(editor.packages),
+	sel: { ...editor.sel }
+});
+
+function restore(entry: history.Entry | null) {
+	if (!entry) return false;
+	editor.stop(); // playback would be pointing at frames that may not exist any more
+	// parse() gives fresh plain objects — assigning the proxied originals back would not track
+	editor.packages = storage.parse(entry.raw);
+	editor.sel = { ...entry.sel };
+	editor.save();
+	return true;
+}
+
+/** Snapshot before a change the UI is about to make in place, rather than through a command. */
+export const checkpoint = () => history.push(snap());
+/** A drag is one undo step: begin on pointerdown, end on pointerup. */
+export const beginStroke = () => history.begin(snap());
+export const endStroke = () => history.end();
 
 function target(name?: string): { sprite: Sprite; grid: GridSize } {
 	const set = editor.requireSet();
@@ -356,7 +381,7 @@ const api = {
 		return { set: set.name, grid: set.grid, sprites: set.sprites.length, frames: set.frames.length };
 	},
 
-	/** Load a project. Merges by default; `replace` wipes first, since there is no undo. Async. */
+	/** Load a project. Merges by default; `replace` wipes first, so it has to be asked for. Async. */
 	async import_project(data: unknown, { replace = false } = {}) {
 		const raw = await readInterchange(data);
 		// parse() is the same validator that reads localStorage, so imports get the same repairs
@@ -405,6 +430,7 @@ const api = {
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
 				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'background', 'silhouette', 'help'],
+				history: ['undo', 'redo', 'history'],
 				storage: ['flush', 'reset']
 			},
 			// derived, so this stays true even if the curated groups above fall behind
@@ -434,6 +460,7 @@ const api = {
 		if (index === TRANSPARENT)
 			throw new Error('a permanent silhouette needs a colour — null would erase the sprite');
 		const t = target(sprite);
+		checkpoint(); // the preview branch above changes nothing, so this command snapshots itself
 		let painted = 0;
 		for (let i = 0; i < t.sprite.pixels.length; i++) {
 			if (t.sprite.pixels[i] === TRANSPARENT) continue;
@@ -494,12 +521,24 @@ const api = {
 	}
 };
 
-// Persist after every command rather than repeating editor.save() in each one.
+/**
+ * The commands that change the document, and so need an undo snapshot taken first. Everything
+ * missing here only reads, or changes the view (`select`, playback, `background`, exports).
+ * `silhouette` is absent because only its `permanent` branch paints — it checkpoints itself.
+ */
+const MUTATING = new Set([
+	'new_package', 'new_set', 'new_sprite', 'clone_sprite',
+	'paint_pixel', 'paint_row', 'paint_column', 'paint_map', 'clear', 'reflect', 'shift',
+	'import_image', 'set_animation', 'import_set', 'import_project', 'reset'
+]);
+
+// Snapshot before, persist after, rather than repeating either in every command.
 // Async commands must save once they have actually finished, not when they hand back a promise.
-export const frogsprite = Object.fromEntries(
+const wrapped = Object.fromEntries(
 	Object.entries(api).map(([k, fn]) => [
 		k,
 		(...args: any[]) => {
+			if (MUTATING.has(k)) checkpoint();
 			const out = (fn as any)(...args);
 			if (out instanceof Promise) return out.finally(() => editor.save());
 			editor.save();
@@ -507,6 +546,16 @@ export const frogsprite = Object.fromEntries(
 		}
 	])
 ) as typeof api;
+
+// Outside the wrapper on purpose: these replace the document, so snapshotting them first would
+// push the state they are undoing straight back onto the stack.
+export const frogsprite = Object.assign(wrapped, {
+	/** Step back one change. Selection and playback follow the document; view settings don't. */
+	undo: () => ({ ok: restore(history.undo(snap())), ...history.depth() }),
+	redo: () => ({ ok: restore(history.redo(snap())), ...history.depth() }),
+	/** How far you can step each way. History is session-only — a reload starts empty. */
+	history: () => history.depth()
+});
 
 /**
  * UI entry point for the picker, drag-and-drop and paste: a `.json` / `.zip` is our own data,

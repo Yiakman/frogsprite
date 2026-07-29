@@ -28,6 +28,13 @@
 		const files = e.clipboardData?.files;
 		if (files?.length) run(() => importFiles(files));
 	}}
+	onkeydown={(e) => {
+		// leave form fields to the browser's own undo — the frame editor has number inputs
+		if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+		if (/^(INPUT|SELECT|TEXTAREA)$/.test((e.target as HTMLElement)?.tagName)) return;
+		e.preventDefault();
+		(e.shiftKey ? fs.redo : fs.undo)();
+	}}
 />
 
 <input

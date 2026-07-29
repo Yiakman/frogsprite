@@ -55,7 +55,8 @@ a hex string (snapped to the nearest entry), or `null` for transparent.
 
 **The UI** — sidebar for packages/sets/sprites, click or drag to paint, a colour row showing the
 shades actually used in the current set, a frame timeline with thumbnails and transport controls
-(play / pause / step / stop), and export buttons.
+(play / pause / step / stop), and export buttons. **⌘Z / Ctrl+Z** undoes, **⇧⌘Z** redoes — a whole
+drag is one step.
 
 Under the canvas are the review controls: square swatches set what shows through transparent pixels
 (`background('#ff00ff')` finds holes and stray pixels), round ones flatten the sprite to a
@@ -143,11 +144,14 @@ sharing between devices. That is the one feature that would genuinely require a 
 - **Persistence** — writes are coalesced, so a burst of painting becomes one `localStorage` write,
   and a pending write is flushed on `pagehide`. Loading validates what it reads, so damaged or
   outdated data degrades gracefully instead of breaking the editor.
+- **Undo** — whole-document snapshots (the same JSON that gets saved) rather than per-command
+  inverses. The document is small, and every command plus the canvas itself mutates it in place, so
+  reversible-command bookkeeping would only be a way to miss one. Restoring is a `parse()` away, and
+  a drag coalesces into one step the same way writes coalesce into one save.
 
 ## Known limitations
 
-- **No undo.** Painting over a sprite is unrecoverable. (The UI's image import creates a *new*
-  sprite for this reason; the JS command paints the active one.)
+- **Undo is session-only** — 50 steps, and a reload starts from an empty stack with your saved work.
 - **No delete** for packages, sets or sprites.
 - **128×128 is slow to open** — about half a second, because the grid renders one DOM node per
   cell (16384 of them). Painting stays responsive at every size. Rendering to a `<canvas>` would
