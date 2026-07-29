@@ -3,7 +3,7 @@ import * as ex from './export.ts';
 import * as history from './history.ts';
 import * as storage from './storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from './image.ts';
-import { reflect as reflectHalf, SIDES, type Side } from './grid.ts';
+import { reflect as reflectHalf, rotate as spin, SIDES, type Side } from './grid.ts';
 import * as shape from './shapes.ts';
 import type { Point } from './shapes.ts';
 import { blank, editor, GRIDS, type Frame, type GridSize, type Sprite } from './store.svelte.ts';
@@ -11,6 +11,8 @@ import { blank, editor, GRIDS, type Frame, type GridSize, type Sprite } from './
 type Color = number | string | null;
 /** Trailing options every shape shares: `fill` (ignored by `line`) and the usual sprite override. */
 type ShapeOpts = { fill?: boolean; sprite?: string };
+/** Centre of rotation, in pixel coordinates: whole for a pixel, `.5` for the corner between two. */
+type RotateOpts = { cx?: number; cy?: number; sprite?: string };
 
 const taken = (list: { name: string }[], name: string, what: string) => {
 	if (!name || typeof name !== 'string') throw new Error(`${what} needs a name`);
@@ -271,6 +273,20 @@ const api = {
 		reflectHalf(t.sprite.pixels, t.grid, from);
 	}),
 
+	/** Turn a sprite in steps of 30°, positive clockwise. See AGENTS.md §Painting. */
+	rotate: mut(function (angle: number, { cx, cy, sprite }: RotateOpts = {}) {
+		const t = target(sprite);
+		const lost = spin(t.sprite.pixels, t.grid, angle, cx, cy);
+		const mid = (t.grid - 1) / 2;
+		return {
+			sprite: t.sprite.name,
+			angle,
+			center: [cx ?? mid, cy ?? mid],
+			solid: t.sprite.pixels.reduce((n, p) => n + (p === TRANSPARENT ? 0 : 1), 0),
+			lost
+		};
+	}),
+
 	/** Shift a sprite's pixels; anything pushed off the edge is dropped. */
 	shift: mut(function (dx: number, dy: number, sprite?: string) {
 		const t = target(sprite);
@@ -428,7 +444,7 @@ const api = {
 			],
 			groups: {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select'],
-				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'reflect', 'shift', 'clear', 'import_image'],
+				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'reflect', 'rotate', 'shift', 'clear', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['set_animation', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
@@ -443,6 +459,7 @@ const api = {
 				'paint_map() is by far the fastest way to draw — one call per sprite.',
 				'shapes.circle/square/triangle/… fill a whole form in one call, and one undo step. Blocking a body out with shapes then detailing with paint_map beats plotting pixels by hand.',
 				'print_sprite() renders the sprite as ASCII so you can check your own work.',
+				'rotate() only comes back exactly at 90/180/270 about the default centre — check the `lost` it returns.',
 				'Async commands (import_image, export_zip, export_ico) must be awaited.',
 				'To import an image you have no file picker for, pass a data: URL.'
 			]

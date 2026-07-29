@@ -63,6 +63,32 @@ All painting commands take an optional trailing `sprite` name and default to the
   right half with a mirror of the left. Draw one side, then reflect — far more reliable than
   hand-drawing a symmetric character twice, and it guarantees an exact silhouette. Stamp asymmetric
   detail (spots, highlights, a turned head) *after* reflecting.
+- `rotate(angle, opts?)` — turn the sprite. `angle` is in degrees and must be a **multiple of 30**
+  (`45` throws); **positive is clockwise**, like CSS. `opts` is `{ cx, cy, sprite }`. Returns
+  `{ sprite, angle, center, solid, lost }`: `solid` is how many non-transparent cells the sprite has
+  now, and `lost` is how many non-transparent cells **no destination sampled** — clipped at the edge,
+  or dropped in the resample. `lost` is never negative, and it is not a net change: nearest-neighbour
+  resampling *duplicates* cells as well as dropping them, so `solid` can go up and `lost` be non-zero
+  in the same turn.
+  ```js
+  frogsprite.rotate(90);                       // quarter turn clockwise, about the canvas centre
+  frogsprite.rotate(-30);                      // a sixth of a right angle, counter-clockwise
+  frogsprite.rotate(60, { cx: 4, cy: 4 });     // pixel (4,4) stays exactly where it is
+  ```
+  Three things worth knowing:
+  - **The centre defaults to the centre of the canvas**, `(grid - 1) / 2` — `7.5` on a 16 grid.
+    Every grid is even, so the true centre is the corner where four pixels meet, not a pixel. `cx`
+    and `cy` are ordinary pixel coordinates and take **multiples of 0.5**: a whole number names a
+    pixel and pins it in place, a half names the corner between two pixels and pins nothing.
+  - **A turn is lossless only at 90/180/270 about the default centre.** There it is a pure
+    permutation of the grid and four quarter turns come back exactly. Change *either* half of that
+    and it stops being true:
+    - Any other angle resamples to the nearest pixel, so twelve 30° turns are *not* the original
+      sprite back. Turn the original by the angle you want rather than accumulating steps.
+    - A quarter turn about any other centre swings part of the canvas off the edge and clips it —
+      `rotate(90, { cx: 4, cy: 4 })` **loses pixels**, and undoing it will not bring them back.
+    Check `lost` when it matters; `undo()` is the only way back.
+  - **Anything that swings off the canvas is cut**, the same rule shapes follow.
 - `shift(dx, dy)` — move all pixels; anything pushed off the edge is dropped
 - `clear(color?)` — fill the sprite (default transparent)
 
@@ -109,7 +135,8 @@ Blocking a sprite out with shapes and then detailing it with `paint_map()` is us
 plotting pixels by hand, and much easier to correct.
 
 In the UI these are under **Tools → Shapes** in the sidebar: one dialog per shape, filled, in the
-current colour. Outlines are JS-only.
+current colour. Outlines are JS-only. **Tools → Rotate** takes an angle on its own, or
+`angle, cx, cy`, and warns when a turn loses pixels.
 
 ### Importing an image
 
