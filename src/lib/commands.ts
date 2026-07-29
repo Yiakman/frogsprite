@@ -4,10 +4,14 @@ import * as history from './history.ts';
 import * as storage from './storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from './image.ts';
 import { reflect as reflectHalf, SIDES, type Side } from './grid.ts';
+import * as shape from './shapes.ts';
+import type { Point } from './shapes.ts';
 import { unzip, zip, type ZipEntry } from './zip.ts';
 import { blank, editor, GRIDS, type Frame, type GridSize, type Sprite, type SpriteSet } from './store.svelte.ts';
 
 type Color = number | string | null;
+/** Trailing options every shape shares: `fill` (ignored by `line`) and the usual sprite override. */
+type ShapeOpts = { fill?: boolean; sprite?: string };
 
 const taken = (list: { name: string }[], name: string, what: string) => {
 	if (!name || typeof name !== 'string') throw new Error(`${what} needs a name`);
@@ -72,11 +76,43 @@ function restore(entry: history.Entry | null) {
 	return true;
 }
 
-/** Snapshot before a change the UI is about to make in place, rather than through a command. */
-export const checkpoint = () => history.push(snap());
+/**
+ * Snapshot before a change the UI is about to make in place, rather than through a command.
+ * Hands back what it recorded, so a change that turns out not to happen can drop it again.
+ */
+export const checkpoint = () => {
+	const entry = snap();
+	history.push(entry);
+	return entry.raw;
+};
+
+/**
+ * Persist, and take the snapshot back if the document ended up exactly where it started. Without
+ * this a command that throws on its arguments — or paints entirely off the canvas — would cost a
+ * ⌘Z that visibly does nothing, and would throw away the redo branch on its way.
+ *
+ * ponytail: one extra serialise per mutating command. A revision counter on the store would be
+ * cheaper, but only by touching every mutation site, which is the bookkeeping snapshots exist to
+ * avoid. Swap if painting a 128 grid from an agent ever measures slow.
+ */
+const settle = (before: string | undefined) => {
+	if (before !== undefined && storage.serialise(editor.packages) === before) history.rollback();
+	editor.save();
+};
+
 /** A drag is one undo step: begin on pointerdown, end on pointerup. */
-export const beginStroke = () => history.begin(snap());
-export const endStroke = () => history.end();
+let stroke: string | undefined;
+export const beginStroke = () => {
+	const entry = snap();
+	history.begin(entry);
+	stroke = entry.raw;
+};
+export const endStroke = () => {
+	history.end();
+	// a click that landed on a pixel already the right colour painted nothing — leave no step
+	if (stroke !== undefined) settle(stroke);
+	stroke = undefined;
+};
 
 function target(name?: string): { sprite: Sprite; grid: GridSize } {
 	const set = editor.requireSet();
@@ -419,6 +455,7 @@ const api = {
 				"frogsprite.new_package('demo')",
 				"frogsprite.new_set('hero', 16)        // grid: 8, 16, 32, 64 or 128",
 				"frogsprite.new_sprite('idle')",
+				"frogsprite.shapes.circle(8, 8, 5, '#22aa33')   // whole forms in one call",
 				"frogsprite.paint_map(['.gg.', 'gggg'], { g: '#22aa33' })",
 				'frogsprite.print_sprite()             // read your own work back as ASCII',
 				'await frogsprite.export_zip({ download: true })'
@@ -426,6 +463,7 @@ const api = {
 			groups: {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select'],
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'reflect', 'shift', 'clear', 'import_image'],
+				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['set_animation', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
@@ -437,6 +475,7 @@ const api = {
 			all: Object.keys(frogsprite).sort(),
 			tips: [
 				'paint_map() is by far the fastest way to draw — one call per sprite.',
+				'shapes.circle/square/triangle/… fill a whole form in one call, and one undo step. Blocking a body out with shapes then detailing with paint_map beats plotting pixels by hand.',
 				'print_sprite() renders the sprite as ASCII so you can check your own work.',
 				'Async commands (import_image, export_zip, export_ico) must be awaited.',
 				'To import an image you have no file picker for, pass a data: URL.'
@@ -460,7 +499,6 @@ const api = {
 		if (index === TRANSPARENT)
 			throw new Error('a permanent silhouette needs a colour — null would erase the sprite');
 		const t = target(sprite);
-		checkpoint(); // the preview branch above changes nothing, so this command snapshots itself
 		let painted = 0;
 		for (let i = 0; i < t.sprite.pixels.length; i++) {
 			if (t.sprite.pixels[i] === TRANSPARENT) continue;
@@ -522,34 +560,95 @@ const api = {
 };
 
 /**
- * The commands that change the document, and so need an undo snapshot taken first. Everything
- * missing here only reads, or changes the view (`select`, playback, `background`, exports).
- * `silhouette` is absent because only its `permanent` branch paints — it checkpoints itself.
+ * Geometry, one call per shape. Kept off the flat `api` map because they live a level down as
+ * `frogsprite.shapes.*` — the maths is all in shapes.ts, so these are argument plumbing only.
+ * Coordinates outside the grid are clipped rather than refused; nonsense arguments still throw.
+ */
+const shapeApi = {
+	/** Straight line between two points, endpoints included. No fill — a line has no inside. */
+	line(x0: number, y0: number, x1: number, y1: number, color: Color, { sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.line(t.sprite.pixels, t.grid, x0, y0, x1, y1, toIndex(color));
+		return { sprite: t.sprite.name, shape: 'line', painted };
+	},
+
+	/** Axis-aligned square from its top-left corner. */
+	square(x: number, y: number, size: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.square(t.sprite.pixels, t.grid, x, y, size, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'square', painted };
+	},
+
+	circle(cx: number, cy: number, r: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.circle(t.sprite.pixels, t.grid, cx, cy, r, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'circle', painted };
+	},
+
+	/** Circle with separate radii — the way to draw a body, a head or an eye that isn't round. */
+	ellipse(cx: number, cy: number, rx: number, ry: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.ellipse(t.sprite.pixels, t.grid, cx, cy, rx, ry, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'ellipse', painted };
+	},
+
+	triangle(x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.triangle(t.sprite.pixels, t.grid, x0, y0, x1, y1, x2, y2, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'triangle', painted };
+	},
+
+	/** Any closed shape: `polygon([[2, 1], [13, 6], [7, 14]], '#22aa33')`. Three points or more. */
+	polygon(points: Point[], color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.polygon(t.sprite.pixels, t.grid, points, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'polygon', painted };
+	}
+};
+
+/**
+ * The commands that can change the document, and so are worth an undo snapshot. This is only a
+ * shortlist for speed — `settle` drops the snapshot again when a command turns out to change
+ * nothing, so a command listed here that only sometimes paints (`silhouette`) costs nothing, and a
+ * command left off it by mistake is the only real error. Everything missing reads, or changes the
+ * view: `select`, playback, `background`, exports, `state`, `print_sprite`.
  */
 const MUTATING = new Set([
 	'new_package', 'new_set', 'new_sprite', 'clone_sprite',
 	'paint_pixel', 'paint_row', 'paint_column', 'paint_map', 'clear', 'reflect', 'shift',
-	'import_image', 'set_animation', 'import_set', 'import_project', 'reset'
+	'import_image', 'set_animation', 'import_set', 'import_project', 'silhouette', 'reset'
 ]);
 
 // Snapshot before, persist after, rather than repeating either in every command.
 // Async commands must save once they have actually finished, not when they hand back a promise.
+const wrap = (mutating: boolean, fn: any) => (...args: any[]) => {
+	const before = mutating ? checkpoint() : undefined;
+	let out: unknown;
+	try {
+		out = fn(...args);
+	} catch (e) {
+		settle(before); // a command that threw on its arguments changed nothing — no step for it
+		throw e;
+	}
+	if (out instanceof Promise) return out.finally(() => settle(before));
+	settle(before);
+	return out;
+};
+
 const wrapped = Object.fromEntries(
-	Object.entries(api).map(([k, fn]) => [
-		k,
-		(...args: any[]) => {
-			if (MUTATING.has(k)) checkpoint();
-			const out = (fn as any)(...args);
-			if (out instanceof Promise) return out.finally(() => editor.save());
-			editor.save();
-			return out;
-		}
-	])
+	Object.entries(api).map(([k, fn]) => [k, wrap(MUTATING.has(k), fn)])
 ) as typeof api;
+
+// Every shape paints, so each is always worth a snapshot: one call, one undo step, however many
+// cells it covers — and none at all when the geometry lands entirely off the canvas.
+const shapes = Object.fromEntries(
+	Object.entries(shapeApi).map(([k, fn]) => [k, wrap(true, fn)])
+) as typeof shapeApi;
 
 // Outside the wrapper on purpose: these replace the document, so snapshotting them first would
 // push the state they are undoing straight back onto the stack.
 export const frogsprite = Object.assign(wrapped, {
+	shapes,
 	/** Step back one change. Selection and playback follow the document; view settings don't. */
 	undo: () => ({ ok: restore(history.undo(snap())), ...history.depth() }),
 	redo: () => ({ ok: restore(history.redo(snap())), ...history.depth() }),

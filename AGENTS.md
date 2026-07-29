@@ -66,6 +66,51 @@ All painting commands take an optional trailing `sprite` name and default to the
 - `shift(dx, dy)` — move all pixels; anything pushed off the edge is dropped
 - `clear(color?)` — fill the sprite (default transparent)
 
+#### Shapes
+
+`frogsprite.shapes.*` fills a whole form in one call. Each takes the colour, then an options object
+`{ fill = true, sprite }` — so `fill: false` draws the outline only, and `sprite` targets one by name
+like every other painting command.
+
+| call | |
+| --- | --- |
+| `shapes.line(x0, y0, x1, y1, color)` | endpoints included; no `fill` — a line has no inside |
+| `shapes.square(x, y, size, color, opts?)` | axis-aligned, from the **top-left** corner |
+| `shapes.circle(cx, cy, r, color, opts?)` | `r` is a radius in pixels; `r: 0` is a single pixel |
+| `shapes.ellipse(cx, cy, rx, ry, color, opts?)` | separate radii |
+| `shapes.triangle(x0, y0, x1, y1, x2, y2, color, opts?)` | three vertices |
+| `shapes.polygon(points, color, opts?)` | `points` is `[[x, y], …]`, three or more |
+
+Each returns `{ sprite, shape, painted }`, where `painted` counts the cells actually written —
+overlap is counted once, and anything clipped off the canvas is not counted at all.
+
+```js
+frogsprite.shapes.ellipse(8, 10, 6, 4, '#22aa33');        // body
+frogsprite.shapes.circle(8, 5, 3, '#22aa33');             // head
+frogsprite.shapes.circle(6, 4, 1, '#000000');             // eye
+frogsprite.reflect('left');                               // …and the other eye, exactly
+```
+
+Two rules worth knowing:
+
+- **Coordinates off the grid are clipped, not refused.** A shape keeps its true geometry and only
+  the pixels that land outside are dropped, so `circle(-2, -2, 6, …)` draws the corner of a circle
+  rather than a squashed whole one. Arguments that are *nonsense* still throw: non-integers, a
+  negative radius, `size` below 1, fewer than three polygon points, coordinates beyond ±4096.
+- **An outline is the boundary of the shape itself**, so an outline drawn over its own fill lines up
+  to the pixel. Where a shape runs off the canvas there is no edge to draw and the cut side stays
+  **open** — a clipped outline is not closed along the grid border. Every shape agrees on this.
+- **A zero radius collapses the shape rather than erasing it.** `circle(x, y, 0, …)` is one pixel,
+  and one zero axis is a straight run: `ellipse(8, 8, 0, 5, …)` is an 11-pixel vertical line. If
+  that wasn't the intent, it is usually a `line()` that was reached for by mistake.
+
+**One call is one undo step**, however many pixels it covers — `undo()` takes back a whole shape.
+Blocking a sprite out with shapes and then detailing it with `paint_map()` is usually faster than
+plotting pixels by hand, and much easier to correct.
+
+In the UI these are under **Tools → Shapes** in the sidebar: one dialog per shape, filled, in the
+current colour. Outlines are JS-only.
+
 ### Importing an image
 
 ```js
@@ -235,7 +280,7 @@ every non-transparent pixel of one sprite (the active one by default) to that co
 `undo()` is the only way back. It returns `{ sprite, painted, color, permanent }`; a `null` colour is refused,
 since that would erase the sprite rather than flatten it.
 
-The UI has all of this under the canvas: square swatches set the background, round ones toggle the
+The UI has all of this under **Tools → View** in the sidebar: square swatches set the background, round ones toggle the
 silhouette.
 
 ### Undo

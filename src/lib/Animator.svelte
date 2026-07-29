@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { checkpoint } from './commands';
 	import { toSVG } from './export';
-	import { editor } from './store.svelte';
+	import { editor, type Frame } from './store.svelte';
 
 	const set = $derived(editor.set);
 	const total = $derived(set ? set.frames.reduce((a, f) => a + f.ms, 0) : 0);
@@ -21,6 +21,17 @@
 		if (!sprite) return;
 		checkpoint();
 		set.frames.push({ sprite, ms: 120 });
+		editor.save();
+	}
+
+	/**
+	 * Change one field of one frame: snapshot, then write. An empty or junk `ms` is dropped rather
+	 * than stored — a frame with no duration is one that playback skips and a reload throws away.
+	 */
+	function edit<K extends keyof Frame>(frame: Frame, key: K, value: Frame[K]) {
+		if (frame[key] === value || (key === 'ms' && !(Number(value) > 0))) return;
+		checkpoint();
+		frame[key] = value;
 		editor.save();
 	}
 
@@ -92,9 +103,9 @@
 						<img src={thumb(frame.sprite)} alt="" />
 					</button>
 					<span class="n">{i + 1}</span>
-					<!-- bind:value has already written by the time change fires, so snapshot on focus;
-					     an untouched field pushes nothing, since the document is unchanged -->
-					<select bind:value={frame.sprite} onfocus={checkpoint} onchange={() => editor.save()}>
+					<!-- not bind:value: it writes before change fires, and the snapshot has to be taken
+					     while the old value is still there -->
+					<select value={frame.sprite} onchange={(e) => edit(frame, 'sprite', e.currentTarget.value)}>
 						{#each set.sprites as s (s.name)}
 							<option value={s.name}>{s.name}</option>
 						{/each}
@@ -103,9 +114,8 @@
 						type="number"
 						min="10"
 						step="10"
-						bind:value={frame.ms}
-						onfocus={checkpoint}
-						onchange={() => editor.save()}
+						value={frame.ms}
+						onchange={(e) => edit(frame, 'ms', Number(e.currentTarget.value))}
 					/>ms
 					<button class="del" aria-label="Remove frame {i + 1}" onclick={() => removeFrame(i)}>×</button>
 				</li>

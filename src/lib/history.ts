@@ -15,13 +15,32 @@ const LIMIT = 50;
 /** true between begin()/end() — one pointer stroke is one undo step, however many cells it paints */
 let open = false;
 
+/** Undoes the most recent push(), or null when the last push had no effect to undo. */
+let takeBack: (() => void) | null = null;
+
 /** Record the document as it was *before* a change. */
 export function push(entry: Entry) {
+	takeBack = null; // a push that does nothing has nothing to take back
 	if (open) return;
 	if (past[past.length - 1]?.raw === entry.raw) return; // nothing actually moved
 	past.push(entry);
-	if (past.length > LIMIT) past.shift();
-	future.length = 0; // a new edit is a new timeline
+	const trimmed = past.length > LIMIT ? past.shift() : undefined;
+	const dropped = future.splice(0); // a new edit is a new timeline
+	takeBack = () => {
+		takeBack = null;
+		past.pop();
+		if (trimmed) past.unshift(trimmed);
+		future.push(...dropped);
+	};
+}
+
+/**
+ * Take the last push() back, redo branch and all. The command wrapper calls this once it can see
+ * the change didn't happen — a command that throws on its arguments, or paints entirely off the
+ * canvas, must not cost an undo step that does nothing and a redo branch that's gone.
+ */
+export function rollback() {
+	takeBack?.();
 }
 
 /** Start a stroke: this snapshot lands, further pushes fold into it until end(). */
@@ -54,5 +73,6 @@ export const depth = () => ({ past: past.length, future: future.length });
 export function reset() {
 	past.length = 0;
 	future.length = 0;
+	takeBack = null;
 	open = false;
 }

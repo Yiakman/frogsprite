@@ -1,11 +1,9 @@
 <script lang="ts">
-	import { beginStroke, endStroke, frogsprite as fs, importFiles } from './commands';
+	import { beginStroke, endStroke, importFiles } from './commands';
 	import { PALETTE } from './palette';
 	import { editor } from './store.svelte';
 
-	// exact palette entries, so a swatch shows what the command will resolve to
-	const BACKDROPS = [null, '#ffffff', '#999999', '#000000', '#ff00ff'];
-	const SILHOUETTES = ['#000000', '#ffffff'];
+	// the swatches that set these live in the sidebar's View panel; the canvas only reports them
 	const backdrop = $derived(editor.background ? PALETTE[editor.background] : null);
 	const silhouette = $derived(editor.silhouette ? PALETTE[editor.silhouette] : null);
 
@@ -114,32 +112,6 @@
 			>
 			<span class="on" data-testid="undo-hint">· {undoKey} undo · {redoKey} redo</span>
 		</p>
-		<div class="backdrops" role="group" aria-label="Review view — the sprite itself is unchanged">
-			{#each BACKDROPS as c (c ?? 'checker')}
-				<button
-					class="sw"
-					class:checker={!c}
-					class:sel={backdrop === c}
-					style:background={c}
-					aria-pressed={backdrop === c}
-					aria-label="{c ?? 'checkerboard'} background"
-					title="Show {c ?? 'the checkerboard'} through transparent pixels"
-					onclick={() => fs.background(c)}
-				></button>
-			{/each}
-			<span class="split" aria-hidden="true"></span>
-			{#each SILHOUETTES as c (c)}
-				<button
-					class="sw sil"
-					class:sel={silhouette === c}
-					style:background={c}
-					aria-pressed={silhouette === c}
-					aria-label="{c} silhouette"
-					title="Show every painted pixel as {c} — preview only, nothing is painted"
-					onclick={() => fs.silhouette(silhouette === c ? null : c)}
-				></button>
-			{/each}
-		</div>
 	{:else}
 		<p class="empty">No sprite selected. Create one in the sidebar, or run <code>frogsprite.new_package('demo')</code> in the console.</p>
 	{/if}
@@ -158,8 +130,7 @@
 		border-color: #7cf;
 		background: #7cf1;
 	}
-	.grid,
-	.sw.checker {
+	.grid {
 		/* what shows through transparent pixels, until `background()` replaces it */
 		background-image: conic-gradient(
 			#2a2a2a 90deg,
@@ -167,8 +138,6 @@
 			#2a2a2a 180deg 270deg,
 			#232323 270deg
 		);
-	}
-	.grid {
 		display: grid;
 		grid-template-columns: repeat(var(--n), 1fr);
 		width: min(64vh, 100%);
@@ -195,35 +164,6 @@
 	}
 	.caption .on {
 		color: #666;
-	}
-	.backdrops {
-		display: flex;
-		gap: 0.3rem;
-		margin-top: -0.35rem;
-	}
-	.sw {
-		width: 1.1rem;
-		height: 1.1rem;
-		padding: 0;
-		border: 1px solid #444;
-		border-radius: 3px;
-		cursor: pointer;
-	}
-	.sw.checker {
-		background-size: 50% 50%;
-	}
-	/* round = the sprite, square = what is behind it */
-	.sw.sil {
-		border-radius: 50%;
-	}
-	.split {
-		width: 1px;
-		background: #444;
-		margin: 0.1rem 0.15rem;
-	}
-	.sw.sel {
-		outline: 2px solid #7cf;
-		outline-offset: 1px;
 	}
 	.empty {
 		color: #888;
