@@ -363,4 +363,4 @@ frogsprite.export_animated_svg();
 | `src/lib/image.ts` | image import: trim, box-average, palette snap |
 | `src/lib/zip.ts` | dependency-free ZIP writer and single-entry reader (`Compression`/`DecompressionStream`) |
 | `src/lib/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
-| `src/lib/logic.test.ts` | `npm test` — self-check for the DOM-free logic |
+| `src/lib/*.test.ts` | `npm test` — self-check for the DOM-free logic, one file per module |

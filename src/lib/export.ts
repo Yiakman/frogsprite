@@ -1,5 +1,7 @@
 import { PALETTE, TRANSPARENT } from './palette.ts';
-import type { Frame, Sprite } from './store.svelte.ts';
+import { setPayload } from './storage.ts';
+import { zip, type ZipEntry } from './zip.ts';
+import type { Frame, Sprite, SpriteSet } from './store.svelte.ts';
 
 /** SVG with horizontal runs merged into single rects. */
 export function toSVG(sprite: Sprite, grid: number, scale = 1): string {
@@ -127,6 +129,40 @@ export async function toICO(sprite: Sprite, grid: number, sizes = [16, 32, 48]):
 	return 'data:image/x-icon;base64,' + btoa(bin);
 }
 
+export const safeFile = (s: string) => s.replace(/[^\w.-]+/g, '_') || 'unnamed';
+
+/**
+ * The whole set as a .zip: every sprite as PNG and SVG, the animation as one looping SVG, and
+ * `set.json` carrying the raw pixel data so the set can be reconstructed exactly.
+ */
+export async function setArchive(set: SpriteSet, scale = 8) {
+	const text = new TextEncoder();
+	const entries: ZipEntry[] = [
+		{ name: 'set.json', data: text.encode(JSON.stringify(setPayload(set), null, 2)) }
+	];
+	for (const sprite of set.sprites) {
+		entries.push({
+			name: `png/${safeFile(sprite.name)}.png`,
+			data: await toPNGBytes(sprite, set.grid, scale)
+		});
+		entries.push({
+			name: `svg/${safeFile(sprite.name)}.svg`,
+			data: text.encode(toSVG(sprite, set.grid))
+		});
+	}
+	if (set.frames.length)
+		entries.push({
+			name: `${safeFile(set.name)}-animation.svg`,
+			data: text.encode(toAnimatedSVG(set.sprites, set.frames, set.grid))
+		});
+
+	return {
+		blob: await zip(entries),
+		filename: `${safeFile(set.name)}.zip`,
+		files: entries.map((e) => e.name)
+	};
+}
+
 export function downloadBlob(blob: Blob, filename: string) {
 	const href = URL.createObjectURL(blob);
 	const a = document.createElement('a');
@@ -136,6 +172,9 @@ export function downloadBlob(blob: Blob, filename: string) {
 	// give the click a tick to start before the URL is invalidated
 	setTimeout(() => URL.revokeObjectURL(href), 10_000);
 }
+
+export const downloadJSON = (data: unknown, filename: string) =>
+	downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), filename);
 
 export function download(data: string, filename: string) {
 	const href = data.startsWith('data:')
