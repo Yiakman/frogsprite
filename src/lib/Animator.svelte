@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { checkpoint } from './commands';
 	import { toSVG } from './export';
 	import { editor } from './store.svelte';
 
@@ -18,12 +19,14 @@
 		if (!set) return;
 		const sprite = editor.shown?.name ?? set.sprites[0]?.name;
 		if (!sprite) return;
+		checkpoint();
 		set.frames.push({ sprite, ms: 120 });
 		editor.save();
 	}
 
 	function removeFrame(i: number) {
 		if (!set) return;
+		checkpoint();
 		set.frames.splice(i, 1);
 		if (editor.frame >= set.frames.length) editor.stop();
 		editor.save();
@@ -89,7 +92,9 @@
 						<img src={thumb(frame.sprite)} alt="" />
 					</button>
 					<span class="n">{i + 1}</span>
-					<select bind:value={frame.sprite} onchange={() => editor.save()}>
+					<!-- bind:value has already written by the time change fires, so snapshot on focus;
+					     an untouched field pushes nothing, since the document is unchanged -->
+					<select bind:value={frame.sprite} onfocus={checkpoint} onchange={() => editor.save()}>
 						{#each set.sprites as s (s.name)}
 							<option value={s.name}>{s.name}</option>
 						{/each}
@@ -99,6 +104,7 @@
 						min="10"
 						step="10"
 						bind:value={frame.ms}
+						onfocus={checkpoint}
 						onchange={() => editor.save()}
 					/>ms
 					<button class="del" aria-label="Remove frame {i + 1}" onclick={() => removeFrame(i)}>×</button>

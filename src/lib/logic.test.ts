@@ -7,6 +7,7 @@ import { toAnimatedSVG, toSVG } from './export.ts';
 import { parse, serialise } from './storage.ts';
 import { GRIDS, reflect, SIDES } from './grid.ts';
 import { crc32, unzip, zip } from './zip.ts';
+import * as history from './history.ts';
 import { adjust, contentBounds, layout, sampleInto } from './image.ts';
 
 test('palette is 256 entries, index 0 transparent, gray ramp at the end', () => {
@@ -325,4 +326,42 @@ test('toAnimatedSVG emits one keyframed group per frame over the total duration'
 	assert.match(svg, /25\.000%/); // frame 0 hands over a quarter of the way through
 	assert.throws(() => toAnimatedSVG(sprites, [{ sprite: 'ghost', ms: 10 }], 2), /missing sprite/);
 	assert.throws(() => toAnimatedSVG(sprites, [], 2), /no animation frames/);
+});
+
+// --- history ----------------------------------------------------------------
+
+test('history walks back and forward, coalesces strokes, and drops the future on a new edit', () => {
+	history.reset();
+	const sel = { pkg: 'p', set: 's', sprite: 'a' };
+	const at = (raw: string) => ({ raw, sel });
+
+	assert.equal(history.undo(at('A')), null, 'nothing to undo yet');
+	assert.equal(history.redo(at('A')), null);
+
+	history.push(at('A')); // document A → B
+	history.push(at('B')); // B → C
+	history.push(at('B')); // an edit that changed nothing is not a step
+	assert.deepEqual(history.depth(), { past: 2, future: 0 });
+
+	assert.equal(history.undo(at('C'))?.raw, 'B');
+	assert.equal(history.undo(at('B'))?.raw, 'A');
+	assert.deepEqual(history.depth(), { past: 0, future: 2 });
+	assert.equal(history.redo(at('A'))?.raw, 'B', 'redo walks the future without clearing it');
+	assert.deepEqual(history.depth(), { past: 1, future: 1 });
+
+	history.push(at('B')); // editing from here abandons the redo branch
+	assert.deepEqual(history.depth(), { past: 2, future: 0 });
+
+	// a drag: one snapshot however many cells it paints
+	history.begin(at('D'));
+	history.push(at('E'));
+	history.push(at('F'));
+	history.end();
+	assert.deepEqual(history.depth(), { past: 3, future: 0 });
+	assert.equal(history.undo(at('G'))?.raw, 'D');
+
+	history.reset();
+	for (let i = 0; i < 60; i++) history.push(at(`x${i}`));
+	assert.equal(history.depth().past, 50, 'the stack is capped');
+	assert.equal(history.undo(at('now'))?.raw, 'x59', 'the newest steps are the ones kept');
 });

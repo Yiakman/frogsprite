@@ -182,8 +182,9 @@ how a set or a whole project crosses to another browser, machine or agent, and t
   The set takes the first free name (`frog`, `frog-2`, …); returns `{ set, grid, sprites, frames }`
 - `export_project({ download? })` → `{ version, packages }` — **everything**, exactly as saved
 - `import_project(data, { replace = false })` — **async.** Packages arrive alongside what is
-  already here, duplicate names suffixed. `{ replace: true }` throws the current work away first;
-  there is no undo, so it has to be asked for. Returns `{ packages, replaced }`
+  already here, duplicate names suffixed. `{ replace: true }` throws the current work away first,
+  so it has to be asked for — `undo()` takes it back if it was a mistake. Returns
+  `{ packages, replaced }`
 
 ```js
 const set = frogsprite.export_json();          // hand this text to another instance
@@ -230,12 +231,42 @@ contrasts with the background you're on; black on the default checkerboard is de
 magenta field or a black frog is never mistaken for something you painted.
 
 `silhouette(color, { permanent: true, sprite })` is the one exception: it **paints**, flattening
-every non-transparent pixel of one sprite (the active one by default) to that colour for good.
-There is no undo. It returns `{ sprite, painted, color, permanent }`; a `null` colour is refused,
+every non-transparent pixel of one sprite (the active one by default) to that colour for good —
+`undo()` is the only way back. It returns `{ sprite, painted, color, permanent }`; a `null` colour is refused,
 since that would erase the sprite rather than flatten it.
 
 The UI has all of this under the canvas: square swatches set the background, round ones toggle the
 silhouette.
+
+### Undo
+
+- `undo()` / `redo()` — step the whole document back or forward one change. Both return
+  `{ ok, past, future }`: `ok` is `false` when there was nothing left to step to
+- `history()` → `{ past, future }` — how far you can go each way
+
+Every command that changes the document is a step: painting, structure, `set_animation`, imports,
+`silhouette({ permanent: true })` and `reset()`. Commands that only look or only change the view —
+`select`, playback, `background`, `silhouette` previews, exports, `state`, `print_sprite` — are not,
+and a command that changes nothing adds no step.
+
+A step restores the document *and* the selection that went with it, so undoing a `new_sprite` does
+not leave you pointing at a sprite that no longer exists. Playback stops. View settings are left
+alone. In the UI a drag counts as one step however many cells it crosses, and **⌘Z / Ctrl+Z** and
+**⇧⌘Z / Ctrl+⇧+Z** are wired to these two commands.
+
+History is **session-only** and holds the last 50 states: it is not persisted, so a reload comes
+back with your saved work and an empty stack. Nothing is lost by that — the document itself is
+saved as usual.
+
+```js
+frogsprite.clear();          // …a mistake
+frogsprite.undo();           // → { ok: true, past: 3, future: 1 }
+frogsprite.redo();           // → { ok: true, past: 4, future: 0 }
+```
+
+A burst of single-pixel commands is a step *each*. If you are about to paint pixel by pixel and
+want one step for the lot, draw with `paint_map` / `paint_row` / `paint_column` instead — faster in
+every other way too.
 
 ### Storage
 
@@ -281,6 +312,7 @@ frogsprite.export_animated_svg();
 | `src/lib/store.svelte.ts` | reactive state (`$state` class), selection, playback |
 | `src/lib/grid.ts` | the valid grid sizes — a plain module so non-Svelte code can import them |
 | `src/lib/storage.ts` | the only module that touches `localStorage`: format, validation, writes |
+| `src/lib/history.ts` | undo/redo stacks — whole-document snapshots, session-only |
 | `src/lib/palette.ts` | the 256-colour palette and colour resolution |
 | `src/lib/export.ts` | SVG / animated SVG / PNG / ICO encoders |
 | `src/lib/image.ts` | image import: trim, box-average, palette snap |
