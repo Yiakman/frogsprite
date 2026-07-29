@@ -66,7 +66,8 @@
 		}}
 		data-testid="dialog"
 	>
-		<form onsubmit={submit}>
+		<!-- the error describes the values as submitted; editing them makes it stale -->
+		<form onsubmit={submit} oninput={() => (error = '')}>
 			<h2>{req.title}</h2>
 
 			{#each req.fields as f (f.name)}
