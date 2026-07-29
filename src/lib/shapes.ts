@@ -12,6 +12,8 @@
  */
 const LIMIT = 4096;
 
+import type { Pixels } from './grid.ts';
+
 export type Point = [number, number];
 
 function whole(v: unknown, what: string): number {
@@ -35,7 +37,7 @@ const add = (cells: Set<number>, grid: number, x: number, y: number) => {
 	if (x >= 0 && y >= 0 && x < grid && y < grid) cells.add(y * grid + x);
 };
 
-const paint = (pixels: number[], cells: Set<number>, color: number) => {
+const paint = (pixels: Pixels, cells: Set<number>, color: number) => {
 	for (const i of cells) pixels[i] = color;
 	return cells.size;
 };
@@ -116,7 +118,7 @@ function polygonCells(cells: Set<number>, grid: number, pts: Point[], fill: bool
 // Each one mutates `pixels` in place and returns how many cells it actually painted.
 
 export function line(
-	pixels: number[],
+	pixels: Pixels,
 	grid: number,
 	x0: number,
 	y0: number,
@@ -131,7 +133,7 @@ export function line(
 
 /** Axis-aligned, from its top-left corner. */
 export function square(
-	pixels: number[],
+	pixels: Pixels,
 	grid: number,
 	x: number,
 	y: number,
@@ -152,7 +154,7 @@ export function square(
 }
 
 export function ellipse(
-	pixels: number[],
+	pixels: Pixels,
 	grid: number,
 	cx: number,
 	cy: number,
@@ -175,7 +177,7 @@ export function ellipse(
 }
 
 export const circle = (
-	pixels: number[],
+	pixels: Pixels,
 	grid: number,
 	cx: number,
 	cy: number,
@@ -185,7 +187,7 @@ export const circle = (
 ): number => ellipse(pixels, grid, cx, cy, least(r, 0, 'r'), least(r, 0, 'r'), color, fill);
 
 export function polygon(
-	pixels: number[],
+	pixels: Pixels,
 	grid: number,
 	points: Point[],
 	color: number,
@@ -205,7 +207,7 @@ export function polygon(
 }
 
 export const triangle = (
-	pixels: number[],
+	pixels: Pixels,
 	grid: number,
 	x0: number,
 	y0: number,

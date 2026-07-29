@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { beginStroke, endStroke, importFiles } from './commands';
+	import { paint as render } from './export';
 	import { PALETTE } from './palette';
 	import { editor } from './store.svelte';
 
@@ -9,6 +10,9 @@
 
 	let painting = $state(false);
 	let dropping = $state(false);
+	let canvas: HTMLCanvasElement | undefined = $state();
+	/** cell under the pointer, or -1 — drawn as one moving outline instead of a :hover per cell */
+	let hover = $state(-1);
 
 	// Mac uses ⌘, everyone else Ctrl — same shortcut, just named for the keyboard it's on.
 	const mac = navigator.platform?.startsWith('Mac') ?? false;
@@ -31,6 +35,15 @@
 	// A paused frame is still editable — only the running timer locks the canvas.
 	const live = $derived(!editor.running && !!sprite);
 
+	// The canvas is one element whatever the grid size, so a redraw costs the same at 128 as at 8.
+	// Pixel writes are invisible to Svelte by design (see store.svelte.ts), so `revision` — bumped
+	// by every save() — is what says "look again".
+	$effect(() => {
+		void editor.revision;
+		if (!canvas || !sprite) return;
+		render(canvas.getContext('2d')!, sprite, grid, grid, silhouette ?? undefined);
+	});
+
 	function paint(i: number) {
 		if (!live || i < 0) return;
 		const pixels = editor.shown!.pixels;
@@ -39,12 +52,13 @@
 		editor.save();
 	}
 
-	// One pair of listeners on the container rather than two per cell: `pointerenter` does not
-	// bubble, so per-cell handlers cannot be delegated and a 128 grid would attach 32768 of them.
-	const cellOf = (e: PointerEvent) => {
-		const i = (e.target as HTMLElement | null)?.dataset?.i;
-		return i === undefined ? -1 : +i;
-	};
+	/** Which cell the pointer is over, from where it landed on the canvas — or -1 for outside it. */
+	function cellOf(e: PointerEvent): number {
+		const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+		const x = Math.floor(((e.clientX - r.left) / r.width) * grid);
+		const y = Math.floor(((e.clientY - r.top) / r.height) * grid);
+		return x < 0 || y < 0 || x >= grid || y >= grid ? -1 : y * grid + x;
+	}
 </script>
 
 <svelte:window
@@ -68,35 +82,37 @@
 	ondrop={drop}
 >
 	{#if sprite}
+		<!-- the checkerboard and the cell rules live on the wrapper, behind and over a canvas that
+		     is transparent wherever the sprite is -->
 		<div
 			class="grid"
 			class:live
-			data-testid="grid"
 			style:--n={grid}
 			style:background={backdrop}
 			role="img"
 			aria-label="{grid} by {grid} pixel canvas showing {sprite.name}"
-			onpointerdown={(e) => {
-				painting = true;
-				// one snapshot for the whole drag, not one per cell it crosses
-				if (live) beginStroke();
-				paint(cellOf(e));
-			}}
-			onpointermove={(e) => painting && paint(cellOf(e))}
 		>
-			{#each sprite.pixels as p, i (i)}
-				<!--
-					Cells are pointer-only: they have no click handler, so a focusable cell would be a
-					tab stop that does nothing — 16384 of them on a 128 grid. Hidden from the
-					accessibility tree and taken out of the tab order; the grid below is labelled instead.
-				-->
-				<div
-					class="px"
-					data-i={i}
-					aria-hidden="true"
-					style:background={p === 0 ? 'transparent' : (silhouette ?? PALETTE[p])}
-				></div>
-			{/each}
+			<canvas
+				bind:this={canvas}
+				data-testid="grid"
+				width={grid}
+				height={grid}
+				aria-hidden="true"
+				onpointerdown={(e) => {
+					painting = true;
+					// one snapshot for the whole drag, not one per cell it crosses
+					if (live) beginStroke();
+					paint(cellOf(e));
+				}}
+				onpointermove={(e) => {
+					hover = cellOf(e);
+					if (painting) paint(hover);
+				}}
+				onpointerleave={() => (hover = -1)}
+			></canvas>
+			{#if live && hover >= 0}
+				<div class="cursor" style:--x={hover % grid} style:--y={Math.floor(hover / grid)}></div>
+			{/if}
 		</div>
 		<p class="caption" data-testid="caption">
 			{grid}×{grid} — <strong>{sprite.name}</strong>
@@ -138,21 +154,42 @@
 			#2a2a2a 180deg 270deg,
 			#232323 270deg
 		);
-		display: grid;
-		grid-template-columns: repeat(var(--n), 1fr);
+		position: relative;
 		width: min(64vh, 100%);
 		aspect-ratio: 1;
 		border: 1px solid #444;
 		background-size: calc(200% / var(--n)) calc(200% / var(--n));
 		touch-action: none;
 	}
-	.px {
-		all: unset;
-		aspect-ratio: 1;
-		box-shadow: inset 0 0 0 0.5px #ffffff12;
+	.grid canvas {
+		display: block;
+		width: 100%;
+		height: 100%;
+		image-rendering: pixelated;
 	}
-	.grid.live .px:hover {
+	/* one cell rule per column and row, instead of an inset shadow on every cell */
+	.grid::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		background-image:
+			repeating-linear-gradient(
+				to right,
+				#ffffff12 0 1px,
+				transparent 1px calc(100% / var(--n))
+			),
+			repeating-linear-gradient(to bottom, #ffffff12 0 1px, transparent 1px calc(100% / var(--n)));
+	}
+	.cursor {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: calc(100% / var(--n));
+		height: calc(100% / var(--n));
+		translate: calc(var(--x) * 100%) calc(var(--y) * 100%);
 		box-shadow: inset 0 0 0 1px #7cf;
+		pointer-events: none;
 	}
 	.caption {
 		margin: 0;

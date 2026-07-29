@@ -10,6 +10,7 @@
 	// ponytail: thumbnails reuse the SVG exporter rather than a second renderer, handed to
 	// <img> as a data URI so no markup is ever injected into the page.
 	const thumb = (name: string) => {
+		void editor.revision; // pixel writes are outside the reactive graph — see store.svelte.ts
 		const sprite = set?.sprites.find((s) => s.name === name);
 		if (!sprite || !set) return '';
 		return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(toSVG(sprite, set.grid));

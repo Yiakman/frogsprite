@@ -124,7 +124,7 @@ sharing between devices. That is the one feature that would genuinely require a 
 | `src/lib/image.ts` | image import: trim, box-average, palette snap |
 | `src/lib/export.ts` | SVG / animated SVG / PNG / ICO encoders |
 | `src/lib/zip.ts` | dependency-free ZIP writer |
-| `src/lib/grid.ts` | valid grid sizes and the reflect transform |
+| `src/lib/grid.ts` | valid grid sizes, the pixel-buffer type, and the reflect/rotate transforms |
 | `src/lib/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
 | `src/lib/*.test.ts` | `npm test` — self-checks for the DOM-free logic, one file per module |
 | `public/examples.json` | the `frog16` / `frog32` sets seeded on a first visit |
@@ -151,12 +151,20 @@ sharing between devices. That is the one feature that would genuinely require a 
   inverses. The document is small, and every command plus the canvas itself mutates it in place, so
   reversible-command bookkeeping would only be a way to miss one. Restoring is a `parse()` away, and
   a drag coalesces into one step the same way writes coalesce into one save.
+- **The canvas is a `<canvas>`, and pixels are a `Uint8Array`** — the two halves of one decision.
+  Svelte's deep proxy leaves anything that isn't a plain object or array alone, so a typed array
+  keeps 16384 cells out of the reactive graph: an undo snapshot of a 128 grid serialised in ~29ms
+  through the proxy and ~1ms as plain data, twice per command. What that costs is per-pixel
+  reactivity, so the editor draws through the same renderer the PNG exporter uses and redraws on
+  one signal — `editor.revision`, bumped by every `save()`. Anything deriving from pixel *contents*
+  reads that signal instead of the pixels.
 
 ## Known limitations
 
 - **Undo is session-only** — 50 steps, and a reload starts from an empty stack with your saved work.
 - **No delete** for packages, sets or sprites.
-- **128×128 is slow to open** — about half a second, because the grid renders one DOM node per
-  cell (16384 of them). Painting stays responsive at every size. Rendering to a `<canvas>` would
-  fix it if it becomes annoying.
+- **Large grids cost snapshot time, not render time** — the canvas redraws in about a millisecond
+  at any size, but every command still serialises the whole document twice for undo, which is
+  ~3.5ms once a project holds a few 128 sprites. Snapshotting only the set that changed is the next
+  move if that ever bites.
 - **No spritesheet export** — the ZIP contains individual PNGs, not a packed strip.

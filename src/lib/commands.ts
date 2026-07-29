@@ -246,7 +246,7 @@ const api = {
 			dest = target(into).sprite;
 		}
 		const pixels = await imageToPixels(source, set.grid, rest);
-		dest.pixels.splice(0, dest.pixels.length, ...pixels);
+		dest.pixels.set(pixels);
 		return { sprite: dest.name, grid: set.grid, colours: new Set(pixels.filter((p) => p)).size };
 	}),
 
@@ -256,7 +256,7 @@ const api = {
 		const src = set.sprites.find((s) => s.name === from);
 		if (!src) throw new Error(`no sprite "${from}"`);
 		taken(set.sprites, to, 'sprite');
-		set.sprites.push({ name: to, pixels: [...src.pixels] });
+		set.sprites.push({ name: to, pixels: src.pixels.slice() });
 		editor.sel = { ...editor.sel, sprite: to };
 		return to;
 	}),
@@ -299,7 +299,7 @@ const api = {
 				next[ny * t.grid + nx] = t.sprite.pixels[y * t.grid + x];
 			}
 		}
-		t.sprite.pixels.splice(0, next.length, ...next);
+		t.sprite.pixels.set(next);
 	}),
 
 	// ---- animation -------------------------------------------------------
@@ -497,8 +497,9 @@ const api = {
 	read_sprite: ro(function (sprite?: string) {
 		const t = target(sprite);
 		const rows: number[][] = [];
+		// plain arrays, not the Uint8Array slice: this is what an agent reads back and JSON-prints
 		for (let y = 0; y < t.grid; y++)
-			rows.push(t.sprite.pixels.slice(y * t.grid, (y + 1) * t.grid));
+			rows.push(Array.from(t.sprite.pixels.subarray(y * t.grid, (y + 1) * t.grid)));
 		return rows;
 	}),
 

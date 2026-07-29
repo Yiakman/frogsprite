@@ -14,8 +14,16 @@ const WRITE_DELAY = 250;
 
 type Saved = { version: number; packages: Package[] };
 
+/**
+ * Undo snapshots go through here on every command, so this is a hot path. Map to the plain
+ * interchange shape first rather than handing JSON a replacer: a replacer is called once per
+ * *element*, which on a 128 grid is 16384 calls per sprite.
+ */
 export function serialise(packages: Package[]): string {
-	return JSON.stringify({ version: VERSION, packages } satisfies Saved);
+	return JSON.stringify({
+		version: VERSION,
+		packages: packages.map((p) => ({ name: p.name, sets: p.sets.map(setPayload) }))
+	});
 }
 
 const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
@@ -38,7 +46,7 @@ function readSprite(v: any, cells: number): Sprite | null {
 	const n = name(v?.name);
 	if (!n || !Array.isArray(v.pixels)) return null;
 	// Repair rather than reject: wrong-length or junk pixels become transparent.
-	const pixels = new Array<number>(cells);
+	const pixels = new Uint8Array(cells);
 	for (let i = 0; i < cells; i++) {
 		const p = v.pixels[i];
 		pixels[i] = Number.isInteger(p) && p >= 0 && p < 256 ? p : 0;

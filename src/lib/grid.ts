@@ -5,6 +5,12 @@ import { TRANSPARENT } from './palette.ts';
 
 export type GridSize = 8 | 16 | 32 | 64 | 128;
 
+/**
+ * A sprite's cells, row-major. Sprites hold a `Uint8Array` (see store.svelte.ts), but everything
+ * here is plain index arithmetic, so the tests hand these functions ordinary arrays.
+ */
+export type Pixels = Uint8Array | number[];
+
 /** The single source of truth for valid grids — creation and load-time validation both read this. */
 export const GRIDS: GridSize[] = [8, 16, 32, 64, 128];
 
@@ -42,7 +48,7 @@ const half = (v: unknown, grid: number, what: string): number => {
  * is meaningless. Lossless free rotation needs an unrotated source kept alongside, i.e. layers.
  */
 export function rotate(
-	pixels: number[],
+	pixels: Pixels,
 	grid: number,
 	degrees: number,
 	cx = (grid - 1) / 2,
@@ -73,8 +79,8 @@ export function rotate(
 	}
 	let lost = 0;
 	for (let i = 0; i < pixels.length; i++) if (pixels[i] !== TRANSPARENT && !kept[i]) lost++;
-	// splice, never reassign: the caller's array is a $state proxy whose identity has to survive
-	pixels.splice(0, out.length, ...out);
+	// in place, never reassign: the sprite's buffer is the one the canvas reads from
+	for (let i = 0; i < out.length; i++) pixels[i] = out[i];
 	return lost;
 }
 
@@ -83,7 +89,7 @@ export function rotate(
  * `reflect(px, 16, 'left')` keeps the left half and overwrites the right with its mirror image.
  * Every supported grid is even, so there is no middle row or column to disambiguate.
  */
-export function reflect(pixels: number[], grid: number, from: Side): void {
+export function reflect(pixels: Pixels, grid: number, from: Side): void {
 	const half = grid >> 1;
 	if (from === 'left' || from === 'right') {
 		for (let y = 0; y < grid; y++) {
