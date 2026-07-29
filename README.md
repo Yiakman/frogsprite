@@ -156,8 +156,9 @@ sharing between devices. That is the one feature that would genuinely require a 
   keeps 16384 cells out of the reactive graph: an undo snapshot of a 128 grid serialised in ~29ms
   through the proxy and ~1ms as plain data, twice per command. What that costs is per-pixel
   reactivity, so the editor draws through the same renderer the PNG exporter uses and redraws on
-  one signal — `editor.revision`, bumped by every `save()`. Anything deriving from pixel *contents*
-  reads that signal instead of the pixels.
+  one signal — `editor.revision`, bumped by every `save()`. Reading pixel *contents* anywhere
+  reactive goes through `pixelsOf(sprite)`, which subscribes to that signal on the way past;
+  reaching for `sprite.pixels` directly in a component renders once and then never updates again.
 
 ## Known limitations
 

@@ -3,7 +3,8 @@
 	import { notify } from './Dialog.svelte';
 	import { paint as render } from './export';
 	import { PALETTE } from './palette';
-	import { editor } from './store.svelte';
+	import { line } from './shapes';
+	import { editor, pixelsOf } from './store.svelte';
 
 	// the swatches that set these live in the sidebar's View panel; the canvas only reports them
 	const backdrop = $derived(editor.background ? PALETTE[editor.background] : null);
@@ -37,19 +38,29 @@
 	const live = $derived(!editor.running && !!sprite);
 
 	// The canvas is one element whatever the grid size, so a redraw costs the same at 128 as at 8.
-	// Pixel writes are invisible to Svelte by design (see store.svelte.ts), so `revision` — bumped
-	// by every save() — is what says "look again".
 	$effect(() => {
-		void editor.revision;
 		if (!canvas || !sprite) return;
+		void pixelsOf(sprite); // render() reads the buffer, which Svelte cannot see on its own
 		render(canvas.getContext('2d')!, sprite, grid, grid, silhouette ?? undefined);
 	});
 
+	/** The cell the stroke was last on, or -1 between strokes. */
+	let from = -1;
+
 	function paint(i: number) {
-		if (!live || i < 0) return;
+		if (!live || i < 0 || i === from) return; // a drag re-enters the same cell constantly
 		const pixels = editor.shown!.pixels;
-		if (pixels[i] === editor.color) return; // a drag re-enters the same cell constantly
-		pixels[i] = editor.color;
+		const prev = from;
+		from = i;
+		if (prev < 0) {
+			if (pixels[i] === editor.color) return; // a click on a cell already that colour
+			pixels[i] = editor.color;
+		} else {
+			// pointermove samples every few cells at most — join them up rather than dotting the
+			// stroke, which a 128 grid makes obvious
+			const g = grid;
+			line(pixels, g, prev % g, (prev / g) | 0, i % g, (i / g) | 0, editor.color);
+		}
 		editor.save();
 	}
 
@@ -101,6 +112,7 @@
 				aria-hidden="true"
 				onpointerdown={(e) => {
 					painting = true;
+					from = -1; // a new stroke starts where it lands, not where the last one ended
 					// one snapshot for the whole drag, not one per cell it crosses
 					if (live) beginStroke();
 					paint(cellOf(e));

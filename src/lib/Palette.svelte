@@ -1,15 +1,14 @@
 <script lang="ts">
 	import { GRAY_START, PALETTE } from './palette';
-	import { editor } from './store.svelte';
+	import { editor, pixelsOf } from './store.svelte';
 
 	// The colours actually on the canvas — for pixel art that's the handful you keep reaching for,
 	// so they go on one always-visible row and the full 256 stay folded away.
 	const used = $derived.by(() => {
-		void editor.revision; // pixel writes are outside the reactive graph — see store.svelte.ts
 		const set = editor.set;
 		if (!set) return [];
 		const seen = new Set<number>();
-		for (const s of set.sprites) for (const p of s.pixels) if (p) seen.add(p);
+		for (const s of set.sprites) for (const p of pixelsOf(s)) if (p) seen.add(p);
 		return [...seen].sort((a, b) => a - b);
 	});
 </script>

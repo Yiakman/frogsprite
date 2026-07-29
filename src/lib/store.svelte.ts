@@ -5,13 +5,6 @@ import type { GridSize } from './grid.ts';
 // re-exported so the rest of the app can keep treating this module as the domain's front door
 export { GRIDS, type GridSize } from './grid.ts';
 export type Frame = { sprite: string; ms: number };
-/**
- * `pixels` is a Uint8Array, not an array, and that is load-bearing: Svelte's deep proxy leaves
- * anything that isn't a plain object or array alone, so the pixel buffer stays outside the
- * reactive graph. Serialising a 128 grid through the proxy cost ~29ms per call — twice per
- * command; as a typed array it is ~0.3ms. Nothing observes a pixel write directly: `revision` is
- * what the canvas redraws on. See README §How it works.
- */
 export type Sprite = { name: string; pixels: Uint8Array };
 export type SpriteSet = { name: string; grid: GridSize; sprites: Sprite[]; frames: Frame[] };
 export type Package = { name: string; sets: SpriteSet[] };
@@ -188,6 +181,17 @@ class Editor {
 }
 
 export const editor = new Editor();
+
+/**
+ * Read a sprite's pixels from anywhere reactive — a component, a `$derived`, an `$effect`. Writes
+ * to the buffer are invisible to Svelte (see `Sprite`), so anything that reaches for
+ * `sprite.pixels` directly renders once and then never updates again. Going through here
+ * subscribes to `revision`, which every save() bumps. Writers can use `sprite.pixels` as they are.
+ */
+export function pixelsOf(sprite: Sprite): Uint8Array {
+	void editor.revision;
+	return sprite.pixels;
+}
 
 // zero-fill is already TRANSPARENT, so there is nothing to fill
 export const blank = (grid: GridSize): Uint8Array => new Uint8Array(grid * grid);
