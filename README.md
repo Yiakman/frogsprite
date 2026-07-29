@@ -126,7 +126,7 @@ sharing between devices. That is the one feature that would genuinely require a 
 | `src/lib/zip.ts` | dependency-free ZIP writer |
 | `src/lib/grid.ts` | valid grid sizes and the reflect transform |
 | `src/lib/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
-| `src/lib/logic.test.ts` | `npm test` — self-checks for the DOM-free logic |
+| `src/lib/*.test.ts` | `npm test` — self-checks for the DOM-free logic, one file per module |
 | `public/examples.json` | the `frog16` / `frog32` sets seeded on a first visit |
 | `public/icon.svg` | the project icon — favicon, sidebar, README |
 
