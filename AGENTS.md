@@ -34,10 +34,10 @@ one. New packages/sets/sprites become the current selection automatically.
 ### Structure
 
 - `new_package(name)`
-- `new_set(name, grid)` — `grid` is `8`, `16`, `32`, `64` or `128`. Larger grids cost real time:
-  selecting a 128 sprite takes roughly half a second to render (16384 cells), and `print_sprite`
-  returns 128 lines of 128 characters. Painting stays responsive at every size. Prefer 8–32 for
-  hand-drawn sprites and reach for 64/128 mainly when importing an image.
+- `new_set(name, grid)` — `grid` is `8`, `16`, `32`, `64` or `128`. Every size renders and paints in
+  a few milliseconds; what a 128 grid really costs you is reading it back, since `print_sprite`
+  returns 128 lines of 128 characters. Prefer 8–32 for hand-drawn sprites and reach for 64/128
+  mainly when importing an image.
 - `new_sprite(name)`
 - `clone_sprite(from, to)` — copy a sprite; the usual way to start the next animation frame
 - `select(pkg?, set?, sprite?)` — pass `undefined` to leave a level unchanged

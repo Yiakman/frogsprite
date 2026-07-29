@@ -62,20 +62,35 @@ ${groups.join('\n')}
 </svg>`;
 }
 
-function draw(sprite: Sprite, grid: number, size: number): HTMLCanvasElement {
-	const c = document.createElement('canvas');
-	c.width = c.height = size;
-	const ctx = c.getContext('2d')!;
+/**
+ * Draw a sprite onto a `size`×`size` context, transparent where the sprite is. `flat` overrides
+ * every colour, which is the silhouette view. The editor's canvas renders through this too, so
+ * what you see on screen and what you export come out of the same loop.
+ */
+export function paint(
+	ctx: CanvasRenderingContext2D,
+	sprite: Sprite,
+	grid: number,
+	size: number,
+	flat?: string
+): void {
+	ctx.clearRect(0, 0, size, size);
 	ctx.imageSmoothingEnabled = false;
 	const s = size / grid;
 	for (let y = 0; y < grid; y++) {
 		for (let x = 0; x < grid; x++) {
 			const p = sprite.pixels[y * grid + x];
 			if (p === TRANSPARENT) continue;
-			ctx.fillStyle = PALETTE[p];
+			ctx.fillStyle = flat ?? PALETTE[p];
 			ctx.fillRect(x * s, y * s, s, s);
 		}
 	}
+}
+
+function draw(sprite: Sprite, grid: number, size: number): HTMLCanvasElement {
+	const c = document.createElement('canvas');
+	c.width = c.height = size;
+	paint(c.getContext('2d')!, sprite, grid, size);
 	return c;
 }
 

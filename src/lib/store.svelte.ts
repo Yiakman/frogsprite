@@ -1,11 +1,11 @@
-import { PALETTE, TRANSPARENT } from './palette.ts';
+import { PALETTE } from './palette.ts';
 import * as storage from './storage.ts';
 
 import type { GridSize } from './grid.ts';
 // re-exported so the rest of the app can keep treating this module as the domain's front door
 export { GRIDS, type GridSize } from './grid.ts';
 export type Frame = { sprite: string; ms: number };
-export type Sprite = { name: string; pixels: number[] };
+export type Sprite = { name: string; pixels: Uint8Array };
 export type SpriteSet = { name: string; grid: GridSize; sprites: Sprite[]; frames: Frame[] };
 export type Package = { name: string; sets: SpriteSet[] };
 
@@ -24,6 +24,12 @@ class Editor {
 	frame = $state(-1);
 	/** true only while the timer is advancing frames — paused still holds a frame */
 	running = $state(false);
+	/**
+	 * Bumped by every save(), which is to say after every mutation from anywhere — commands, the
+	 * canvas, the animation panel. Pixel writes are invisible to Svelte (see `Sprite`), so anything
+	 * deriving from pixel *contents* reads this to know it has to look again.
+	 */
+	revision = $state(0);
 	#timer: ReturnType<typeof setTimeout> | undefined;
 
 	get pkg() {
@@ -148,6 +154,7 @@ class Editor {
 	}
 
 	save() {
+		this.revision++;
 		storage.save(this.packages);
 	}
 
@@ -175,5 +182,16 @@ class Editor {
 
 export const editor = new Editor();
 
-export const blank = (grid: GridSize): number[] =>
-	new Array(grid * grid).fill(TRANSPARENT);
+/**
+ * Read a sprite's pixels from anywhere reactive — a component, a `$derived`, an `$effect`. Writes
+ * to the buffer are invisible to Svelte (see `Sprite`), so anything that reaches for
+ * `sprite.pixels` directly renders once and then never updates again. Going through here
+ * subscribes to `revision`, which every save() bumps. Writers can use `sprite.pixels` as they are.
+ */
+export function pixelsOf(sprite: Sprite): Uint8Array {
+	void editor.revision;
+	return sprite.pixels;
+}
+
+// zero-fill is already TRANSPARENT, so there is nothing to fill
+export const blank = (grid: GridSize): Uint8Array => new Uint8Array(grid * grid);

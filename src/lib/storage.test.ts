@@ -11,7 +11,7 @@ const pkg = (over = {}) => [
 			{
 				name: 's',
 				grid: 8,
-				sprites: [{ name: 'a', pixels: new Array(64).fill(3) }],
+				sprites: [{ name: 'a', pixels: new Uint8Array(64).fill(3) }],
 				frames: [{ sprite: 'a', ms: 100 }],
 				...over
 			}
@@ -19,12 +19,17 @@ const pkg = (over = {}) => [
 	}
 ];
 
+/** `pkg()` as it looks on disk: JSON has no Uint8Array, so pixels are written as plain arrays. */
+const stored = (over = {}) => JSON.stringify(JSON.parse(serialise(pkg(over) as any)).packages);
+
 test('storage round-trips packages', () => {
 	assert.deepEqual(parse(serialise(pkg() as any)), pkg());
+	// pixels are a Uint8Array, which JSON writes as {"0":3,…} unless serialise converts it back
+	assert.match(serialise(pkg() as any), /"pixels":\[3,3,3/);
 });
 
 test('storage still reads the older bare-array format', () => {
-	assert.deepEqual(parse(JSON.stringify(pkg())), pkg());
+	assert.deepEqual(parse(stored()), pkg());
 });
 
 test('parse never throws and salvages what it can', () => {
@@ -62,14 +67,18 @@ test('parse repairs bad pixel data instead of dropping the sprite', () => {
 	);
 	const pixels = (parse(raw) as any)[0].sets[0].sprites[0].pixels;
 	assert.equal(pixels.length, 64, 'short array is padded to the grid');
-	assert.deepEqual(pixels.slice(0, 6), [1, 0, 0, 0, 0, 0], 'out-of-range values become transparent');
+	assert.deepEqual(
+		Array.from(pixels.slice(0, 6)),
+		[1, 0, 0, 0, 0, 0],
+		'out-of-range values become transparent'
+	);
 	assert.ok(pixels.every((p: number) => Number.isInteger(p) && p >= 0 && p < 256));
 });
 
 test('parse drops frames pointing at sprites that did not survive', () => {
-	const raw = JSON.stringify(
-		pkg({ frames: [{ sprite: 'a', ms: 100 }, { sprite: 'ghost', ms: 50 }, { sprite: 'a', ms: 0 }] })
-	);
+	const raw = stored({
+		frames: [{ sprite: 'a', ms: 100 }, { sprite: 'ghost', ms: 50 }, { sprite: 'a', ms: 0 }]
+	});
 	assert.deepEqual((parse(raw) as any)[0].sets[0].frames, [{ sprite: 'a', ms: 100 }]);
 });
 

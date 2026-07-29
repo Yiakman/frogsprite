@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { checkpoint } from './commands';
 	import { toSVG } from './export';
-	import { editor, type Frame } from './store.svelte';
+	import { editor, pixelsOf, type Frame } from './store.svelte';
 
 	const set = $derived(editor.set);
 	const total = $derived(set ? set.frames.reduce((a, f) => a + f.ms, 0) : 0);
@@ -12,6 +12,7 @@
 	const thumb = (name: string) => {
 		const sprite = set?.sprites.find((s) => s.name === name);
 		if (!sprite || !set) return '';
+		void pixelsOf(sprite); // toSVG reads the buffer, which Svelte cannot see on its own
 		return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(toSVG(sprite, set.grid));
 	};
 
