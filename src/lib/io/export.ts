@@ -1,9 +1,9 @@
-import { compose, progress, steps } from './fx.ts';
-import type { Pixels } from './grid.ts';
-import { PALETTE, TRANSPARENT } from './palette.ts';
+import { compose, progress, steps } from '../core/fx.ts';
+import type { Pixels } from '../core/grid.ts';
+import { PALETTE, TRANSPARENT } from '../core/palette.ts';
 import { setPayload } from './storage.ts';
 import { zip, type ZipEntry } from './zip.ts';
-import type { Frame, Sprite, SpriteSet } from './store.svelte.ts';
+import type { Frame, Sprite, SpriteSet } from '../core/types.ts';
 
 /**
  * What an export bakes in. Both default on: what you see playing is what you get. Turning

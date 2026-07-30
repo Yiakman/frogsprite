@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { beginStroke, endStroke, importFiles } from './commands';
+	import { beginStroke, endStroke, importFiles } from '../api/commands';
 	import { notify } from './Dialog.svelte';
-	import { paint as render } from './export';
-	import { PALETTE } from './palette';
-	import { line } from './shapes';
-	import { editor } from './store.svelte';
+	import { paint as render } from '../io/export';
+	import { PALETTE } from '../core/palette';
+	import { line } from '../core/shapes';
+	import { editor } from '../state/store.svelte';
 
 	// the swatches that set these live in the sidebar's View panel; the canvas only reports them
 	const backdrop = $derived(editor.background ? PALETTE[editor.background] : null);

@@ -6,7 +6,7 @@ import { TRANSPARENT } from './palette.ts';
 export type GridSize = 8 | 16 | 32 | 64 | 128;
 
 /**
- * A sprite's cells, row-major. Sprites hold a `Uint8Array` (see store.svelte.ts), but everything
+ * A sprite's cells, row-major. Sprites hold a `Uint8Array` (see types.ts), but everything
  * here is plain index arithmetic, so the tests hand these functions ordinary arrays.
  */
 export type Pixels = Uint8Array | number[];

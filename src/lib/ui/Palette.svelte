@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { GRAY_START, PALETTE } from './palette';
-	import { editor, pixelsOf } from './store.svelte';
+	import { GRAY_START, PALETTE } from '../core/palette';
+	import { editor, pixelsOf } from '../state/store.svelte';
 
 	// The colours actually on the canvas — for pixel art that's the handful you keep reaching for,
 	// so they go on one always-visible row and the full 256 stay folded away.

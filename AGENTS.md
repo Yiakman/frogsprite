@@ -495,7 +495,7 @@ The selection is not persisted: every load selects the first sprite of the first
 - `flush()` — persist immediately. Call this before reloading the page, otherwise the last moment of
   work may still be queued.
 
-Everything about persistence lives in `src/lib/storage.ts`; nothing else in the app touches
+Everything about persistence lives in `src/lib/io/storage.ts`; nothing else in the app touches
 `localStorage`. Loading validates what it reads, so damaged or outdated data degrades gracefully
 (bad pixels become transparent, sets with an invalid grid are dropped, frames pointing at missing
 sprites are removed, effects nothing recognises are stripped) rather than breaking the editor. A
@@ -523,16 +523,19 @@ frogsprite.export_animated_svg();
 
 | path | what |
 | --- | --- |
-| `src/lib/commands.ts` | the `frogsprite` API above — the only thing agents touch |
-| `src/lib/store.svelte.ts` | reactive state (`$state` class), selection, playback |
-| `src/lib/grid.ts` | the valid grid sizes, and whole-sprite geometry (rotate, flip, shift) — a plain module so non-Svelte code can import them |
-| `src/lib/fx.ts` | frame effects, trails and transitions: the one place a frame becomes the pixels you see |
-| `src/lib/selection.ts` | which set and animation a command lands on — the pure decisions, so they are testable without a browser |
-| `src/lib/storage.ts` | the only module that touches `localStorage`: format, validation, writes |
-| `src/lib/history.ts` | undo/redo stacks — whole-document snapshots, session-only |
-| `src/lib/palette.ts` | the 256-colour palette and colour resolution |
-| `src/lib/export.ts` | SVG / animated SVG / PNG / ICO encoders |
-| `src/lib/image.ts` | image import: trim, box-average, palette snap |
-| `src/lib/zip.ts` | dependency-free ZIP writer and single-entry reader (`Compression`/`DecompressionStream`) |
-| `src/lib/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
-| `src/lib/*.test.ts` | `npm test` — self-check for the DOM-free logic, one file per module |
+| `src/lib/api/commands.ts` | the `frogsprite` API above — the only thing agents touch |
+| `src/lib/state/store.svelte.ts` | reactive state (`$state` class), selection, playback |
+| `src/lib/core/` | the framework-free engine below — no Svelte, no DOM, so `npm test` runs all of it |
+| `src/lib/core/types.ts` | the domain model (`Frame`, `Sprite`, `SpriteSet`, `Package`, `Animation`) — here so the pure modules never import types from a `.svelte.ts` |
+| `src/lib/core/grid.ts` | the valid grid sizes, and whole-sprite geometry (rotate, flip, shift) |
+| `src/lib/core/shapes.ts` | line, square, circle, ellipse, triangle, polygon — filled or outline, clipped to the grid |
+| `src/lib/core/fx.ts` | frame effects, trails and transitions: the one place a frame becomes the pixels you see |
+| `src/lib/core/selection.ts` | which set and animation a command lands on — the pure decisions, so they are testable without a browser |
+| `src/lib/core/history.ts` | undo/redo stacks — whole-document snapshots, session-only |
+| `src/lib/core/palette.ts` | the 256-colour palette and colour resolution |
+| `src/lib/io/storage.ts` | the only module that touches `localStorage`: format, validation, writes |
+| `src/lib/io/export.ts` | SVG / animated SVG / PNG / ICO encoders |
+| `src/lib/io/image.ts` | image import: trim, box-average, palette snap |
+| `src/lib/io/zip.ts` | dependency-free ZIP writer and single-entry reader (`Compression`/`DecompressionStream`) |
+| `src/lib/ui/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
+| `src/lib/**/*.test.ts` | `npm test` — self-check for the DOM-free logic, one file per module, co-located |

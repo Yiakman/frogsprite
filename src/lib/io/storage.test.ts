@@ -10,7 +10,7 @@ import {
 	serialise,
 	setPayload
 } from './storage.ts';
-import { GRIDS } from './grid.ts';
+import { GRIDS } from '../core/grid.ts';
 import { zip } from './zip.ts';
 
 const pkg = (over = {}) => [

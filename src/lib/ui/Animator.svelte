@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { checkpoint, frogsprite as fs } from './commands';
+	import { checkpoint, frogsprite as fs } from '../api/commands';
 	import { form, notify } from './Dialog.svelte';
-	import { toSVG } from './export';
-	import { compose, steps, TRANSITIONS, type Fx } from './fx';
-	import { PALETTE } from './palette';
-	import type { EffectPatch } from './storage';
-	import { editor, HUES, type Frame } from './store.svelte';
+	import { toSVG } from '../io/export';
+	import { compose, steps, TRANSITIONS, type Fx } from '../core/fx';
+	import { HUES, PALETTE } from '../core/palette';
+	import type { Frame } from '../core/types';
+	import type { EffectPatch } from '../io/storage';
+	import { editor } from '../state/store.svelte';
 
 	const set = $derived(editor.set);
 	const frames = $derived(editor.frames);

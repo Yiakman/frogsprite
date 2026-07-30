@@ -7,7 +7,7 @@
 // `compose()`.
 import { flip, rotate, shift, type Pixels } from './grid.ts';
 import { darken, invert, tint, TRANSPARENT, type Hue } from './palette.ts';
-import type { Frame, Sprite } from './store.svelte.ts';
+import type { Frame, Sprite } from './types.ts';
 
 /** Applied in a fixed order: invert → hue → flip → rotate → displace. */
 export type Fx = {

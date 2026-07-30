@@ -1,14 +1,15 @@
-import { PALETTE, toIndex, TRANSPARENT } from './palette.ts';
-import * as ex from './export.ts';
-import { TRANSITIONS } from './fx.ts';
-import * as history from './history.ts';
-import * as storage from './storage.ts';
-import { imageToPixels, type ImageSource, type ImportOptions } from './image.ts';
-import { reflect as reflectHalf, rotate as spin, shift as slide, SIDES, type Side } from './grid.ts';
-import * as selection from './selection.ts';
-import * as shape from './shapes.ts';
-import type { Point } from './shapes.ts';
-import { blank, editor, GRIDS, type Frame, type GridSize, type Sprite } from './store.svelte.ts';
+import { PALETTE, toIndex, TRANSPARENT } from '../core/palette.ts';
+import * as ex from '../io/export.ts';
+import { TRANSITIONS } from '../core/fx.ts';
+import * as history from '../core/history.ts';
+import * as storage from '../io/storage.ts';
+import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
+import { GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, type GridSize, type Side } from '../core/grid.ts';
+import * as selection from '../core/selection.ts';
+import * as shape from '../core/shapes.ts';
+import type { Point } from '../core/shapes.ts';
+import type { Frame, Sprite } from '../core/types.ts';
+import { blank, editor } from '../state/store.svelte.ts';
 
 type Color = number | string | null;
 /** Trailing options every shape shares: `fill` (ignored by `line`) and the usual sprite override. */

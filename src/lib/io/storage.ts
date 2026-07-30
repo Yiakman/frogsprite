@@ -1,11 +1,11 @@
 // Everything that knows how sprite data is persisted lives here: the key, the on-disk shape,
 // validation of what comes back, and write scheduling. The rest of the app only calls
 // load() / save() / flush() / clear() and never touches localStorage.
-import { GRIDS, STEP, type GridSize } from './grid.ts';
-import { TRANSITIONS, type Fx, type Trail, type Transition } from './fx.ts';
-import { HUES } from './palette.ts';
+import { GRIDS, STEP, type GridSize } from '../core/grid.ts';
+import { TRANSITIONS, type Fx, type Trail, type Transition } from '../core/fx.ts';
+import { HUES } from '../core/palette.ts';
 import { unzip } from './zip.ts';
-import type { Animation, Frame, Package, Sprite, SpriteSet } from './store.svelte.ts';
+import type { Animation, Frame, Package, Sprite, SpriteSet } from '../core/types.ts';
 
 const KEY = 'frogsprite';
 // v2 replaced a set's single `frames` with named `animations`; readSet still reads v1.

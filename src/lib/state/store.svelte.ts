@@ -1,25 +1,9 @@
-import { compose, progress, steps, type Fx, type Trail, type Transition } from './fx.ts';
-import { PALETTE } from './palette.ts';
-import * as storage from './storage.ts';
+import { compose, progress, steps } from '../core/fx.ts';
+import { PALETTE } from '../core/palette.ts';
+import * as storage from '../io/storage.ts';
 
-import type { GridSize } from './grid.ts';
-// re-exported so the rest of the app can keep treating this module as the domain's front door
-export { GRIDS, type GridSize } from './grid.ts';
-export { TRANSITIONS, type Fx, type Trail, type Transition, type TransitionKind } from './fx.ts';
-export { HUES, type Hue } from './palette.ts';
-export type Frame = {
-	sprite: string;
-	ms: number;
-	fx?: Fx;
-	/** earlier frames drawn underneath this one, dimmed — a motion trail */
-	trail?: Trail;
-	transition?: Transition;
-};
-export type Sprite = { name: string; pixels: Uint8Array };
-/** A named frame list. Several of them share one set's sprites — that is the point of them. */
-export type Animation = { name: string; frames: Frame[] };
-export type SpriteSet = { name: string; grid: GridSize; sprites: Sprite[]; animations: Animation[] };
-export type Package = { name: string; sets: SpriteSet[] };
+import type { GridSize } from '../core/grid.ts';
+import type { Frame, Package, Sprite } from '../core/types.ts';
 
 const find = <T extends { name: string }>(list: T[], name: string) =>
 	list.find((x) => x.name === name);

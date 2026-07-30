@@ -1,11 +1,11 @@
 <script lang="ts">
-	import Animator from './lib/Animator.svelte';
-	import { frogsprite as fs, importFiles } from './lib/commands';
-	import Dialog, { notify } from './lib/Dialog.svelte';
-	import Grid from './lib/Grid.svelte';
-	import Palette from './lib/Palette.svelte';
-	import Sidebar from './lib/Sidebar.svelte';
-	import { editor } from './lib/store.svelte';
+	import Animator from './lib/ui/Animator.svelte';
+	import { frogsprite as fs, importFiles } from './lib/api/commands';
+	import Dialog, { notify } from './lib/ui/Dialog.svelte';
+	import Grid from './lib/ui/Grid.svelte';
+	import Palette from './lib/ui/Palette.svelte';
+	import Sidebar from './lib/ui/Sidebar.svelte';
+	import { editor } from './lib/state/store.svelte';
 
 	let picker: HTMLInputElement;
 

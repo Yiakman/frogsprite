@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { beginStroke, endStroke, frogsprite as fs } from './commands';
+	import { beginStroke, endStroke, frogsprite as fs } from '../api/commands';
 	import { form, notify } from './Dialog.svelte';
-	import { PALETTE } from './palette';
-	import { editor, GRIDS, type GridSize } from './store.svelte';
+	import { GRIDS, type GridSize } from '../core/grid';
+	import { PALETTE } from '../core/palette';
+	import { editor } from '../state/store.svelte';
 	// the same animation the README shows
-	import jumpSvg from '../../frog-jump.svg?raw';
+	import jumpSvg from '../../../frog-jump.svg?raw';
 
 	const HOP_EVERY = 10_000;
 	const HOP_MS = 1330; // one loop of frog-jump.svg
