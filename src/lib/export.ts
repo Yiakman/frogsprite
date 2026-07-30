@@ -1,21 +1,29 @@
+import { compose, progress, steps } from './fx.ts';
+import type { Pixels } from './grid.ts';
 import { PALETTE, TRANSPARENT } from './palette.ts';
 import { setPayload } from './storage.ts';
 import { zip, type ZipEntry } from './zip.ts';
 import type { Frame, Sprite, SpriteSet } from './store.svelte.ts';
 
+/**
+ * What an export bakes in. Both default on: what you see playing is what you get. Turning
+ * `transitions` off is also the escape hatch when the sub-step groups make an SVG too big.
+ */
+export type BakeOptions = { effects?: boolean; transitions?: boolean };
+
 /** SVG with horizontal runs merged into single rects. */
-export function toSVG(sprite: Sprite, grid: number, scale = 1): string {
+export function toSVG(pixels: Pixels, grid: number, scale = 1): string {
 	const rects: string[] = [];
 	for (let y = 0; y < grid; y++) {
 		let x = 0;
 		while (x < grid) {
-			const c = sprite.pixels[y * grid + x];
+			const c = pixels[y * grid + x];
 			if (c === TRANSPARENT) {
 				x++;
 				continue;
 			}
 			let end = x + 1;
-			while (end < grid && sprite.pixels[y * grid + end] === c) end++;
+			while (end < grid && pixels[y * grid + end] === c) end++;
 			rects.push(
 				`<rect x="${x}" y="${y}" width="${end - x}" height="1" fill="${PALETTE[c]}"/>`
 			);
@@ -26,34 +34,47 @@ export function toSVG(sprite: Sprite, grid: number, scale = 1): string {
 	return `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${grid} ${grid}" shape-rendering="crispEdges">\n${rects.join('\n')}\n</svg>`;
 }
 
-/** Animated SVG: every frame stacked, cycled with CSS keyframes. */
+/**
+ * Animated SVG: every frame stacked, cycled with CSS keyframes.
+ *
+ * ponytail: a frame with a transition becomes one group per sub-step, so a 32-grid scan is ~7
+ * groups where a plain frame is 1. Pass `transitions: false` if that matters more than the effect
+ * does; a real fix means SVG animation of the mask instead of stacked stills.
+ */
 export function toAnimatedSVG(
 	sprites: Sprite[],
 	frames: Frame[],
 	grid: number,
-	scale = 1
+	{ scale = 1, effects = true, transitions = true }: BakeOptions & { scale?: number } = {}
 ): string {
-	if (!frames.length) throw new Error('set has no animation frames');
-	const byName = new Map(sprites.map((s) => [s.name, s]));
+	if (!frames.length) throw new Error('animation has no frames');
+	const known = new Set(sprites.map((s) => s.name));
+	frames.forEach((f, i) => {
+		if (!known.has(f.sprite)) throw new Error(`frame ${i} references missing sprite "${f.sprite}"`);
+	});
 	const total = frames.reduce((a, f) => a + f.ms, 0);
 	const groups: string[] = [];
 	const keyframes: string[] = [];
 	let t = 0;
+	let g = 0; // groups outnumber frames as soon as one of them has a transition
 	frames.forEach((f, i) => {
-		const sprite = byName.get(f.sprite);
-		if (!sprite) throw new Error(`frame ${i} references missing sprite "${f.sprite}"`);
-		const inner = toSVG(sprite, grid).replace(/^<svg[^>]*>\n?|\n?<\/svg>$/g, '');
-		groups.push(`<g class="f${i}">${inner}</g>`);
-		const start = (t / total) * 100;
-		const end = ((t + f.ms) / total) * 100;
-		// visible for its slice only; the -0.001 avoids two frames overlapping
-		keyframes.push(
-			`@keyframes f${i}{0%,${Math.max(0, start - 0.001).toFixed(3)}%{opacity:0}` +
-				`${start.toFixed(3)}%,${Math.max(0, end - 0.001).toFixed(3)}%{opacity:1}` +
-				`${end.toFixed(3)}%,100%{opacity:0}}` +
-				`.f${i}{animation:f${i} ${total}ms steps(1,end) infinite}`
-		);
-		t += f.ms;
+		const n = transitions ? steps(f, grid) : 1;
+		const slice = f.ms / n;
+		for (let p = 0; p < n; p++, g++) {
+			const pixels = compose(frames, i, sprites, grid, progress(p, n), { effects, transitions });
+			const inner = toSVG(pixels, grid).replace(/^<svg[^>]*>\n?|\n?<\/svg>$/g, '');
+			groups.push(`<g class="f${g}">${inner}</g>`);
+			const start = (t / total) * 100;
+			const end = ((t + slice) / total) * 100;
+			// visible for its slice only; the -0.001 avoids two frames overlapping
+			keyframes.push(
+				`@keyframes f${g}{0%,${Math.max(0, start - 0.001).toFixed(3)}%{opacity:0}` +
+					`${start.toFixed(3)}%,${Math.max(0, end - 0.001).toFixed(3)}%{opacity:1}` +
+					`${end.toFixed(3)}%,100%{opacity:0}}` +
+					`.f${g}{animation:f${g} ${total}ms steps(1,end) infinite}`
+			);
+			t += slice;
+		}
 	});
 	const px = grid * scale;
 	return `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${grid} ${grid}" shape-rendering="crispEdges">
@@ -69,7 +90,7 @@ ${groups.join('\n')}
  */
 export function paint(
 	ctx: CanvasRenderingContext2D,
-	sprite: Sprite,
+	pixels: Pixels,
 	grid: number,
 	size: number,
 	flat?: string
@@ -79,7 +100,7 @@ export function paint(
 	const s = size / grid;
 	for (let y = 0; y < grid; y++) {
 		for (let x = 0; x < grid; x++) {
-			const p = sprite.pixels[y * grid + x];
+			const p = pixels[y * grid + x];
 			if (p === TRANSPARENT) continue;
 			ctx.fillStyle = flat ?? PALETTE[p];
 			ctx.fillRect(x * s, y * s, s, s);
@@ -87,20 +108,20 @@ export function paint(
 	}
 }
 
-function draw(sprite: Sprite, grid: number, size: number): HTMLCanvasElement {
+function draw(pixels: Pixels, grid: number, size: number): HTMLCanvasElement {
 	const c = document.createElement('canvas');
 	c.width = c.height = size;
-	paint(c.getContext('2d')!, sprite, grid, size);
+	paint(c.getContext('2d')!, pixels, grid, size);
 	return c;
 }
 
-export function toPNG(sprite: Sprite, grid: number, scale = 1): string {
-	return draw(sprite, grid, grid * scale).toDataURL('image/png');
+export function toPNG(pixels: Pixels, grid: number, scale = 1): string {
+	return draw(pixels, grid, grid * scale).toDataURL('image/png');
 }
 
 /** Raw PNG bytes, for packing into an archive rather than handing to an <img>. */
-export function toPNGBytes(sprite: Sprite, grid: number, scale = 1): Promise<Uint8Array> {
-	return pngBytes(draw(sprite, grid, grid * scale));
+export function toPNGBytes(pixels: Pixels, grid: number, scale = 1): Promise<Uint8Array> {
+	return pngBytes(draw(pixels, grid, grid * scale));
 }
 
 const pngBytes = (canvas: HTMLCanvasElement): Promise<Uint8Array> =>
@@ -115,8 +136,8 @@ const pngBytes = (canvas: HTMLCanvasElement): Promise<Uint8Array> =>
 	);
 
 /** ICO containing PNG-compressed images (supported since Vista). */
-export async function toICO(sprite: Sprite, grid: number, sizes = [16, 32, 48]): Promise<string> {
-	const images = await Promise.all(sizes.map((s) => pngBytes(draw(sprite, grid, s))));
+export async function toICO(pixels: Pixels, grid: number, sizes = [16, 32, 48]): Promise<string> {
+	const images = await Promise.all(sizes.map((s) => pngBytes(draw(pixels, grid, s))));
 	const headerSize = 6 + 16 * images.length;
 	const total = headerSize + images.reduce((a, i) => a + i.length, 0);
 	const buf = new Uint8Array(total);
@@ -147,10 +168,21 @@ export async function toICO(sprite: Sprite, grid: number, sizes = [16, 32, 48]):
 export const safeFile = (s: string) => s.replace(/[^\w.-]+/g, '_') || 'unnamed';
 
 /**
- * The whole set as a .zip: every sprite as PNG and SVG, the animation as one looping SVG, and
+ * The whole set as a .zip: every sprite as PNG and SVG, each animation as one looping SVG, and
  * `set.json` carrying the raw pixel data so the set can be reconstructed exactly.
+ *
+ * `animations` picks which ones get a file — `false` for none, a list of names to narrow it.
+ * `set.json` always carries everything: it is the reconstruct-exactly payload, not a render.
  */
-export async function setArchive(set: SpriteSet, scale = 8) {
+export async function setArchive(
+	set: SpriteSet,
+	{
+		scale = 8,
+		effects = true,
+		transitions = true,
+		animations = true
+	}: BakeOptions & { scale?: number; animations?: boolean | string[] } = {}
+) {
 	const text = new TextEncoder();
 	const entries: ZipEntry[] = [
 		{ name: 'set.json', data: text.encode(JSON.stringify(setPayload(set), null, 2)) }
@@ -158,18 +190,27 @@ export async function setArchive(set: SpriteSet, scale = 8) {
 	for (const sprite of set.sprites) {
 		entries.push({
 			name: `png/${safeFile(sprite.name)}.png`,
-			data: await toPNGBytes(sprite, set.grid, scale)
+			data: await toPNGBytes(sprite.pixels, set.grid, scale)
 		});
 		entries.push({
 			name: `svg/${safeFile(sprite.name)}.svg`,
-			data: text.encode(toSVG(sprite, set.grid))
+			data: text.encode(toSVG(sprite.pixels, set.grid))
 		});
 	}
-	if (set.frames.length)
+	const wanted = Array.isArray(animations)
+		? set.animations.filter((a) => animations.includes(a.name))
+		: animations
+			? set.animations
+			: [];
+	for (const anim of wanted) {
+		if (!anim.frames.length) continue;
 		entries.push({
-			name: `${safeFile(set.name)}-animation.svg`,
-			data: text.encode(toAnimatedSVG(set.sprites, set.frames, set.grid))
+			name: `${safeFile(set.name)}-${safeFile(anim.name)}.svg`,
+			data: text.encode(
+				toAnimatedSVG(set.sprites, anim.frames, set.grid, { effects, transitions })
+			)
 		});
+	}
 
 	return {
 		blob: await zip(entries),

@@ -48,6 +48,61 @@ export function toIndex(color: number | string | null | undefined): number {
 	return nearestIndex(rgb[0], rgb[1], rgb[2]);
 }
 
+// ---- colour effects --------------------------------------------------------
+
+export type Hue = 'red' | 'green' | 'blue' | 'cyan' | 'yellow' | 'magenta';
+export const HUES: Hue[] = ['red', 'green', 'blue', 'cyan', 'yellow', 'magenta'];
+
+/** Which channels a hue keeps. Everything else in the pixel is thrown away. */
+const CHANNELS: Record<Hue, [number, number, number]> = {
+	red: [1, 0, 0],
+	green: [0, 1, 0],
+	blue: [0, 0, 1],
+	cyan: [0, 1, 1],
+	yellow: [1, 1, 0],
+	magenta: [1, 0, 1]
+};
+
+/**
+ * A 256-entry index → index map, built once on first use. `nearestIndex` is a 255-entry scan, so
+ * mapping a 128 grid pixel by pixel would be 16 million comparisons per redraw; a table makes it
+ * 255 per *palette entry*, once for the life of the page.
+ */
+const tables = new Map<string, Uint8Array>();
+function table(key: string, map: (r: number, g: number, b: number) => [number, number, number]) {
+	let t = tables.get(key);
+	if (t) return t;
+	t = new Uint8Array(256);
+	// TRANSPARENT has no colour to map — it stays a hole, whatever the effect
+	for (let i = 1; i < 256; i++) t[i] = nearestIndex(...map(...RGB[i]));
+	tables.set(key, t);
+	return t;
+}
+
+/** Photographic negative: the palette entry closest to the pixel's complement. */
+export const invert = (i: number): number => table('invert', (r, g, b) => [255 - r, 255 - g, 255 - b])[i];
+
+/**
+ * The palette entry closest to this one scaled toward black. `amount` is the fraction of the
+ * original brightness to keep, so 0.6 is noticeably dimmer and 1 is unchanged. Quantised to two
+ * decimals: the tables are keyed by amount, and an un-rounded factor would mint a new one per call.
+ */
+export const darken = (i: number, amount: number): number => {
+	const a = Math.round(Math.min(1, Math.max(0, amount)) * 100) / 100;
+	return table(`dark${a}`, (r, g, b) => [r * a, g * a, b * a])[i];
+};
+
+/**
+ * Reduce a pixel to one hue, keeping its brightness — a whole sprite through this comes out as a
+ * gradient of that single colour.
+ */
+export const tint = (i: number, hue: Hue): number =>
+	table(hue, (r, g, b) => {
+		const l = 0.299 * r + 0.587 * g + 0.114 * b;
+		const [cr, cg, cb] = CHANNELS[hue];
+		return [l * cr, l * cg, l * cb];
+	})[i];
+
 /** Closest opaque palette entry to an RGB triple. */
 export function nearestIndex(r: number, g: number, b: number): number {
 	// ponytail: 255-entry linear scan, not a k-d tree. ~260k comparisons for a full 32x32 import.

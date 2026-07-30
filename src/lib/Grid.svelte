@@ -4,7 +4,7 @@
 	import { paint as render } from './export';
 	import { PALETTE } from './palette';
 	import { line } from './shapes';
-	import { editor, pixelsOf } from './store.svelte';
+	import { editor } from './store.svelte';
 
 	// the swatches that set these live in the sidebar's View panel; the canvas only reports them
 	const backdrop = $derived(editor.background ? PALETTE[editor.background] : null);
@@ -34,14 +34,16 @@
 	const set = $derived(editor.set);
 	const sprite = $derived(editor.shown);
 	const grid = $derived(set?.grid ?? 16);
-	// A paused frame is still editable — only the running timer locks the canvas.
-	const live = $derived(!editor.running && !!sprite);
+	// A paused frame is still editable — only the running timer locks the canvas. A frame carrying
+	// effects is the exception: the canvas is showing a transformed view, so a stroke would land
+	// somewhere else on the sprite underneath it.
+	const live = $derived(!editor.running && !editor.transformed && !!sprite);
 
 	// The canvas is one element whatever the grid size, so a redraw costs the same at 128 as at 8.
 	$effect(() => {
-		if (!canvas || !sprite) return;
-		void pixelsOf(sprite); // render() reads the buffer, which Svelte cannot see on its own
-		render(canvas.getContext('2d')!, sprite, grid, grid, silhouette ?? undefined);
+		const pixels = editor.shownPixels; // already reads `revision`, which Svelte cannot see for it
+		if (!canvas || !pixels) return;
+		render(canvas.getContext('2d')!, pixels, grid, grid, silhouette ?? undefined);
 	});
 
 	/** The cell the stroke was last on, or -1 between strokes. */
@@ -131,8 +133,8 @@
 			{grid}×{grid} — <strong>{sprite.name}</strong>
 			{#if editor.frame >= 0 && set}
 				<em>
-					frame {editor.frame + 1}/{set.frames.length}
-					{editor.running ? '· playing' : '· paused, editable'}
+					{editor.anim?.name ?? 'animation'} — frame {editor.frame + 1}/{editor.frames.length}
+					{#if editor.running}· playing{:else if editor.transformed}· effect preview, not editable{:else}· paused, editable{/if}
 				</em>
 			{/if}
 			<!-- named, not just shown: a screenshot has to say what it was taken under -->

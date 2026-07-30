@@ -1,28 +1,66 @@
 <script lang="ts">
-	import { checkpoint } from './commands';
+	import { checkpoint, frogsprite as fs } from './commands';
+	import { form } from './Dialog.svelte';
 	import { toSVG } from './export';
-	import { editor, pixelsOf, type Frame } from './store.svelte';
+	import { compose } from './fx';
+	import { editor, type Frame } from './store.svelte';
 
 	const set = $derived(editor.set);
-	const total = $derived(set ? set.frames.reduce((a, f) => a + f.ms, 0) : 0);
-	const has = $derived(!!set?.frames.length);
+	const frames = $derived(editor.frames);
+	const total = $derived(frames.reduce((a, f) => a + f.ms, 0));
+	const has = $derived(!!frames.length);
 
 	// ponytail: thumbnails reuse the SVG exporter rather than a second renderer, handed to
-	// <img> as a data URI so no markup is ever injected into the page.
-	const thumb = (name: string) => {
-		const sprite = set?.sprites.find((s) => s.name === name);
-		if (!sprite || !set) return '';
-		void pixelsOf(sprite); // toSVG reads the buffer, which Svelte cannot see on its own
-		return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(toSVG(sprite, set.grid));
+	// <img> as a data URI so no markup is ever injected into the page. Effects are composed in,
+	// transitions are not: a thumbnail says *which frame this is*, and there is no single moment
+	// of a transition that does — `vanish` ends empty, `silhouette` ends as the frame after it.
+	const thumb = (i: number) => {
+		if (!set) return '';
+		void editor.revision; // compose reads the pixel buffers, which Svelte cannot see on its own
+		const pixels = compose(frames, i, set.sprites, set.grid, 1, { transitions: false });
+		return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(toSVG(pixels, set.grid));
 	};
 
+	/** The effects on a frame, named — read-only; effects are set through the console API. */
+	const badge = (f: Frame) =>
+		[
+			f.fx?.invert && 'invert',
+			f.fx?.hue,
+			f.fx?.flipX && 'flipX',
+			f.fx?.flipY && 'flipY',
+			f.fx?.rotate && `${f.fx.rotate}°`,
+			(f.fx?.dx || f.fx?.dy) && `${f.fx.dx ?? 0},${f.fx.dy ?? 0}`,
+			f.trail && `trail ${f.trail.frames}`,
+			f.transition?.kind
+		]
+			.filter(Boolean)
+			.join(' · ');
+
 	function addFrame() {
-		if (!set) return;
+		const anim = editor.anim;
+		if (!set || !anim) return;
 		const sprite = editor.shown?.name ?? set.sprites[0]?.name;
 		if (!sprite) return;
 		checkpoint();
-		set.frames.push({ sprite, ms: 120 });
+		anim.frames.push({ sprite, ms: 120 });
 		editor.save();
+	}
+
+	const newAnimation = () =>
+		form({
+			title: 'New animation',
+			fields: [{ name: 'name', required: true, placeholder: 'walk' }],
+			submit: (v) => fs.new_animation(v.name.trim())
+		});
+
+	function deleteAnimation() {
+		const anim = editor.anim;
+		if (!anim) return;
+		form({
+			title: `Delete animation "${anim.name}"? The sprites it uses are kept.`,
+			fields: [],
+			submit: () => fs.delete_animation(anim.name)
+		});
 	}
 
 	/**
@@ -37,10 +75,11 @@
 	}
 
 	function removeFrame(i: number) {
-		if (!set) return;
+		const anim = editor.anim;
+		if (!anim) return;
 		checkpoint();
-		set.frames.splice(i, 1);
-		if (editor.frame >= set.frames.length) editor.stop();
+		anim.frames.splice(i, 1);
+		if (editor.frame >= anim.frames.length) editor.stop();
 		editor.save();
 	}
 </script>
@@ -50,10 +89,33 @@
 		<h2>
 			Animation
 			<span>
-				{set.frames.length} frames · {total}ms
+				{frames.length} frames · {total}ms
 				{#if editor.frame >= 0}· on {editor.frame + 1}{/if}
 			</span>
 		</h2>
+
+		<!-- one set, many animations, all over the same sprites -->
+		<div class="picker">
+			<select
+				value={editor.sel.anim}
+				disabled={!set.animations.length}
+				onchange={(e) => fs.select_animation(e.currentTarget.value)}
+			>
+				{#each set.animations as a (a.name)}
+					<option value={a.name}>{a.name}</option>
+				{:else}
+					<option value="">no animations</option>
+				{/each}
+			</select>
+			<button onclick={newAnimation} title="New animation" aria-label="New animation">＋</button>
+			<button
+				class="del"
+				onclick={deleteAnimation}
+				disabled={!editor.anim}
+				title="Delete this animation"
+				aria-label="Delete this animation">×</button
+			>
+		</div>
 
 		<div class="transport">
 			<button
@@ -89,11 +151,13 @@
 				title="Stop and return to the selected sprite"
 				data-testid="stop">■</button
 			>
-			<button class="add" onclick={addFrame} data-testid="add-frame">+ frame</button>
+			<button class="add" onclick={addFrame} disabled={!editor.anim} data-testid="add-frame"
+				>+ frame</button
+			>
 		</div>
 
 		<ol data-testid="frames">
-			{#each set.frames as frame, i (i)}
+			{#each frames as frame, i (i)}
 				<li class:now={editor.frame === i}>
 					<button
 						class="thumb"
@@ -101,7 +165,7 @@
 						title="Inspect frame {i + 1}"
 						aria-label="Inspect frame {i + 1}: {frame.sprite}"
 					>
-						<img src={thumb(frame.sprite)} alt="" />
+						<img src={thumb(i)} alt="" />
 					</button>
 					<span class="n">{i + 1}</span>
 					<!-- not bind:value: it writes before change fires, and the snapshot has to be taken
@@ -119,6 +183,10 @@
 						onchange={(e) => edit(frame, 'ms', Number(e.currentTarget.value))}
 					/>ms
 					<button class="del" aria-label="Remove frame {i + 1}" onclick={() => removeFrame(i)}>×</button>
+					{#if badge(frame)}
+						<!-- read-only: effects are set with set_animation(), not from here -->
+						<span class="fx" title="Set with set_animation()">{badge(frame)}</span>
+					{/if}
 				</li>
 			{:else}
 				<p class="none">No frames. Add sprites, then <code>set_animation([...])</code>.</p>
@@ -145,10 +213,15 @@
 		color: #666;
 		margin-left: 0.5rem;
 	}
+	.picker,
 	.transport {
 		display: flex;
 		gap: 0.25rem;
 		margin-bottom: 0.5rem;
+	}
+	.picker select {
+		flex: 1;
+		min-width: 0;
 	}
 	button {
 		background: #222;
@@ -183,12 +256,20 @@
 	}
 	li {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 0.35rem;
 		font-size: 0.75rem;
 		color: #777;
 		padding: 3px 4px;
 		border-radius: 3px;
+	}
+	/* full-width so it drops onto its own line rather than squeezing the sprite select */
+	.fx {
+		flex-basis: 100%;
+		margin-left: 2.6rem;
+		font-size: 0.68rem;
+		color: #8a7;
 	}
 	li.now {
 		background: #1d3a4d;

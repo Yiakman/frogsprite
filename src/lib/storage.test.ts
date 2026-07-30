@@ -12,7 +12,7 @@ const pkg = (over = {}) => [
 				name: 's',
 				grid: 8,
 				sprites: [{ name: 'a', pixels: new Uint8Array(64).fill(3) }],
-				frames: [{ sprite: 'a', ms: 100 }],
+				animations: [{ name: 'walk', frames: [{ sprite: 'a', ms: 100 }] }],
 				...over
 			}
 		]
@@ -63,7 +63,7 @@ test('every supported grid round-trips, and only those', () => {
 
 test('parse repairs bad pixel data instead of dropping the sprite', () => {
 	const raw = JSON.stringify(
-		pkg({ sprites: [{ name: 'a', pixels: [1, 999, 'x', -1, null, 2.5] }], frames: [] })
+		pkg({ sprites: [{ name: 'a', pixels: [1, 999, 'x', -1, null, 2.5] }], animations: [] })
 	);
 	const pixels = (parse(raw) as any)[0].sets[0].sprites[0].pixels;
 	assert.equal(pixels.length, 64, 'short array is padded to the grid');
@@ -77,9 +77,65 @@ test('parse repairs bad pixel data instead of dropping the sprite', () => {
 
 test('parse drops frames pointing at sprites that did not survive', () => {
 	const raw = stored({
-		frames: [{ sprite: 'a', ms: 100 }, { sprite: 'ghost', ms: 50 }, { sprite: 'a', ms: 0 }]
+		animations: [
+			{
+				name: 'walk',
+				frames: [{ sprite: 'a', ms: 100 }, { sprite: 'ghost', ms: 50 }, { sprite: 'a', ms: 0 }]
+			}
+		]
 	});
-	assert.deepEqual((parse(raw) as any)[0].sets[0].frames, [{ sprite: 'a', ms: 100 }]);
+	assert.deepEqual((parse(raw) as any)[0].sets[0].animations, [
+		{ name: 'walk', frames: [{ sprite: 'a', ms: 100 }] }
+	]);
+});
+
+test('a v1 set, with one unnamed frame list, loads as one named animation', () => {
+	const v1 = JSON.stringify({
+		version: 1,
+		packages: [
+			{
+				name: 'p',
+				sets: [
+					{
+						name: 's',
+						grid: 8,
+						sprites: [{ name: 'a', pixels: [...new Uint8Array(64).fill(3)] }],
+						frames: [{ sprite: 'a', ms: 100 }]
+					}
+				]
+			}
+		]
+	});
+	assert.deepEqual((parse(v1) as any)[0].sets[0].animations, [
+		{ name: 'animation', frames: [{ sprite: 'a', ms: 100 }] }
+	]);
+});
+
+test('readSet keeps the effects it understands and drops the rest', () => {
+	const set = readSet({
+		name: 's',
+		grid: 8,
+		sprites: [{ name: 'a', pixels: [...new Uint8Array(64)] }],
+		animations: [
+			{
+				name: 'hurt',
+				frames: [
+					{
+						sprite: 'a',
+						ms: 100,
+						// rotate 45 is not a 30° step, 'teal' is not a hue, 'melt' is not a transition
+						fx: { invert: true, hue: 'teal', rotate: 45, dx: 2.4, flipY: true, wat: 1 },
+						transition: 'melt'
+					},
+					{ sprite: 'a', ms: 50, fx: {}, transition: 'vanish' }
+				]
+			}
+		]
+	});
+	assert.deepEqual(set!.animations[0].frames, [
+		{ sprite: 'a', ms: 100, fx: { invert: true, dx: 2, flipY: true } },
+		{ sprite: 'a', ms: 50, transition: { kind: 'vanish' } }
+	]);
 });
 
 // --- interchange -------------------------------------------------------------

@@ -85,6 +85,40 @@ export function rotate(
 }
 
 /**
+ * Mirror a whole sprite, in place. `'x'` swaps left and right, `'y'` swaps top and bottom. This is
+ * the flip; `reflect` below copies one half over the other, which is a different thing.
+ */
+export function flip(pixels: Pixels, grid: number, axis: 'x' | 'y'): void {
+	const half = grid >> 1;
+	for (let y = 0; y < (axis === 'x' ? grid : half); y++) {
+		for (let x = 0; x < (axis === 'x' ? half : grid); x++) {
+			const a = y * grid + x;
+			const b = axis === 'x' ? y * grid + (grid - 1 - x) : (grid - 1 - y) * grid + x;
+			const t = pixels[a];
+			pixels[a] = pixels[b];
+			pixels[b] = t;
+		}
+	}
+}
+
+/** Move every pixel by (dx, dy), in place. Anything pushed past an edge is dropped. */
+export function shift(pixels: Pixels, grid: number, dx: number, dy: number): void {
+	dx = Math.round(dx) || 0; // NaN from a junk argument would smear the whole sprite off-canvas
+	dy = Math.round(dy) || 0;
+	if (!dx && !dy) return;
+	const next = new Uint8Array(grid * grid);
+	for (let y = 0; y < grid; y++) {
+		for (let x = 0; x < grid; x++) {
+			const nx = x + dx;
+			const ny = y + dy;
+			if (nx < 0 || ny < 0 || nx >= grid || ny >= grid) continue;
+			next[ny * grid + nx] = pixels[y * grid + x];
+		}
+	}
+	for (let i = 0; i < next.length; i++) pixels[i] = next[i];
+}
+
+/**
  * Mirror one half of a sprite onto the other, in place. `from` names the half that is *copied* —
  * `reflect(px, 16, 'left')` keeps the left half and overwrites the right with its mirror image.
  * Every supported grid is even, so there is no middle row or column to disambiguate.

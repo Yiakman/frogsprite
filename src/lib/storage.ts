@@ -1,12 +1,15 @@
 // Everything that knows how sprite data is persisted lives here: the key, the on-disk shape,
 // validation of what comes back, and write scheduling. The rest of the app only calls
 // load() / save() / flush() / clear() and never touches localStorage.
-import { GRIDS, type GridSize } from './grid.ts';
+import { GRIDS, STEP, type GridSize } from './grid.ts';
+import { TRANSITIONS, type Fx, type Trail, type Transition } from './fx.ts';
+import { HUES } from './palette.ts';
 import { unzip } from './zip.ts';
-import type { Frame, Package, Sprite, SpriteSet } from './store.svelte.ts';
+import type { Animation, Frame, Package, Sprite, SpriteSet } from './store.svelte.ts';
 
 const KEY = 'frogsprite';
-const VERSION = 1;
+// v2 replaced a set's single `frames` with named `animations`; readSet still reads v1.
+const VERSION = 2;
 /** Painting fires a save per pixel; coalesce them into one write. */
 const WRITE_DELAY = 250;
 
@@ -54,6 +57,67 @@ function readSprite(v: any, cells: number): Sprite | null {
 	return { name: n, pixels };
 }
 
+/** Drop what we don't recognise rather than guessing at it — an unreadable effect is no effect. */
+function readFx(v: any): Fx | undefined {
+	if (!v || typeof v !== 'object') return undefined;
+	const fx: Fx = {};
+	if (v.invert === true) fx.invert = true;
+	if (HUES.includes(v.hue)) fx.hue = v.hue;
+	// not snapped to the nearest multiple: rotate() only has 30° steps, and quietly turning a
+	// frame 45° into 30° is a change nobody asked for
+	const angle = Number(v.rotate);
+	if (Number.isFinite(angle) && angle % STEP === 0 && angle % 360 !== 0) fx.rotate = angle;
+	const dx = Math.round(Number(v.dx));
+	const dy = Math.round(Number(v.dy));
+	if (dx) fx.dx = dx;
+	if (dy) fx.dy = dy;
+	if (v.flipX === true) fx.flipX = true;
+	if (v.flipY === true) fx.flipY = true;
+	return Object.keys(fx).length ? fx : undefined;
+}
+
+/**
+ * Also the normaliser for the shorthand: `trail: 4` means `{ frames: 4 }`. `frames` is capped at 32
+ * here rather than at render time — a stored 1e9 would be clamped on every redraw for ever.
+ */
+export function readTrail(v: any): Trail | undefined {
+	const frames = Math.trunc(Number(typeof v === 'number' ? v : v?.frames));
+	if (!Number.isFinite(frames) || frames < 1) return undefined;
+	const trail: Trail = { frames: Math.min(frames, 32) };
+	const fade = Number(v?.fade);
+	// 0 would erase the trail and 1 would leave it as bright as the head; neither is a trail
+	if (Number.isFinite(fade) && fade > 0 && fade < 1) trail.fade = fade;
+	return trail;
+}
+
+/** Also the normaliser for the shorthand: `transition: 'vanish'` means `{ kind: 'vanish' }`. */
+export function readTransition(v: any): Transition | undefined {
+	const kind = typeof v === 'string' ? v : v?.kind;
+	if (!TRANSITIONS.includes(kind)) return undefined;
+	const color = Number(v?.color);
+	return Number.isInteger(color) && color > 0 && color < 256 ? { kind, color } : { kind };
+}
+
+/** `known` is the sprite names a frame is allowed to reference. Also what `set_animation` validates through. */
+export function readFrames(v: unknown, known: Set<string>): Frame[] {
+	const frames: Frame[] = [];
+	for (const f of asArray(v) as any[]) {
+		const sprite = name(f?.sprite);
+		const ms = Number(f?.ms);
+		// a frame pointing at a sprite that didn't survive would break playback
+		if (!sprite || !known.has(sprite) || !Number.isFinite(ms) || ms <= 0) continue;
+		const frame: Frame = { sprite, ms };
+		const fx = readFx(f.fx);
+		const trail = readTrail(f.trail);
+		const transition = readTransition(f.transition);
+		if (fx) frame.fx = fx;
+		if (trail) frame.trail = trail;
+		if (transition) frame.transition = transition;
+		frames.push(frame);
+	}
+	return frames;
+}
+
 /** Also the validator for an imported `set.json` — same trust boundary, same repairs. */
 export function readSet(v: any): SpriteSet | null {
 	const n = name(v?.name);
@@ -61,14 +125,17 @@ export function readSet(v: any): SpriteSet | null {
 	const grid = v.grid as GridSize;
 	const sprites = uniq(asArray(v.sprites).map((s) => readSprite(s, grid * grid)));
 	const known = new Set(sprites.map((s) => s.name));
-	const frames: Frame[] = [];
-	for (const f of asArray(v.frames) as any[]) {
-		const sprite = name(f?.sprite);
-		const ms = Number(f?.ms);
-		// a frame pointing at a sprite that didn't survive would break playback
-		if (sprite && known.has(sprite) && Number.isFinite(ms) && ms > 0) frames.push({ sprite, ms });
-	}
-	return { name: n, grid, sprites, frames };
+	// v1 gave a set one unnamed frame list; give it a name and it is an animation like any other
+	const raw = Array.isArray(v.animations)
+		? (v.animations as any[])
+		: [{ name: 'animation', frames: v.frames }];
+	const animations = uniq<Animation>(
+		raw.map((a) => {
+			const an = name(a?.name);
+			return an ? { name: an, frames: readFrames(a.frames, known) } : null;
+		})
+	);
+	return { name: n, grid, sprites, animations };
 }
 
 /** The interchange shape for one set: exactly what the ZIP carries as `set.json`, and readSet's inverse. */
@@ -76,7 +143,7 @@ export const setPayload = (set: SpriteSet) => ({
 	name: set.name,
 	grid: set.grid,
 	sprites: set.sprites.map((s) => ({ name: s.name, pixels: [...s.pixels] })),
-	frames: set.frames.map((f) => ({ ...f }))
+	animations: set.animations.map((a) => ({ name: a.name, frames: a.frames.map((f) => ({ ...f })) }))
 });
 
 /** An object, JSON text, a `.json` file or an export `.zip`, resolved to the object inside. */
