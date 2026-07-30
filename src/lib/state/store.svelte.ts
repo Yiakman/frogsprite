@@ -300,6 +300,3 @@ export function pixelsOf(sprite: Sprite): Uint8Array {
 	void editor.revision;
 	return sprite.pixels;
 }
-
-// zero-fill is already TRANSPARENT, so there is nothing to fill
-export const blank = (grid: GridSize): Uint8Array => new Uint8Array(grid * grid);

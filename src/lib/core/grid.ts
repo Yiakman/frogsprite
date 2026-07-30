@@ -14,6 +14,9 @@ export type Pixels = Uint8Array | number[];
 /** The single source of truth for valid grids — creation and load-time validation both read this. */
 export const GRIDS: GridSize[] = [8, 16, 32, 64, 128];
 
+/** A zeroed buffer — zero is TRANSPARENT, so there is nothing to fill. */
+export const blank = (grid: GridSize): Uint8Array => new Uint8Array(grid * grid);
+
 export type Side = 'left' | 'right' | 'up' | 'down';
 export const SIDES: Side[] = ['left', 'right', 'up', 'down'];
 

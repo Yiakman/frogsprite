@@ -2,10 +2,9 @@
 	import { checkpoint, frogsprite as fs } from '../api/commands';
 	import { form, notify } from './Dialog.svelte';
 	import { toSVG } from '../io/export';
-	import { compose, steps, TRANSITIONS, type Fx } from '../core/fx';
+	import { compose, steps, TRANSITIONS, type Fx, type EffectPatch } from '../core/fx';
 	import { HUES, PALETTE } from '../core/palette';
 	import type { Frame } from '../core/types';
-	import type { EffectPatch } from '../io/storage';
 	import { editor } from '../state/store.svelte';
 
 	const set = $derived(editor.set);

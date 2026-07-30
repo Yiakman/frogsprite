@@ -5,8 +5,8 @@
 // whole reason a set can hold more than one animation. Everything here is therefore applied on the
 // way out: to the canvas, to the timeline thumbnails, and to an exported SVG, all through the same
 // `compose()`.
-import { flip, rotate, shift, type Pixels } from './grid.ts';
-import { darken, invert, tint, TRANSPARENT, type Hue } from './palette.ts';
+import { flip, rotate, shift, STEP, type Pixels } from './grid.ts';
+import { darken, invert, tint, TRANSPARENT, HUES, type Hue } from './palette.ts';
 import type { Frame, Sprite } from './types.ts';
 
 /** Applied in a fixed order: invert → hue → flip → rotate → displace. */
@@ -160,4 +160,94 @@ export function compose(
 		}
 	}
 	return out;
+}
+
+// --- validators --------------------------------------------------------------
+// Moved here from io/storage.ts: these answer "is this a valid frame effect, and what does patching
+// one mean?" — a domain question, not a persistence one. storage's readFrames() imports them back,
+// which is the usual io -> core direction. They run through the same checks the stored format uses,
+// so whatever survives here survives a reload.
+
+/** Drop what we don't recognise rather than guessing at it — an unreadable effect is no effect. */
+export function readFx(v: any): Fx | undefined {
+	if (!v || typeof v !== 'object') return undefined;
+	const fx: Fx = {};
+	if (v.invert === true) fx.invert = true;
+	if (HUES.includes(v.hue)) fx.hue = v.hue;
+	// not snapped to the nearest multiple: rotate() only has 30° steps, and quietly turning a
+	// frame 45° into 30° is a change nobody asked for
+	const angle = Number(v.rotate);
+	if (Number.isFinite(angle) && angle % STEP === 0 && angle % 360 !== 0) fx.rotate = angle;
+	const dx = Math.round(Number(v.dx));
+	const dy = Math.round(Number(v.dy));
+	if (dx) fx.dx = dx;
+	if (dy) fx.dy = dy;
+	if (v.flipX === true) fx.flipX = true;
+	if (v.flipY === true) fx.flipY = true;
+	return Object.keys(fx).length ? fx : undefined;
+}
+
+/**
+ * Also the normaliser for the shorthand: `trail: 4` means `{ frames: 4 }`. `frames` is capped at 32
+ * here rather than at render time — a stored 1e9 would be clamped on every redraw for ever.
+ */
+export function readTrail(v: any): Trail | undefined {
+	const frames = Math.trunc(Number(typeof v === 'number' ? v : v?.frames));
+	if (!Number.isFinite(frames) || frames < 1) return undefined;
+	const trail: Trail = { frames: Math.min(frames, 32) };
+	const fade = Number(v?.fade);
+	// 0 would erase the trail and 1 would leave it as bright as the head; neither is a trail
+	if (Number.isFinite(fade) && fade > 0 && fade < 1) trail.fade = fade;
+	return trail;
+}
+
+/** Also the normaliser for the shorthand: `transition: 'vanish'` means `{ kind: 'vanish' }`. */
+export function readTransition(v: any): Transition | undefined {
+	const kind = typeof v === 'string' ? v : v?.kind;
+	if (!TRANSITIONS.includes(kind)) return undefined;
+	const color = Number(v?.color);
+	return Number.isInteger(color) && color > 0 && color < 256 ? { kind, color } : { kind };
+}
+
+/**
+ * An `fx` patch can null out one key at a time — `{ hue: null }` drops the hue and leaves the flip
+ * beside it alone. The validator does the dropping, so `false` and `0` clear their keys the same way.
+ */
+export type FxPatch = { [K in keyof Fx]?: Fx[K] | null };
+
+/** What `set_effects` may change about a frame. See `patchEffects` for what absent vs null means. */
+export type EffectPatch = {
+	fx?: FxPatch | null;
+	trail?: Trail | number | null;
+	transition?: Transition | string | null;
+};
+
+/**
+ * A frame with an effect patch applied. Absent leaves a field alone, `null` clears it, and an object
+ * is *merged* into what is there — so toggling `invert` from the timeline does not silently wipe the
+ * `hue` sitting next to it.
+ *
+ * Everything lands through the same validators the stored format uses, which is what makes a no-op
+ * disappear rather than persist: `rotate: 0` is dropped, and an `fx` left with nothing in it comes
+ * back undefined instead of `{}`.
+ */
+export function patchEffects(frame: Frame, patch: EffectPatch): Frame {
+	const next: Frame = { ...frame };
+
+	if (patch.fx !== undefined) {
+		const merged = patch.fx === null ? undefined : readFx({ ...next.fx, ...patch.fx });
+		if (merged) next.fx = merged;
+		else delete next.fx;
+	}
+	if (patch.trail !== undefined) {
+		const trail = patch.trail === null ? undefined : readTrail(patch.trail);
+		if (trail) next.trail = trail;
+		else delete next.trail;
+	}
+	if (patch.transition !== undefined) {
+		const transition = patch.transition === null ? undefined : readTransition(patch.transition);
+		if (transition) next.transition = transition;
+		else delete next.transition;
+	}
+	return next;
 }
