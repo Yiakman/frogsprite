@@ -5,12 +5,16 @@ the page, and drive it from the browser console (or an agent's JS-execution tool
 `frogsprite` object.
 
 ```
-package  →  set (fixed grid size)  →  sprites  →  animation frames
+package  →  set (fixed grid size)  →  sprites
+                                 →  animations  →  frames
 ```
 
 A **package** groups **sets**. A **set** is one character or object: every sprite in it shares the
-same grid (8, 16, 32, 64 or 128) — those are the sprites for its different actions or positions. A set also
-owns one **animation**: an ordered list of `{ sprite, ms }` frames.
+same grid (8, 16, 32, 64 or 128) — those are the sprites for its different actions or positions. A
+set also owns any number of named **animations**, each an ordered list of `{ sprite, ms }` frames.
+They all draw on the same sprites, so one body frame can appear in `walk`, `idle` and `hurt` at
+once — and a frame can carry effects that change how it is *drawn* without touching the sprite
+everyone else is sharing.
 
 ## Colours
 
@@ -205,20 +209,136 @@ smooth gradients band visibly.
 
 ### Animation
 
-- `set_animation([{ sprite: 'crouch', ms: 120 }, { sprite: 'jump', ms: 200 }])` — replaces the set's
-  frames; `ms` is how long that frame is held
+A set holds as many animations as you like, all over the same sprites.
+
+- `new_animation(name)` — add one and select it
+- `select_animation(name)` — switch the timeline and the transport to it
+- `delete_animation(name)` — drop the frame list; **the sprites it used are kept**
+- `set_animation(frames, name?)` — replace the frames of the active animation, or of `name`.
+  Either is created if it isn't there yet, so a fresh set needs no ceremony. `ms` is how long that
+  frame is held.
+
+```js
+set_animation([
+  { sprite: 'crouch', ms: 120 },
+  { sprite: 'jump',   ms: 200, fx: { flipX: true, hue: 'red' } },
+  { sprite: 'land',   ms: 300, transition: 'scan-down' }
+]);
+```
+
+#### Changing effects without rewriting the frames
+
+`set_animation` replaces a whole list. To change only the effects on frames that already exist:
+
+- `set_effects(target, patch, animation?)` — `target` is a frame index, a list of them, or `'*'` for
+  every frame of the animation. One call is one undo step, however many frames it touches.
+
+```js
+set_effects(3, { fx: { invert: true } })           // one frame
+set_effects('*', { trail: 5 })                     // the whole animation
+set_effects('*', { fx: null, transition: null })   // clear them everywhere
+set_effects([0, 2, 4], { fx: { hue: 'red' } })     // a few
+```
+
+In the patch, a field **left out** is left alone, `null` **clears** it, and an object is **merged**
+into what is there — so `{ fx: { hue: 'red' } }` keeps the `flipX` sitting beside it, and
+`{ fx: { invert: false } }` turns off just that one key. Effects are uniform across an animation far
+more often than not, so reach for `'*'` before writing a per-frame loop.
+
+This is exactly what the timeline's effect tray calls, so anything you can do by hand you can do from
+here, with the same undo and the same validation.
+
+#### Frame effects
+
+`fx` is applied **when the frame is drawn**, never to the sprite — that is what lets the same sprite
+sit in two animations looking different in each. Applied in a fixed order: invert → hue → flip →
+rotate → displace.
+
+| key | what |
+| --- | --- |
+| `invert` | `true` for a photographic negative |
+| `hue` | `'red'`, `'green'`, `'blue'`, `'cyan'`, `'yellow'` or `'magenta'` — reduces the frame to gradients of that one colour, keeping each pixel's brightness |
+| `rotate` | degrees, a multiple of 30, about the grid centre. Only 90/180/270 come back exact |
+| `dx`, `dy` | displace; anything pushed off the edge is dropped |
+| `flipX`, `flipY` | mirror left↔right / top↔bottom |
+
+Anything unrecognised is dropped on the way in — `rotate: 45` and `hue: 'teal'` simply do not
+survive, rather than failing the whole frame. `rotate: 0` is dropped too, being a no-op, so don't
+expect it back from `state()`.
+
+#### Motion trails
+
+`trail` draws the frames *before* this one underneath it, dimmed — the earlier positions of a moving
+thing, where it actually was.
+
+| key | default | what |
+| --- | --- | --- |
+| `frames` | — | how many frames to look back, 1–32 |
+| `fade` | `0.6` | the brightness each step back keeps: the previous frame is at 60%, the one before it 36%, and so on. Must be above 0 and below 1 |
+
+`trail: 4` is shorthand for `trail: { frames: 4 }`.
+
+```js
+set_animation([
+  { sprite: 'spin-0',  ms: 80, trail: { frames: 5, fade: 0.55 } },
+  { sprite: 'spin-15', ms: 80, trail: { frames: 5, fade: 0.55 } },
+  // …
+]);
+```
+
+The rules worth knowing:
+
+- **The head wins.** Where the frame itself has a pixel, the trail never shows through.
+- **Newer ghosts win over older ones** where they cross.
+- **It wraps.** Frame 0's ghosts come from the end of the animation, because animations loop.
+- **`frames` is capped at the number of other frames.** Asking for 30 in a 6-frame animation gives
+  you 5 — past that the loop wraps onto the frame itself and the ghost lands under the head.
+- **A ghost carries its own `fx`, but not its own `trail` or `transition`.** So a trail of trails is
+  impossible by construction, and the cost is always one pass per ghost.
+- **A trail counts as an effect**, so `export_animated_svg({ effects: false })` drops it along with
+  `fx`.
+- **`silhouette` flattens the trail too.** The trail is built first, so the ghosts are part of what
+  gets painted the flat colour — the shape goes solid, tail and all, rather than a flat head with a
+  coloured tail behind it. That is deliberate: both are "this frame". Put the trail on the frames
+  either side if you want the tail to survive.
+- Dimming is done in the palette, so a trail of coloured pixels stays in its own colours. Combined
+  with `hue`, which keeps each pixel's brightness, a grey-ramp sprite through
+  `{ hue: 'red' }` + a trail comes out as a red comet that fades to `#330000`.
+
+#### Transitions
+
+`transition` plays **over the frame's own `ms`**, so it costs no extra time: the frame's slot is
+subdivided (never finer than ~60fps, never finer than the grid) and redrawn as it goes.
+
+| kind | what |
+| --- | --- |
+| `'scan-down'` / `'scan-up'` | the frame is revealed a row at a time, from the top or from the bottom |
+| `'vanish'` | the frame dissolves away pixel by pixel |
+| `'silhouette'` | the frame flattens to one flat colour, and the **next** frame dissolves in over the top of it. `{ kind: 'silhouette', color }` picks the colour (a palette index; black by default) |
+
+`transition: 'vanish'` is shorthand for `transition: { kind: 'vanish' }`.
+
+A frame carrying `fx`, a `trail` or a `transition` is drawn transformed, so **painting is off while
+it is held** — pick the sprite in the sidebar to edit what is underneath.
 
 Transport — the canvas shows whichever frame you land on, and the sidebar selection follows it:
 
 - `play()` — run the loop, resuming from the current frame
 - `pause()` — hold the current frame on screen. **It stays editable**, so this is how you fix a frame
-  in place: `pause()`, paint, `play()`
+  in place: `pause()`, paint, `play()`. The exception is a frame carrying `fx`, a `trail` or a
+  `transition`: the canvas is showing a transformed view, so painting is off until you select the
+  sprite itself
 - `stop()` — leave playback and go back to the selected sprite
 - `step(delta = 1)` — move one frame at a time, wrapping at both ends; `step(-1)` goes back
 - `view_frame(i)` — jump straight to frame `i` (0-based) and hold there — the way to inspect one frame
 
-`state().playback` reports `{ frame, running, showing }` so you can check where you are. In the UI,
-each frame in the timeline has a thumbnail; clicking it calls `view_frame`.
+`state().playback` reports `{ animation, frame, running, showing }` so you can check where you are.
+In the UI, the timeline has a picker for the set's animations and a thumbnail per frame; clicking a
+thumbnail calls `view_frame`, and the frame it holds expands into an **effect tray** — the same
+`set_effects` calls documented above, with a `this frame | all frames` scope switch. A frame with a
+transition also gets a **reveal** slider there, which scrubs `phase` through the transition so you
+can see the middle of a scan or a dissolve while authoring it. Whole-animation recipes (Comet,
+Ghost, Flash, Fade in, Hue cycle, Clear effects) live behind **Effects** in the sidebar.
 
 ### Export
 
@@ -227,15 +347,24 @@ Each returns its data (and also downloads a file when passed `{ download: true }
 - `export_svg({ sprite?, scale?, download? })` → SVG string, horizontal runs merged
 - `export_png({ sprite?, scale = 8, download? })` → `data:image/png;base64,…`
 - `export_ico({ sprite?, sizes = [16, 32, 48], download? })` → Promise of `data:image/x-icon;base64,…`
-- `export_animated_svg({ scale?, download? })` → the whole set's animation as one looping SVG
-- `export_zip({ scale = 8, download?, base64? })` → **the whole set as a .zip**. Async. Contains:
+- `export_animated_svg({ animation?, scale?, effects?, transitions?, download? })` → one animation
+  as a self-contained looping SVG — the active one, or `animation` by name
+- `export_zip({ scale = 8, effects?, transitions?, animations?, download?, base64? })` → **the whole
+  set as a .zip**. Async. Contains:
 
   ```
-  set.json                 name, grid, every sprite's raw pixel indices, frame timings
+  set.json                 name, grid, every sprite's raw pixel indices, every animation
   png/<sprite>.png         one per sprite, at `scale`
   svg/<sprite>.svg         one per sprite
-  <set>-animation.svg      only when the set has frames
+  <set>-<animation>.svg    one per animation that has frames
   ```
+
+  Both exports bake frame effects and transitions in, so what you see playing is what you get.
+  `effects: false` or `transitions: false` leaves either out — `transitions: false` is also the
+  escape hatch when the sub-step groups make an SVG bigger than you want. `animations: false`
+  gives a sprites-only archive, and `animations: ['walk']` narrows it to the ones you name;
+  `set.json` carries everything regardless, being the reconstruct-exactly payload rather than a
+  render.
 
   `set.json` carries the full pixel data, so the archive reconstructs the set exactly — it is the
   closest thing to a project file. Returns `{ filename, bytes, files }`; pass `base64: true` to also
@@ -248,10 +377,12 @@ how a set or a whole project crosses to another browser, machine or agent, and t
 `localStorage` being per-origin.
 
 - `export_json({ download? })` → the active set as `{ name, grid, sprites: [{ name, pixels }],
-  frames }` — the same payload the ZIP carries as `set.json`
+  animations }` — the same payload the ZIP carries as `set.json`
 - `import_set(data)` — **async.** Adds a set to the active package. `data` is that object, its
   text, a `.json` `File`, or a whole export `.zip` (its `set.json` is read straight out of it).
-  The set takes the first free name (`frog`, `frog-2`, …); returns `{ set, grid, sprites, frames }`
+  The set takes the first free name (`frog`, `frog-2`, …); returns
+  `{ set, grid, sprites, animations }`. A set saved before animations were named arrives with its
+  frames under one called `animation`.
 - `export_project({ download? })` → `{ version, packages }` — **everything**, exactly as saved
 - `import_project(data, { replace = false })` — **async.** Packages arrive alongside what is
   already here, duplicate names suffixed. `{ replace: true }` throws the current work away first,
@@ -277,13 +408,16 @@ cannot. In the UI: **Project → Save all… / Load…**, or drop a `.json` / `.
 
 #### Reviewing what you drew
 
-Two view settings change how the canvas *looks* without touching a single pixel. Neither is saved
-with your work, and neither affects exports or `print_sprite()`.
+Three view settings change how the canvas *looks* without touching a single pixel. None is saved
+with your work, and none affects exports or `print_sprite()`.
 
 - `background(color?)` — what shows through the **transparent** pixels; `background()` restores the
   checkerboard
 - `silhouette(color?)` — draws every **painted** pixel in one colour, so only the shape is left;
   defaults to black, and `silhouette(null)` turns it off
+- `raw(on?)` — draw the sprite **as it is stored**, ignoring the held frame's `fx`, `trail` and
+  `transition`. This is the answer to "is that shape mine, or did an effect do it?" — and to "what
+  would a brush stroke here actually land on?"
 
 ```js
 frogsprite.background('#ff00ff');   // magenta — nothing in a sprite is meant to be magenta
@@ -299,8 +433,15 @@ also how you check that two animation frames differ where you meant them to. Pic
 contrasts with the background you're on; black on the default checkerboard is deliberately dim.
 
 **If you review by screenshot, read the view back before you judge the pixels.** Both
-`state().view` and the caption under the canvas name the background and the silhouette, so a
-magenta field or a black frog is never mistaken for something you painted.
+`state().view` and the caption under the canvas name the background, the silhouette and whether
+`raw` is on, so a magenta field or a black frog is never mistaken for something you painted.
+
+`raw` is the one to reach for while a frame with effects is held, because there the canvas is
+showing a *composite* rather than any sprite you can edit — which is why painting is off. The UI
+says so twice: the canvas takes an amber border whenever what you see is not what is stored, and
+the caption grows a **hold to show sprite** button. Holding `\` does the same thing. It is a hold
+rather than a toggle on purpose: telling an effect from the art under it is a flick back and forth,
+and a preview mode left switched on is one that misleads you an hour later.
 
 `silhouette(color, { permanent: true, sprite })` is the one exception: it **paints**, flattening
 every non-transparent pixel of one sprite (the active one by default) to that colour for good —
@@ -357,7 +498,9 @@ The selection is not persisted: every load selects the first sprite of the first
 Everything about persistence lives in `src/lib/storage.ts`; nothing else in the app touches
 `localStorage`. Loading validates what it reads, so damaged or outdated data degrades gracefully
 (bad pixels become transparent, sets with an invalid grid are dropped, frames pointing at missing
-sprites are removed) rather than breaking the editor.
+sprites are removed, effects nothing recognises are stripped) rather than breaking the editor. A
+set saved before a set could hold more than one animation loads with its frames under an animation
+called `animation`.
 
 ## Example
 
@@ -382,7 +525,9 @@ frogsprite.export_animated_svg();
 | --- | --- |
 | `src/lib/commands.ts` | the `frogsprite` API above — the only thing agents touch |
 | `src/lib/store.svelte.ts` | reactive state (`$state` class), selection, playback |
-| `src/lib/grid.ts` | the valid grid sizes — a plain module so non-Svelte code can import them |
+| `src/lib/grid.ts` | the valid grid sizes, and whole-sprite geometry (rotate, flip, shift) — a plain module so non-Svelte code can import them |
+| `src/lib/fx.ts` | frame effects, trails and transitions: the one place a frame becomes the pixels you see |
+| `src/lib/selection.ts` | which set and animation a command lands on — the pure decisions, so they are testable without a browser |
 | `src/lib/storage.ts` | the only module that touches `localStorage`: format, validation, writes |
 | `src/lib/history.ts` | undo/redo stacks — whole-document snapshots, session-only |
 | `src/lib/palette.ts` | the 256-colour palette and colour resolution |

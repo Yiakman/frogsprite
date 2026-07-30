@@ -40,12 +40,25 @@ file is fetched rather than bundled, so it costs nothing on later visits.
 ## Concepts
 
 ```
-package  →  set (fixed grid size)  →  sprites  →  animation frames
+package  →  set (fixed grid size)  →  sprites
+                                 →  animations  →  frames
 ```
 
 A **set** is one character or object: every sprite in it shares the same grid, and they are that
-character's different actions or poses. A set owns one **animation** — an ordered list of
-`{ sprite, ms }` frames.
+character's different actions or poses. A set owns any number of named **animations**, each an
+ordered list of `{ sprite, ms }` frames — all over the same sprites, so one pose can appear in
+`walk`, `idle` and `hurt` at once.
+
+A frame can also carry an **effect** (invert, reduce to one hue, rotate, flip, displace), a **motion
+trail** (the frames before it, drawn underneath and dimmed), and a **transition** (scan in from the
+top or bottom, dissolve away, flatten to a silhouette with the next frame arriving over it). All
+three are applied when the frame is *drawn*, so the sprite underneath stays exactly as painted and
+the other animations sharing it are untouched. See [AGENTS.md](AGENTS.md#animation).
+
+Click a frame's thumbnail in the timeline and it expands into an effect tray, with a
+`this frame | all frames` switch — effects are usually uniform across an animation, so one click can
+set the lot. A frame with a transition also gets a slider that scrubs through it. **Effects** in the
+sidebar holds one-click recipes (Comet, Ghost, Flash, Fade in, Hue cycle, Clear effects).
 
 Colours come from a fixed 256-entry palette: index `0` is transparent, `1`–`216` are a 6×6×6 RGB
 cube, and `217`–`255` are a 39-step grey ramp. Anywhere a colour is accepted you can pass an index,
@@ -77,9 +90,9 @@ short `/llms.txt` summary) so an agent that lands on a deployed instance can fin
 
 | | |
 | --- | --- |
-| `export_zip` | the whole set: every sprite as PNG and SVG, the animation, plus `set.json` with raw pixel data — the closest thing to a project file |
+| `export_zip` | the whole set: every sprite as PNG and SVG, one SVG per animation, plus `set.json` with raw pixel data — the closest thing to a project file |
 | `export_svg` | one sprite, horizontal runs merged into single rects |
-| `export_animated_svg` | the whole animation as one self-contained looping SVG |
+| `export_animated_svg` | one animation as a self-contained looping SVG |
 | `export_png` | one sprite at any scale |
 | `export_ico` | multi-size icon |
 | `export_json` | the set's raw pixel data on its own — no pictures, no archive |
@@ -124,7 +137,9 @@ sharing between devices. That is the one feature that would genuinely require a 
 | `src/lib/image.ts` | image import: trim, box-average, palette snap |
 | `src/lib/export.ts` | SVG / animated SVG / PNG / ICO encoders |
 | `src/lib/zip.ts` | dependency-free ZIP writer |
-| `src/lib/grid.ts` | valid grid sizes, the pixel-buffer type, and the reflect/rotate transforms |
+| `src/lib/grid.ts` | valid grid sizes, the pixel-buffer type, and the reflect/rotate/flip/shift transforms |
+| `src/lib/fx.ts` | frame effects, trails and transitions — the one place a frame becomes the pixels you see |
+| `src/lib/selection.ts` | which set and animation a command lands on — pure, so it is testable without a browser |
 | `src/lib/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
 | `src/lib/*.test.ts` | `npm test` — self-checks for the DOM-free logic, one file per module |
 | `public/examples.json` | the `frog16` / `frog32` sets seeded on a first visit |

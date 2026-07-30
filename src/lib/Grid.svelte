@@ -4,7 +4,7 @@
 	import { paint as render } from './export';
 	import { PALETTE } from './palette';
 	import { line } from './shapes';
-	import { editor, pixelsOf } from './store.svelte';
+	import { editor } from './store.svelte';
 
 	// the swatches that set these live in the sidebar's View panel; the canvas only reports them
 	const backdrop = $derived(editor.background ? PALETTE[editor.background] : null);
@@ -34,14 +34,22 @@
 	const set = $derived(editor.set);
 	const sprite = $derived(editor.shown);
 	const grid = $derived(set?.grid ?? 16);
-	// A paused frame is still editable — only the running timer locks the canvas.
-	const live = $derived(!editor.running && !!sprite);
+	// A paused frame is still editable — only the running timer locks the canvas. A frame carrying
+	// effects is the exception: the canvas is showing a transformed view, so a stroke would land
+	// somewhere else on the sprite underneath it.
+	const live = $derived(!editor.running && !editor.transformed && !!sprite);
+	/**
+	 * True when what is on screen is not what is stored — effects are being applied. This is the one
+	 * thing the canvas has to say out loud: it is why painting is off, and why a frame can look fine
+	 * here and wrong in playback.
+	 */
+	const showingComposite = $derived(editor.transformed && !editor.raw);
 
 	// The canvas is one element whatever the grid size, so a redraw costs the same at 128 as at 8.
 	$effect(() => {
-		if (!canvas || !sprite) return;
-		void pixelsOf(sprite); // render() reads the buffer, which Svelte cannot see on its own
-		render(canvas.getContext('2d')!, sprite, grid, grid, silhouette ?? undefined);
+		const pixels = editor.shownPixels; // already reads `revision`, which Svelte cannot see for it
+		if (!canvas || !pixels) return;
+		render(canvas.getContext('2d')!, pixels, grid, grid, silhouette ?? undefined);
 	});
 
 	/** The cell the stroke was last on, or -1 between strokes. */
@@ -99,6 +107,7 @@
 		<div
 			class="grid"
 			class:live
+			class:composed={showingComposite}
 			style:--n={grid}
 			style:background={backdrop}
 			role="img"
@@ -131,14 +140,36 @@
 			{grid}×{grid} — <strong>{sprite.name}</strong>
 			{#if editor.frame >= 0 && set}
 				<em>
-					frame {editor.frame + 1}/{set.frames.length}
-					{editor.running ? '· playing' : '· paused, editable'}
+					{editor.anim?.name ?? 'animation'} — frame {editor.frame + 1}/{editor.frames.length}
+					{#if editor.running}· playing{:else if editor.transformed && editor.raw}· showing sprite, not editable{:else if editor.transformed}· effect preview, not editable{:else}· paused, editable{/if}
 				</em>
+			{/if}
+			{#if editor.transformed}
+				<!-- only offered where it means something: with no effects on the frame, raw *is* what
+				     you are already looking at. Hold rather than click — judging an effect is a
+				     back-and-forth comparison, not a state you sit in. -->
+				<button
+					class="peek"
+					class:on={editor.raw}
+					data-testid="peek"
+					title="Hold to see the sprite as it is stored, without this frame's effects (or hold \)"
+					onpointerdown={() => (editor.peekPointer = true)}
+					onpointerup={() => (editor.peekPointer = false)}
+					onpointerleave={() => (editor.peekPointer = false)}
+				>{editor.raw ? 'showing sprite' : 'hold to show sprite'}</button>
+			{/if}
+			{#if editor.raw && !editor.transformed}
+				<!-- the peek button only exists for a transformed frame, so a raw set through the API
+				     on a plain sprite would otherwise be invisible on a screenshot -->
+				<span class="on" data-testid="raw-on">· raw on</span>
 			{/if}
 			<!-- named, not just shown: a screenshot has to say what it was taken under -->
 			<span class="on" data-testid="backdrop"
 				>· on {backdrop ?? 'checkerboard'}{silhouette ? ` · silhouette ${silhouette}` : ''}</span
 			>
+			{#if editor.frame >= 0}
+				<span class="on" data-testid="esc-hint">· Esc leave frame</span>
+			{/if}
 			<span class="on" data-testid="undo-hint">· {undoKey} undo · {redoKey} redo</span>
 		</p>
 	{:else}
@@ -173,6 +204,12 @@
 		border: 1px solid #444;
 		background-size: calc(200% / var(--n)) calc(200% / var(--n));
 		touch-action: none;
+	}
+	/* What you are looking at is not what is stored. The caption says so too, but a sentence is
+	   easy to scan past and this is the difference between judging a sprite and judging an effect. */
+	.grid.composed {
+		border-color: #d8b46a;
+		box-shadow: 0 0 0 2px #d8b46a33;
 	}
 	.grid canvas {
 		display: block;
@@ -214,6 +251,24 @@
 	}
 	.caption .on {
 		color: #666;
+	}
+	.peek {
+		margin-left: 0.4rem;
+		padding: 1px 7px;
+		font: inherit;
+		font-size: 0.72rem;
+		background: #1b1b1b;
+		color: #d8b46a;
+		border: 1px solid #6b5a30;
+		border-radius: 4px;
+		cursor: pointer;
+		user-select: none;
+		touch-action: none;
+	}
+	.peek.on {
+		background: #d8b46a;
+		border-color: #d8b46a;
+		color: #1b1b1b;
 	}
 	.empty {
 		color: #888;

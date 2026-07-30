@@ -1,9 +1,11 @@
 import { PALETTE, toIndex, TRANSPARENT } from './palette.ts';
 import * as ex from './export.ts';
+import { TRANSITIONS } from './fx.ts';
 import * as history from './history.ts';
 import * as storage from './storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from './image.ts';
-import { reflect as reflectHalf, rotate as spin, SIDES, type Side } from './grid.ts';
+import { reflect as reflectHalf, rotate as spin, shift as slide, SIDES, type Side } from './grid.ts';
+import * as selection from './selection.ts';
 import * as shape from './shapes.ts';
 import type { Point } from './shapes.ts';
 import { blank, editor, GRIDS, type Frame, type GridSize, type Sprite } from './store.svelte.ts';
@@ -127,7 +129,7 @@ const api = {
 	new_package: mut(function (name: string) {
 		taken(editor.packages, name, 'package');
 		editor.packages.push({ name, sets: [] });
-		editor.sel = { pkg: name, set: '', sprite: '' };
+		editor.sel = { pkg: name, set: '', sprite: '', anim: '' };
 		return name;
 	}),
 
@@ -136,8 +138,8 @@ const api = {
 		taken(pkg.sets, name, 'set');
 		if (!GRIDS.includes(grid))
 			throw new Error(`grid must be one of ${GRIDS.join(', ')} (got ${grid})`);
-		pkg.sets.push({ name, grid, sprites: [], frames: [] });
-		editor.sel = { ...editor.sel, set: name, sprite: '' };
+		pkg.sets.push({ name, grid, sprites: [], animations: [] });
+		editor.sel = { ...editor.sel, set: name, sprite: '', anim: '' };
 		return name;
 	}),
 
@@ -152,16 +154,27 @@ const api = {
 	select: ro(function (pkg?: string, set?: string, sprite?: string) {
 		if (pkg !== undefined) {
 			if (!editor.packages.some((p) => p.name === pkg)) throw new Error(`no package "${pkg}"`);
-			editor.sel = { pkg, set: '', sprite: '' };
+			editor.sel = { pkg, set: '', sprite: '', anim: '' };
 		}
 		if (set !== undefined) {
-			if (!editor.requirePackage().sets.some((s) => s.name === set))
-				throw new Error(`no set "${set}"`);
-			editor.sel = { ...editor.sel, set, sprite: '' };
+			const found = editor.requirePackage().sets.find((s) => s.name === set);
+			if (!found) throw new Error(`no set "${set}"`);
+			const next = selection.onSet(
+				editor.sel,
+				set,
+				found.animations.map((a) => a.name)
+			);
+			if (next.moved) editor.stop(); // playback indexes the animation of the set we are leaving
+			editor.sel = next.sel;
 		}
 		if (sprite !== undefined) {
 			if (!editor.requireSet().sprites.some((s) => s.name === sprite))
 				throw new Error(`no sprite "${sprite}"`);
+			// a held frame wins over the selection in `shown`, so selecting a sprite also drops any
+			// held frame — asking for a sprite is asking to look at it. Includes a re-click of the
+			// highlighted row: that is the sidebar's way back to the pure sprite (same as Escape
+			// and the tray's sprite link).
+			editor.stop();
 			editor.sel = { ...editor.sel, sprite };
 		}
 		return { ...editor.sel };
@@ -290,34 +303,132 @@ const api = {
 	/** Shift a sprite's pixels; anything pushed off the edge is dropped. */
 	shift: mut(function (dx: number, dy: number, sprite?: string) {
 		const t = target(sprite);
-		const next = blank(t.grid);
-		for (let y = 0; y < t.grid; y++) {
-			for (let x = 0; x < t.grid; x++) {
-				const nx = x + dx;
-				const ny = y + dy;
-				if (nx < 0 || ny < 0 || nx >= t.grid || ny >= t.grid) continue;
-				next[ny * t.grid + nx] = t.sprite.pixels[y * t.grid + x];
-			}
-		}
-		t.sprite.pixels.set(next);
+		slide(t.sprite.pixels, t.grid, dx, dy);
 	}),
 
 	// ---- animation -------------------------------------------------------
-	/** set_animation([{ sprite: 'crouch', ms: 120 }, { sprite: 'jump', ms: 200 }]) */
-	set_animation: mut(function (frames: Frame[]) {
+	/**
+	 * A set can hold as many animations as you like, all over the same sprites — that is how one
+	 * body frame ends up in both `walk` and `hurt`.
+	 */
+	new_animation: mut(function (name: string) {
+		const set = editor.requireSet();
+		taken(set.animations, name, 'animation');
+		set.animations.push({ name, frames: [] });
+		editor.stop();
+		editor.sel = { ...editor.sel, anim: name };
+		return name;
+	}),
+
+	select_animation: ro(function (name: string) {
+		const set = editor.requireSet();
+		if (!set.animations.some((a) => a.name === name))
+			throw new Error(`no animation "${name}" in set "${set.name}"`);
+		editor.stop();
+		editor.sel = { ...editor.sel, anim: name };
+		return name;
+	}),
+
+	/** Removes the frame list only — the sprites it referenced are untouched. */
+	delete_animation: mut(function (name: string) {
+		const set = editor.requireSet();
+		const i = set.animations.findIndex((a) => a.name === name);
+		if (i < 0) throw new Error(`no animation "${name}" in set "${set.name}"`);
+		set.animations.splice(i, 1);
+		editor.stop();
+		if (editor.sel.anim === name)
+			editor.sel = { ...editor.sel, anim: set.animations[0]?.name ?? '' };
+		return { deleted: name, animations: set.animations.map((a) => a.name) };
+	}),
+
+	/**
+	 * Replace an animation's frames. Targets the active animation, or `name`; either way it is
+	 * created if it isn't there yet, so a fresh set needs no ceremony.
+	 *
+	 *   set_animation([{ sprite: 'crouch', ms: 120 },
+	 *                  { sprite: 'jump', ms: 200, fx: { flipX: true, hue: 'red' } },
+	 *                  { sprite: 'spin', ms: 80, trail: { frames: 5, fade: 0.6 } },
+	 *                  { sprite: 'land', ms: 300, transition: 'scan-down' }])
+	 *
+	 * All three are applied when the frame is drawn, never to the sprite itself:
+	 *
+	 * - `fx` — `invert`, `hue` (red/green/blue/cyan/yellow/magenta), `rotate` (multiple of 30, about
+	 *   the grid centre), `dx`/`dy`, `flipX`, `flipY`
+	 * - `trail` — the frames before this one drawn underneath it, dimmed: `{ frames, fade }`, or
+	 *   just `trail: 5` for the default fade of 0.6. Each ghost keeps its own `fx`, so a trail
+	 *   behind a hue-cycling frame fades back through the earlier colours
+	 * - `transition` — plays over the frame's own `ms`: scan-down, scan-up, vanish, or silhouette
+	 *   (the frame flattened to one colour with the next one dissolving in over it;
+	 *   `{ kind: 'silhouette', color }` picks the colour)
+	 *
+	 * See AGENTS.md §Animation for the full rules.
+	 */
+	set_animation: mut(function (frames: Frame[], name?: string) {
 		const set = editor.requireSet();
 		if (!Array.isArray(frames) || !frames.length) throw new Error('frames must be a non-empty array');
 		for (const f of frames) {
 			if (!set.sprites.some((s) => s.name === f.sprite))
 				throw new Error(`no sprite "${f.sprite}" in set "${set.name}"`);
 			if (!(f.ms > 0)) throw new Error(`frame "${f.sprite}" needs a positive ms`);
+			if (f.transition && !storage.readTransition(f.transition))
+				throw new Error(
+					`frame "${f.sprite}" has an unknown transition (use ${TRANSITIONS.join(', ')})`
+				);
+			if (f.trail !== undefined && !storage.readTrail(f.trail))
+				throw new Error(
+					`frame "${f.sprite}" has a bad trail — use a frame count, or { frames, fade } with 0 < fade < 1`
+				);
 		}
-		set.frames = frames.map((f) => ({ sprite: f.sprite, ms: f.ms }));
-		return set.frames.length;
+		const into = selection.targetAnimation(
+			set.animations.map((a) => a.name),
+			name,
+			editor.sel.anim
+		);
+		if (!into.exists) set.animations.push({ name: into.name, frames: [] });
+		// read it back rather than keeping the pushed object: only the $state proxy is observed
+		const anim = set.animations.find((a) => a.name === into.name)!;
+		// through the same validator the format uses, so an fx that survives here survives a reload
+		anim.frames = storage.readFrames(frames, new Set(set.sprites.map((s) => s.name)));
+		editor.stop();
+		editor.sel = { ...editor.sel, anim: anim.name };
+		return anim.frames.length;
+	}),
+
+	/**
+	 * Change the effects on frames that already exist, without rewriting the whole list.
+	 *
+	 *   set_effects(3, { fx: { invert: true } })          // one frame
+	 *   set_effects('*', { trail: 5 })                    // every frame of the animation
+	 *   set_effects('*', { fx: null, transition: null })  // clear them everywhere
+	 *   set_effects([0, 2, 4], { fx: { hue: 'red' } })    // a few
+	 *
+	 * `target` is a frame index, a list of them, or `'*'`. In the patch, a field left out is left
+	 * alone, `null` clears it, and an object is merged into what is there — so setting `hue` keeps
+	 * the `flipX` next to it, and `{ fx: { invert: false } }` turns just that one off.
+	 *
+	 * One call is one undo step, however many frames it touches. This is what the timeline's effect
+	 * tray calls, so anything you can do there you can do from here and the other way round.
+	 */
+	set_effects: mut(function (
+		target: number | number[] | '*',
+		patch: storage.EffectPatch,
+		animation?: string
+	) {
+		const set = editor.requireSet();
+		const anim = animation
+			? set.animations.find((a) => a.name === animation)
+			: editor.requireAnimation();
+		if (!anim) throw new Error(`no animation "${animation}" in set "${set.name}"`);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
+		if (!patch || typeof patch !== 'object') throw new Error('patch must be an object');
+
+		const at = selection.targetFrames(anim.frames.length, target);
+		for (const i of at) anim.frames[i] = storage.patchEffects(anim.frames[i], patch);
+		return { animation: anim.name, frames: at.length };
 	}),
 
 	play: ro(() => editor.play()),
-	/** Hold on the current frame. It stays on the canvas and stays editable. */
+	/** Hold on the current frame. It stays on the canvas, and stays editable unless it has effects. */
 	pause: ro(() => editor.pause()),
 	stop: ro(() => editor.stop()),
 	/** Advance one frame (or back with a negative delta), pausing where it lands. */
@@ -328,35 +439,50 @@ const api = {
 	// ---- export ----------------------------------------------------------
 	export_svg: ro(function ({ sprite, scale = 1, download = false } = {} as any) {
 		const t = target(sprite);
-		const svg = ex.toSVG(t.sprite, t.grid, scale);
+		const svg = ex.toSVG(t.sprite.pixels, t.grid, scale);
 		if (download) ex.download(svg, `${t.sprite.name}.svg`);
 		return svg;
 	}),
 
 	export_png: ro(function ({ sprite, scale = 8, download = false } = {} as any) {
 		const t = target(sprite);
-		const url = ex.toPNG(t.sprite, t.grid, scale);
+		const url = ex.toPNG(t.sprite.pixels, t.grid, scale);
 		if (download) ex.download(url, `${t.sprite.name}.png`);
 		return url;
 	}),
 
 	export_ico: ro(async function ({ sprite, sizes = [16, 32, 48], download = false } = {} as any) {
 		const t = target(sprite);
-		const url = await ex.toICO(t.sprite, t.grid, sizes);
+		const url = await ex.toICO(t.sprite.pixels, t.grid, sizes);
 		if (download) ex.download(url, `${t.sprite.name}.ico`);
 		return url;
 	}),
 
 	/**
-	 * The whole set as a .zip — sprites as PNG and SVG, the animation, and `set.json`.
+	 * The whole set as a .zip — sprites as PNG and SVG, one SVG per animation, and `set.json`.
 	 *
-	 *   await export_zip({ download: true })          // save it
-	 *   await export_zip({ base64: true })            // get the bytes back (large)
+	 *   await export_zip({ download: true })            // save it
+	 *   await export_zip({ base64: true })              // get the bytes back (large)
+	 *   await export_zip({ animations: false })         // sprites only
+	 *   await export_zip({ animations: ['walk'] })      // just that one
+	 *   await export_zip({ effects: false })            // sprites as drawn, frame fx ignored
 	 */
-	export_zip: ro(async function ({ scale = 8, download = false, base64 = false } = {} as any) {
+	export_zip: ro(async function ({
+		scale = 8,
+		effects = true,
+		transitions = true,
+		animations = true,
+		download = false,
+		base64 = false
+	} = {} as any) {
 		const set = editor.requireSet();
 		if (!set.sprites.length) throw new Error(`set "${set.name}" has no sprites to export`);
-		const { blob, filename, files } = await ex.setArchive(set, scale);
+		const { blob, filename, files } = await ex.setArchive(set, {
+			scale,
+			effects,
+			transitions,
+			animations
+		});
 		if (download) ex.downloadBlob(blob, filename);
 		const out: Record<string, unknown> = { filename, bytes: blob.size, files };
 		if (base64) {
@@ -395,8 +521,18 @@ const api = {
 		set.name = freeName(pkg.sets, set.name);
 		editor.stop();
 		pkg.sets.push(set);
-		editor.sel = { ...editor.sel, set: set.name, sprite: set.sprites[0]?.name ?? '' };
-		return { set: set.name, grid: set.grid, sprites: set.sprites.length, frames: set.frames.length };
+		editor.sel = {
+			...editor.sel,
+			set: set.name,
+			sprite: set.sprites[0]?.name ?? '',
+			anim: set.animations[0]?.name ?? ''
+		};
+		return {
+			set: set.name,
+			grid: set.grid,
+			sprites: set.sprites.length,
+			animations: set.animations.map((a) => a.name)
+		};
 	}),
 
 	/** Load a project. Merges by default; `replace` wipes first, so it has to be asked for. Async. */
@@ -416,11 +552,28 @@ const api = {
 		return { packages: incoming.map((p) => p.name), replaced: replace };
 	}),
 
-	/** The whole set's animation as one self-contained looping SVG. */
-	export_animated_svg: ro(function ({ scale = 1, download = false } = {} as any) {
+	/**
+	 * One animation as a self-contained looping SVG — the active one, or `animation` by name.
+	 * `effects` and `transitions` default on: what plays is what you get.
+	 */
+	export_animated_svg: ro(function ({
+		animation,
+		scale = 1,
+		effects = true,
+		transitions = true,
+		download = false
+	} = {} as any) {
 		const set = editor.requireSet();
-		const svg = ex.toAnimatedSVG(set.sprites, set.frames, set.grid, scale);
-		if (download) ex.download(svg, `${set.name}.svg`);
+		const anim = animation
+			? set.animations.find((a) => a.name === animation)
+			: editor.requireAnimation();
+		if (!anim) throw new Error(`no animation "${animation}" in set "${set.name}"`);
+		const svg = ex.toAnimatedSVG(set.sprites, anim.frames, set.grid, {
+			scale,
+			effects,
+			transitions
+		});
+		if (download) ex.download(svg, `${set.name}-${anim.name}.svg`);
 		return svg;
 	}),
 
@@ -446,10 +599,10 @@ const api = {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select'],
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'reflect', 'rotate', 'shift', 'clear', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
-				animation: ['set_animation', 'play', 'pause', 'stop', 'step', 'view_frame'],
+				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
-				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'background', 'silhouette', 'help'],
+				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'background', 'silhouette', 'raw', 'help'],
 				history: ['undo', 'redo', 'history'],
 				storage: ['flush', 'reset']
 			},
@@ -460,10 +613,24 @@ const api = {
 				'shapes.circle/square/triangle/… fill a whole form in one call, and one undo step. Blocking a body out with shapes then detailing with paint_map beats plotting pixels by hand.',
 				'print_sprite() renders the sprite as ASCII so you can check your own work.',
 				'rotate() only comes back exactly at 90/180/270 about the default centre — check the `lost` it returns.',
+				"set_animation() frames carry `fx`, `trail` and `transition`, all applied when the frame is drawn — so one sprite can look different in every animation it appears in. A motion trail is `trail: 5`, not 5 hand-painted ghosts.",
+				"set_effects('*', { trail: 5 }) puts the same effect on every frame in one undo step — effects are usually uniform across an animation, so reach for '*' before a per-frame loop.",
+				'Rotating pixels resamples them, and a filled shape smears after a few turns. For a spinning object, compute the rotated points yourself and redraw it with shapes.* per frame — that stays crisp and is not limited to 30° steps.',
 				'Async commands (import_image, export_zip, export_ico) must be awaited.',
 				'To import an image you have no file picker for, pass a data: URL.'
 			]
 		};
+	}),
+
+	/**
+	 * See the sprite as it is stored, with the held frame's `fx`, `trail` and `transition` ignored —
+	 * the pixels an edit would actually land on. `raw(false)` goes back to the composed view.
+	 * Paints nothing and saves nothing; in the UI this is the **show sprite** button on the canvas,
+	 * or holding `\`.
+	 */
+	raw: ro(function (on: boolean = !editor.raw) {
+		editor.peekApi = !!on;
+		return { raw: editor.raw };
 	}),
 
 	/** Canvas backdrop for reviewing a sprite; `background()` restores the checkerboard. Paints nothing. */
@@ -539,7 +706,7 @@ const api = {
 	reset: mut(function () {
 		editor.stop();
 		editor.packages = [];
-		editor.sel = { pkg: '', set: '', sprite: '' };
+		editor.sel = { pkg: '', set: '', sprite: '', anim: '' };
 	})
 };
 

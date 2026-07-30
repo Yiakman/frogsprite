@@ -4,7 +4,7 @@ import * as history from './history.ts';
 
 test('history walks back and forward, coalesces strokes, and drops the future on a new edit', () => {
 	history.reset();
-	const sel = { pkg: 'p', set: 's', sprite: 'a' };
+	const sel = { pkg: 'p', set: 's', sprite: 'a', anim: 'walk' };
 	const at = (raw: string) => ({ raw, sel });
 
 	assert.equal(history.undo(at('A')), null, 'nothing to undo yet');
@@ -40,7 +40,7 @@ test('history walks back and forward, coalesces strokes, and drops the future on
 
 test('a push can be taken back, redo branch and all', () => {
 	history.reset();
-	const sel = { pkg: 'p', set: 's', sprite: 'a' };
+	const sel = { pkg: 'p', set: 's', sprite: 'a', anim: 'walk' };
 	const at = (raw: string) => ({ raw, sel });
 
 	history.push(at('A'));

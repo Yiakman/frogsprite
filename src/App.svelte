@@ -31,11 +31,33 @@
 	}}
 	onkeydown={(e) => {
 		// leave form fields to the browser's own undo — the frame editor has number inputs
-		if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
 		if (/^(INPUT|SELECT|TEXTAREA)$/.test((e.target as HTMLElement)?.tagName)) return;
+		// Escape: the universal "leave this mode" gesture — drop a held or playing frame and go
+		// back to the selected sprite. No-op when nothing is held. The dialog stops its own
+		// Escape from propagating, so this never fires while a form is open.
+		if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+			if (editor.frame >= 0 && !e.repeat) {
+				e.preventDefault();
+				editor.stop();
+			}
+			return;
+		}
+		// hold \ to see the sprite under the frame's effects. Held, not toggled: comparing is a
+		// flick back and forth, and a mode you can leave switched on is a mode that misleads later.
+		// Writes the keyboard peek source, not the shared flag, so it does not fight the canvas
+		// peek button — releasing either leaves the other's peek standing.
+		if (e.key === '\\' && !e.metaKey && !e.ctrlKey) {
+			if (!e.repeat) editor.peekKey = true;
+			return;
+		}
+		if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
 		e.preventDefault();
 		(e.shiftKey ? fs.redo : fs.undo)();
 	}}
+	onkeyup={(e) => {
+		if (e.key === '\\') editor.peekKey = false;
+	}}
+	onblur={() => editor.releaseHolds()}
 />
 
 <input
@@ -67,12 +89,13 @@
 			<button onclick={() => run(() => fs.export_png({ scale: 16, download: true }))}>PNG</button>
 			<button onclick={() => run(() => fs.export_ico({ download: true }))}>ICO</button>
 			<button
-				disabled={!editor.set?.frames.length}
+				disabled={!editor.frames.length}
+				title="The animation shown in the timeline, with its frame effects"
 				onclick={() => run(() => fs.export_animated_svg({ download: true }))}>Animated SVG</button
 			>
 			<button
 				disabled={!editor.set?.sprites.length}
-				title="Every sprite as PNG and SVG, the animation, and the raw pixel data"
+				title="Every sprite as PNG and SVG, one SVG per animation, and the raw pixel data"
 				onclick={() => run(() => fs.export_zip({ download: true }))}
 				data-testid="export-zip">ZIP (whole set)</button
 			>

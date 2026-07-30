@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isProject, parse, readInterchange, readSet, serialise, setPayload } from './storage.ts';
+import {
+	isProject,
+	parse,
+	patchEffects,
+	readInterchange,
+	readSet,
+	readTrail,
+	serialise,
+	setPayload
+} from './storage.ts';
 import { GRIDS } from './grid.ts';
 import { zip } from './zip.ts';
 
@@ -12,7 +21,7 @@ const pkg = (over = {}) => [
 				name: 's',
 				grid: 8,
 				sprites: [{ name: 'a', pixels: new Uint8Array(64).fill(3) }],
-				frames: [{ sprite: 'a', ms: 100 }],
+				animations: [{ name: 'walk', frames: [{ sprite: 'a', ms: 100 }] }],
 				...over
 			}
 		]
@@ -63,7 +72,7 @@ test('every supported grid round-trips, and only those', () => {
 
 test('parse repairs bad pixel data instead of dropping the sprite', () => {
 	const raw = JSON.stringify(
-		pkg({ sprites: [{ name: 'a', pixels: [1, 999, 'x', -1, null, 2.5] }], frames: [] })
+		pkg({ sprites: [{ name: 'a', pixels: [1, 999, 'x', -1, null, 2.5] }], animations: [] })
 	);
 	const pixels = (parse(raw) as any)[0].sets[0].sprites[0].pixels;
 	assert.equal(pixels.length, 64, 'short array is padded to the grid');
@@ -77,9 +86,128 @@ test('parse repairs bad pixel data instead of dropping the sprite', () => {
 
 test('parse drops frames pointing at sprites that did not survive', () => {
 	const raw = stored({
-		frames: [{ sprite: 'a', ms: 100 }, { sprite: 'ghost', ms: 50 }, { sprite: 'a', ms: 0 }]
+		animations: [
+			{
+				name: 'walk',
+				frames: [{ sprite: 'a', ms: 100 }, { sprite: 'ghost', ms: 50 }, { sprite: 'a', ms: 0 }]
+			}
+		]
 	});
-	assert.deepEqual((parse(raw) as any)[0].sets[0].frames, [{ sprite: 'a', ms: 100 }]);
+	assert.deepEqual((parse(raw) as any)[0].sets[0].animations, [
+		{ name: 'walk', frames: [{ sprite: 'a', ms: 100 }] }
+	]);
+});
+
+test('a v1 set, with one unnamed frame list, loads as one named animation', () => {
+	const v1 = JSON.stringify({
+		version: 1,
+		packages: [
+			{
+				name: 'p',
+				sets: [
+					{
+						name: 's',
+						grid: 8,
+						sprites: [{ name: 'a', pixels: [...new Uint8Array(64).fill(3)] }],
+						frames: [{ sprite: 'a', ms: 100 }]
+					}
+				]
+			}
+		]
+	});
+	assert.deepEqual((parse(v1) as any)[0].sets[0].animations, [
+		{ name: 'animation', frames: [{ sprite: 'a', ms: 100 }] }
+	]);
+});
+
+test('readTrail takes the shorthand, clamps the depth and refuses a pointless fade', () => {
+	assert.deepEqual(readTrail(5), { frames: 5 }, 'a bare number is a frame count');
+	assert.deepEqual(readTrail({ frames: 5 }), { frames: 5 }, 'fade is left to the default');
+	assert.deepEqual(readTrail({ frames: 3, fade: 0.55 }), { frames: 3, fade: 0.55 });
+	assert.deepEqual(readTrail({ frames: 1e9 }), { frames: 32 }, 'clamped once, not every redraw');
+	assert.deepEqual(readTrail({ frames: 4.7 }), { frames: 4 }, 'truncated to whole frames');
+
+	// fade 0 would erase the trail and 1 would leave it as bright as the head — neither is a trail,
+	// so the key is dropped and the default stands rather than the frame being thrown away
+	for (const fade of [0, 1, -0.5, 2, 'x', null, NaN])
+		assert.deepEqual(readTrail({ frames: 2, fade }), { frames: 2 }, `fade: ${fade}`);
+
+	for (const junk of [undefined, null, 0, -1, 'x', {}, { frames: 'lots' }, { fade: 0.5 }])
+		assert.equal(readTrail(junk), undefined, `input: ${JSON.stringify(junk)}`);
+});
+
+test('patchEffects leaves absent fields alone and clears on null', () => {
+	const frame = {
+		sprite: 'a',
+		ms: 100,
+		fx: { invert: true as const },
+		trail: { frames: 3 },
+		transition: { kind: 'vanish' as const }
+	};
+	assert.deepEqual(patchEffects(frame, {}), frame, 'an empty patch changes nothing');
+	assert.deepEqual(patchEffects(frame, { trail: null }), {
+		sprite: 'a',
+		ms: 100,
+		fx: { invert: true },
+		transition: { kind: 'vanish' }
+	});
+	assert.deepEqual(patchEffects(frame, { fx: null, trail: null, transition: null }), {
+		sprite: 'a',
+		ms: 100
+	});
+	assert.deepEqual(frame.fx, { invert: true }, 'the frame handed in is never written through');
+});
+
+test('patchEffects merges fx, so setting one key keeps the others', () => {
+	const frame = { sprite: 'a', ms: 100, fx: { invert: true as const, flipX: true as const } };
+	assert.deepEqual(patchEffects(frame, { fx: { hue: 'red' } }).fx, {
+		invert: true,
+		hue: 'red',
+		flipX: true
+	});
+	// a key turned off is dropped by the validator, which is how the timeline untoggles a chip
+	assert.deepEqual(patchEffects(frame, { fx: { invert: false } }).fx, { flipX: true });
+	assert.equal(
+		patchEffects(frame, { fx: { invert: false, flipX: false } }).fx,
+		undefined,
+		'an fx with nothing left in it goes away rather than persisting as {}'
+	);
+});
+
+test('patchEffects normalises through the same validators the format uses', () => {
+	const frame = { sprite: 'a', ms: 100 };
+	assert.equal(patchEffects(frame, { fx: { rotate: 0 } }).fx, undefined, 'a no-op turn is no fx');
+	assert.deepEqual(patchEffects(frame, { fx: { rotate: 45 } }).fx, undefined, 'not a 30° step');
+	assert.deepEqual(patchEffects(frame, { trail: 4 }).trail, { frames: 4 }, 'shorthand');
+	assert.deepEqual(patchEffects(frame, { transition: 'vanish' }).transition, { kind: 'vanish' });
+	assert.equal(patchEffects(frame, { transition: 'melt' }).transition, undefined);
+});
+
+test('readSet keeps the effects it understands and drops the rest', () => {
+	const set = readSet({
+		name: 's',
+		grid: 8,
+		sprites: [{ name: 'a', pixels: [...new Uint8Array(64)] }],
+		animations: [
+			{
+				name: 'hurt',
+				frames: [
+					{
+						sprite: 'a',
+						ms: 100,
+						// rotate 45 is not a 30° step, 'teal' is not a hue, 'melt' is not a transition
+						fx: { invert: true, hue: 'teal', rotate: 45, dx: 2.4, flipY: true, wat: 1 },
+						transition: 'melt'
+					},
+					{ sprite: 'a', ms: 50, fx: {}, transition: 'vanish' }
+				]
+			}
+		]
+	});
+	assert.deepEqual(set!.animations[0].frames, [
+		{ sprite: 'a', ms: 100, fx: { invert: true, dx: 2, flipY: true } },
+		{ sprite: 'a', ms: 50, transition: { kind: 'vanish' } }
+	]);
 });
 
 // --- interchange -------------------------------------------------------------

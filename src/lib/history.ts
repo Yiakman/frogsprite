@@ -6,7 +6,7 @@
 // This module is the stacks and nothing else: no store, no localStorage. commands.ts takes the
 // snapshots and applies them back.
 
-export type Entry = { raw: string; sel: { pkg: string; set: string; sprite: string } };
+export type Entry = { raw: string; sel: { pkg: string; set: string; sprite: string; anim: string } };
 
 const past: Entry[] = [];
 const future: Entry[] = [];

@@ -62,6 +62,10 @@
 		onkeydown={(e) => {
 			if (e.key !== 'Escape') return;
 			e.preventDefault();
+			// stopPropagation: the window handler in App.svelte also binds Escape (to leave a
+			// held frame), and this key belongs to the dialog — dismissing a form must not also
+			// halt playback underneath it.
+			e.stopPropagation();
 			req = null;
 		}}
 		data-testid="dialog"
