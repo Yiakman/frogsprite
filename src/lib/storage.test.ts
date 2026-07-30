@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
 	isProject,
 	parse,
+	patchEffects,
 	readInterchange,
 	readSet,
 	readTrail,
@@ -133,6 +134,53 @@ test('readTrail takes the shorthand, clamps the depth and refuses a pointless fa
 
 	for (const junk of [undefined, null, 0, -1, 'x', {}, { frames: 'lots' }, { fade: 0.5 }])
 		assert.equal(readTrail(junk), undefined, `input: ${JSON.stringify(junk)}`);
+});
+
+test('patchEffects leaves absent fields alone and clears on null', () => {
+	const frame = {
+		sprite: 'a',
+		ms: 100,
+		fx: { invert: true as const },
+		trail: { frames: 3 },
+		transition: { kind: 'vanish' as const }
+	};
+	assert.deepEqual(patchEffects(frame, {}), frame, 'an empty patch changes nothing');
+	assert.deepEqual(patchEffects(frame, { trail: null }), {
+		sprite: 'a',
+		ms: 100,
+		fx: { invert: true },
+		transition: { kind: 'vanish' }
+	});
+	assert.deepEqual(patchEffects(frame, { fx: null, trail: null, transition: null }), {
+		sprite: 'a',
+		ms: 100
+	});
+	assert.deepEqual(frame.fx, { invert: true }, 'the frame handed in is never written through');
+});
+
+test('patchEffects merges fx, so setting one key keeps the others', () => {
+	const frame = { sprite: 'a', ms: 100, fx: { invert: true as const, flipX: true as const } };
+	assert.deepEqual(patchEffects(frame, { fx: { hue: 'red' } }).fx, {
+		invert: true,
+		hue: 'red',
+		flipX: true
+	});
+	// a key turned off is dropped by the validator, which is how the timeline untoggles a chip
+	assert.deepEqual(patchEffects(frame, { fx: { invert: false } }).fx, { flipX: true });
+	assert.equal(
+		patchEffects(frame, { fx: { invert: false, flipX: false } }).fx,
+		undefined,
+		'an fx with nothing left in it goes away rather than persisting as {}'
+	);
+});
+
+test('patchEffects normalises through the same validators the format uses', () => {
+	const frame = { sprite: 'a', ms: 100 };
+	assert.equal(patchEffects(frame, { fx: { rotate: 0 } }).fx, undefined, 'a no-op turn is no fx');
+	assert.deepEqual(patchEffects(frame, { fx: { rotate: 45 } }).fx, undefined, 'not a 30° step');
+	assert.deepEqual(patchEffects(frame, { trail: 4 }).trail, { frames: 4 }, 'shorthand');
+	assert.deepEqual(patchEffects(frame, { transition: 'vanish' }).transition, { kind: 'vanish' });
+	assert.equal(patchEffects(frame, { transition: 'melt' }).transition, undefined);
 });
 
 test('readSet keeps the effects it understands and drops the rest', () => {

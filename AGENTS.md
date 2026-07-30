@@ -226,6 +226,28 @@ set_animation([
 ]);
 ```
 
+#### Changing effects without rewriting the frames
+
+`set_animation` replaces a whole list. To change only the effects on frames that already exist:
+
+- `set_effects(target, patch, animation?)` — `target` is a frame index, a list of them, or `'*'` for
+  every frame of the animation. One call is one undo step, however many frames it touches.
+
+```js
+set_effects(3, { fx: { invert: true } })           // one frame
+set_effects('*', { trail: 5 })                     // the whole animation
+set_effects('*', { fx: null, transition: null })   // clear them everywhere
+set_effects([0, 2, 4], { fx: { hue: 'red' } })     // a few
+```
+
+In the patch, a field **left out** is left alone, `null` **clears** it, and an object is **merged**
+into what is there — so `{ fx: { hue: 'red' } }` keeps the `flipX` sitting beside it, and
+`{ fx: { invert: false } }` turns off just that one key. Effects are uniform across an animation far
+more often than not, so reach for `'*'` before writing a per-frame loop.
+
+This is exactly what the timeline's effect tray calls, so anything you can do by hand you can do from
+here, with the same undo and the same validation.
+
 #### Frame effects
 
 `fx` is applied **when the frame is drawn**, never to the sprite — that is what lets the same sprite
@@ -312,8 +334,11 @@ Transport — the canvas shows whichever frame you land on, and the sidebar sele
 
 `state().playback` reports `{ animation, frame, running, showing }` so you can check where you are.
 In the UI, the timeline has a picker for the set's animations and a thumbnail per frame; clicking a
-thumbnail calls `view_frame`. Effects are read-only there — the timeline names the ones a frame
-carries, but `set_animation` is how you set them.
+thumbnail calls `view_frame`, and the frame it holds expands into an **effect tray** — the same
+`set_effects` calls documented above, with a `this frame | all frames` scope switch. A frame with a
+transition also gets a **reveal** slider there, which scrubs `phase` through the transition so you
+can see the middle of a scan or a dissolve while authoring it. Whole-animation recipes (Comet,
+Ghost, Flash, Fade in, Hue cycle, Clear effects) live behind **Effects** in the sidebar.
 
 ### Export
 

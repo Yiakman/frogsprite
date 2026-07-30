@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { frogsprite as fs } from './commands';
+	import { beginStroke, endStroke, frogsprite as fs } from './commands';
 	import { form, notify } from './Dialog.svelte';
 	import { PALETTE } from './palette';
 	import { editor, GRIDS, type GridSize } from './store.svelte';
@@ -45,7 +45,7 @@
 
 	// ---- tools -------------------------------------------------------------
 	/** Which panel the aside is showing. Not persisted — a reload comes back on the hierarchy. */
-	let view = $state<'main' | 'shapes' | 'view'>('main');
+	let view = $state<'main' | 'shapes' | 'view' | 'effects'>('main');
 
 	type Tool = {
 		name: string;
@@ -122,6 +122,52 @@
 			}
 		});
 
+	// ---- effect presets ----------------------------------------------------
+	// Recipes over the whole animation, for anyone who has no idea what `fx` or `trail` mean. Each
+	// one is set_effects() — the same writer the timeline tray uses — so each is a single undo step.
+
+	const HUES = ['red', 'yellow', 'green', 'cyan', 'blue', 'magenta'] as const;
+
+	type Preset = { name: string; what: string; run: (frames: number) => void };
+
+	const PRESETS: Preset[] = [
+		{ name: 'Comet', what: 'a 5-frame motion trail on every frame',
+			run: () => fs.set_effects('*', { trail: 5 }) },
+		{ name: 'Ghost', what: 'a shorter, fainter trail',
+			run: () => fs.set_effects('*', { trail: { frames: 3, fade: 0.4 } }) },
+		{ name: 'Flash', what: 'every other frame inverted',
+			run: (n) => fs.set_effects(odd(n), { fx: { invert: true } }) },
+		{ name: 'Fade in', what: 'the first frame scans in from the top',
+			run: () => fs.set_effects(0, { transition: 'scan-down' }) },
+		// shaped, not uniform: a silhouette is an accent on one beat. Spread over every frame it
+		// never lets the sprite draw normally, which is how it turns into static.
+		{ name: 'Impact', what: 'a silhouette flash on the last frame only',
+			run: (n) => fs.set_effects(n - 1, { transition: 'silhouette', trail: null }) },
+		{ name: 'Hue cycle', what: 'the six hues spread across the run',
+			run: (n) => HUES.forEach((h, i) => fs.set_effects(block(n, i), { fx: { hue: h } })) },
+		{ name: 'Clear effects', what: 'strip every effect from every frame',
+			run: () => fs.set_effects('*', { fx: null, trail: null, transition: null }) }
+	];
+
+	const odd = (n: number) => [...Array(n).keys()].filter((i) => i % 2);
+	/** The `i`th of six even blocks of frames — the ones a hue lands on. */
+	const block = (n: number, i: number) =>
+		[...Array(n).keys()].filter((f) => Math.min(5, Math.floor((f / n) * 6)) === i);
+
+	function preset(p: Preset) {
+		const n = editor.frames.length;
+		// A preset is one gesture, like a drag is: begin/end fold the set_effects() snapshots inside
+		// it into a single step, so Hue cycle costs one ⌘Z rather than six.
+		beginStroke();
+		try {
+			p.run(n);
+		} catch (e) {
+			notify((e as Error).message);
+		} finally {
+			endStroke();
+		}
+	}
+
 	// Same swatches the canvas used to carry: exact palette entries, so a swatch shows what the
 	// command will resolve to.
 	const BACKDROPS = [null, '#ffffff', '#999999', '#000000', '#ff00ff'];
@@ -135,10 +181,29 @@
 		<!-- Child panel: the hierarchy is out of the way until the ← comes back to it. -->
 		<header class="back">
 			<button onclick={() => (view = 'main')} aria-label="Back to packages, sets and sprites" data-testid="tools-back">←</button>
-			<h2>{view === 'shapes' ? 'Shapes' : 'View'}</h2>
+			<h2>{view === 'shapes' ? 'Shapes' : view === 'effects' ? 'Effects' : 'View'}</h2>
 		</header>
 
-		{#if view === 'shapes'}
+		{#if view === 'effects'}
+			<div class="tools">
+				{#each PRESETS as p (p.name)}
+					<button class="tool" title={p.what} disabled={!editor.frames.length}
+						onclick={() => preset(p)}>{p.name}</button>
+				{/each}
+			</div>
+			{#if editor.frames.length}
+				<p class="none">
+					Whole-animation recipes for <strong>{editor.anim?.name}</strong> — {editor.frames.length}
+					frames. Each is one undo step. For one frame at a time, click its thumbnail in the
+					timeline and use the tray that opens.
+				</p>
+			{:else}
+				<p class="none">
+					Effects live on animation frames. Add some in the timeline first — then these recipes
+					apply to all of them at once.
+				</p>
+			{/if}
+		{:else if view === 'shapes'}
 			<div class="tools">
 				{#each SHAPES as t (t.name)}
 					<button class="tool" title={t.hint} onclick={() => draw(t)}>{t.name}</button>
@@ -254,7 +319,12 @@
 					onclick={spin}
 					data-testid="tool-rotate">Rotate</button
 				>
-				<button class="tool" disabled title="coming soon">Effects</button>
+				<button
+					class="tool"
+					title="Whole-animation effect recipes — trails, flashes, transitions"
+					onclick={() => (view = 'effects')}
+					data-testid="tool-effects">Effects</button
+				>
 				<button class="tool" disabled title="coming soon">Paint</button>
 			</div>
 		</section>

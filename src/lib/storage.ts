@@ -98,6 +98,49 @@ export function readTransition(v: any): Transition | undefined {
 	return Number.isInteger(color) && color > 0 && color < 256 ? { kind, color } : { kind };
 }
 
+/**
+ * An `fx` patch can null out one key at a time — `{ hue: null }` drops the hue and leaves the flip
+ * beside it alone. The validator does the dropping, so `false` and `0` clear their keys the same way.
+ */
+export type FxPatch = { [K in keyof Fx]?: Fx[K] | null };
+
+/** What `set_effects` may change about a frame. See `patchEffects` for what absent vs null means. */
+export type EffectPatch = {
+	fx?: FxPatch | null;
+	trail?: Trail | number | null;
+	transition?: Transition | string | null;
+};
+
+/**
+ * A frame with an effect patch applied. Absent leaves a field alone, `null` clears it, and an object
+ * is *merged* into what is there — so toggling `invert` from the timeline does not silently wipe the
+ * `hue` sitting next to it.
+ *
+ * Everything lands through the same validators the stored format uses, which is what makes a no-op
+ * disappear rather than persist: `rotate: 0` is dropped, and an `fx` left with nothing in it comes
+ * back undefined instead of `{}`.
+ */
+export function patchEffects(frame: Frame, patch: EffectPatch): Frame {
+	const next: Frame = { ...frame };
+
+	if (patch.fx !== undefined) {
+		const merged = patch.fx === null ? undefined : readFx({ ...next.fx, ...patch.fx });
+		if (merged) next.fx = merged;
+		else delete next.fx;
+	}
+	if (patch.trail !== undefined) {
+		const trail = patch.trail === null ? undefined : readTrail(patch.trail);
+		if (trail) next.trail = trail;
+		else delete next.trail;
+	}
+	if (patch.transition !== undefined) {
+		const transition = patch.transition === null ? undefined : readTransition(patch.transition);
+		if (transition) next.transition = transition;
+		else delete next.transition;
+	}
+	return next;
+}
+
 /** `known` is the sprite names a frame is allowed to reference. Also what `set_animation` validates through. */
 export function readFrames(v: unknown, known: Set<string>): Frame[] {
 	const frames: Frame[] = [];

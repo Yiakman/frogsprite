@@ -389,6 +389,39 @@ const api = {
 		return anim.frames.length;
 	}),
 
+	/**
+	 * Change the effects on frames that already exist, without rewriting the whole list.
+	 *
+	 *   set_effects(3, { fx: { invert: true } })          // one frame
+	 *   set_effects('*', { trail: 5 })                    // every frame of the animation
+	 *   set_effects('*', { fx: null, transition: null })  // clear them everywhere
+	 *   set_effects([0, 2, 4], { fx: { hue: 'red' } })    // a few
+	 *
+	 * `target` is a frame index, a list of them, or `'*'`. In the patch, a field left out is left
+	 * alone, `null` clears it, and an object is merged into what is there — so setting `hue` keeps
+	 * the `flipX` next to it, and `{ fx: { invert: false } }` turns just that one off.
+	 *
+	 * One call is one undo step, however many frames it touches. This is what the timeline's effect
+	 * tray calls, so anything you can do there you can do from here and the other way round.
+	 */
+	set_effects: mut(function (
+		target: number | number[] | '*',
+		patch: storage.EffectPatch,
+		animation?: string
+	) {
+		const set = editor.requireSet();
+		const anim = animation
+			? set.animations.find((a) => a.name === animation)
+			: editor.requireAnimation();
+		if (!anim) throw new Error(`no animation "${animation}" in set "${set.name}"`);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
+		if (!patch || typeof patch !== 'object') throw new Error('patch must be an object');
+
+		const at = selection.targetFrames(anim.frames.length, target);
+		for (const i of at) anim.frames[i] = storage.patchEffects(anim.frames[i], patch);
+		return { animation: anim.name, frames: at.length };
+	}),
+
 	play: ro(() => editor.play()),
 	/** Hold on the current frame. It stays on the canvas, and stays editable unless it has effects. */
 	pause: ro(() => editor.pause()),
@@ -561,7 +594,7 @@ const api = {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select'],
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'reflect', 'rotate', 'shift', 'clear', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
-				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'play', 'pause', 'stop', 'step', 'view_frame'],
+				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
 				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'background', 'silhouette', 'help'],
@@ -576,6 +609,7 @@ const api = {
 				'print_sprite() renders the sprite as ASCII so you can check your own work.',
 				'rotate() only comes back exactly at 90/180/270 about the default centre — check the `lost` it returns.',
 				"set_animation() frames carry `fx`, `trail` and `transition`, all applied when the frame is drawn — so one sprite can look different in every animation it appears in. A motion trail is `trail: 5`, not 5 hand-painted ghosts.",
+				"set_effects('*', { trail: 5 }) puts the same effect on every frame in one undo step — effects are usually uniform across an animation, so reach for '*' before a per-frame loop.",
 				'Rotating pixels resamples them, and a filled shape smears after a few turns. For a spinning object, compute the rotated points yourself and redraw it with shapes.* per frame — that stays crisp and is not limited to 30° steps.',
 				'Async commands (import_image, export_zip, export_ico) must be awaited.',
 				'To import an image you have no file picker for, pass a data: URL.'

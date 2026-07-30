@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { onSet, targetAnimation, type Selection } from './selection.ts';
+import { onSet, targetAnimation, targetFrames, type Selection } from './selection.ts';
 
 const at = (over: Partial<Selection> = {}): Selection => ({
 	pkg: 'p',
@@ -35,6 +35,22 @@ test('set_animation resolves the name before the lookup, so it never duplicates'
 		exists: true
 	});
 	assert.deepEqual(targetAnimation(['animation'], '', ''), { name: 'animation', exists: true });
+});
+
+test('targetFrames takes one index, a list, or "*" for the lot', () => {
+	assert.deepEqual(targetFrames(4, 2), [2]);
+	assert.deepEqual(targetFrames(4, [0, 2]), [0, 2]);
+	assert.deepEqual(targetFrames(4, '*'), [0, 1, 2, 3]);
+	assert.deepEqual(targetFrames(1, '*'), [0]);
+	assert.deepEqual(targetFrames(0, '*'), [], 'no frames is not an error, just nothing to do');
+	assert.deepEqual(targetFrames(4, [1, 1, 1]), [1], 'a repeat is not applied twice');
+});
+
+test('targetFrames refuses an index that is not a frame', () => {
+	for (const bad of [4, -1, 1.5, NaN, '2' as any, null as any])
+		assert.throws(() => targetFrames(4, bad), /outside 0\.\.3/, `input: ${bad}`);
+	assert.throws(() => targetFrames(4, [0, 9]), /outside 0\.\.3/, 'one bad index fails the batch');
+	assert.throws(() => targetFrames(4, []), /no frames given/);
 });
 
 test('an explicit name wins, then the selected one, then the default', () => {

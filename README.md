@@ -55,6 +55,11 @@ top or bottom, dissolve away, flatten to a silhouette with the next frame arrivi
 three are applied when the frame is *drawn*, so the sprite underneath stays exactly as painted and
 the other animations sharing it are untouched. See [AGENTS.md](AGENTS.md#animation).
 
+Click a frame's thumbnail in the timeline and it expands into an effect tray, with a
+`this frame | all frames` switch — effects are usually uniform across an animation, so one click can
+set the lot. A frame with a transition also gets a slider that scrubs through it. **Effects** in the
+sidebar holds one-click recipes (Comet, Ghost, Flash, Fade in, Hue cycle, Clear effects).
+
 Colours come from a fixed 256-entry palette: index `0` is transparent, `1`–`216` are a 6×6×6 RGB
 cube, and `217`–`255` are a 39-step grey ramp. Anywhere a colour is accepted you can pass an index,
 a hex string (snapped to the nearest entry), or `null` for transparent.

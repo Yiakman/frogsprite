@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { checkpoint, frogsprite as fs } from './commands';
-	import { form } from './Dialog.svelte';
+	import { form, notify } from './Dialog.svelte';
 	import { toSVG } from './export';
-	import { compose } from './fx';
-	import { editor, type Frame } from './store.svelte';
+	import { compose, steps, TRANSITIONS, type Fx } from './fx';
+	import { PALETTE } from './palette';
+	import type { EffectPatch } from './storage';
+	import { editor, HUES, type Frame } from './store.svelte';
 
 	const set = $derived(editor.set);
 	const frames = $derived(editor.frames);
@@ -21,7 +23,63 @@
 		return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(toSVG(pixels, set.grid));
 	};
 
-	/** The effects on a frame, named — read-only; effects are set through the console API. */
+	// ---- the effect tray ---------------------------------------------------
+	// The frame already being held *is* the edit target: clicking a thumbnail calls view_frame(),
+	// which puts that exact frame on the canvas, so the tray edits what you are already looking at
+	// and every change previews immediately. Nothing new to select, and only ever one tray open.
+
+	/** Sticky, because effects are usually uniform: set it once and keep clicking. */
+	let scope = $state<'frame' | 'all'>('frame');
+	const held = $derived(editor.frame >= 0 ? frames[editor.frame] : undefined);
+	/** Sub-steps of the held frame — more than one only when it has a transition to scrub. */
+	const subSteps = $derived(held && set ? steps(held, set.grid) : 1);
+
+	/** Hue names to the palette entry a swatch should show, so the dot is the colour it applies. */
+	const HUE_SWATCH: Record<string, string> = {
+		red: '#ff0000',
+		yellow: '#ffff00',
+		green: '#00ff00',
+		cyan: '#00ffff',
+		blue: '#0000ff',
+		magenta: '#ff00ff'
+	};
+	const TRAIL_DOTS = [1, 2, 3, 4, 5];
+
+	/**
+	 * Every tray control writes through the one command, so the timeline, the presets and the console
+	 * share undo, validation and persistence. `all` sends '*', which is one undo step for the batch.
+	 */
+	function apply(patch: EffectPatch) {
+		if (editor.frame < 0) return;
+		const at = editor.frame;
+		try {
+			fs.set_effects(scope === 'all' ? '*' : at, patch);
+			// Gaining or losing a transition changes how many sub-steps the frame has, which leaves
+			// `phase` stale — re-hold so a held frame keeps showing its transition *finished* rather
+			// than stranded part-way through one it just acquired.
+			editor.viewFrame(at);
+			// …except right after setting one. A held frame shows its transition finished, so judging
+			// a transition you have only ever seen completed is judging the one moment it looks like
+			// no transition at all. Land in the middle once; the scrubber is yours after that.
+			const f = editor.frames[at];
+			if (patch.transition && f && set) editor.phase = Math.floor((steps(f, set.grid) - 1) / 2);
+		} catch (e) {
+			notify((e as Error).message);
+		}
+	}
+
+	/** Toggle one boolean fx key. Passing `false` lets the validator drop it — see patchEffects. */
+	const toggle = (key: 'invert' | 'flipX' | 'flipY') =>
+		apply({ fx: { [key]: !held?.fx?.[key] } });
+
+	/** Step the turn by 30°, or back with shift. Wrapping through 360 lands on 0, which clears it. */
+	const spin = (back: boolean) =>
+		apply({ fx: { rotate: (((held?.fx?.rotate ?? 0) + (back ? -30 : 30)) % 360 + 360) % 360 } });
+
+	const nudge = (dx: number, dy: number) =>
+		apply({ fx: { dx: (held?.fx?.dx ?? 0) + dx, dy: (held?.fx?.dy ?? 0) + dy } });
+
+	/** The effects on a frame, named. The tray below the held row is where they are changed. */
 	const badge = (f: Frame) =>
 		[
 			f.fx?.invert && 'invert',
@@ -184,8 +242,110 @@
 					/>ms
 					<button class="del" aria-label="Remove frame {i + 1}" onclick={() => removeFrame(i)}>×</button>
 					{#if badge(frame)}
-						<!-- read-only: effects are set with set_animation(), not from here -->
-						<span class="fx" title="Set with set_animation()">{badge(frame)}</span>
+						<!-- stays on every row: this is how the whole animation reads at a glance -->
+						<span class="fx">{badge(frame)}</span>
+					{/if}
+
+					{#if editor.frame === i && held}
+						<!-- The tray edits the frame already on the canvas, so every click previews there. -->
+						<div class="tray" data-testid="tray">
+							<div class="scope" role="group" aria-label="What a change applies to">
+								<button class:on={scope === 'frame'} aria-pressed={scope === 'frame'}
+									onclick={() => (scope = 'frame')}>this frame</button>
+								<button class:on={scope === 'all'} aria-pressed={scope === 'all'}
+									title="Apply every change to all {frames.length} frames, in one undo step"
+									onclick={() => (scope = 'all')} data-testid="scope-all">all frames ({frames.length})</button>
+							</div>
+
+							{#if scope === 'all'}
+								<!-- the scope is sticky on purpose, so it has to say so where you are clicking:
+								     otherwise a switch flipped several actions ago silently hits every frame -->
+								<p class="warn" data-testid="scope-warning">
+									Every change below lands on all {frames.length} frames. ⌘Z takes the batch back.
+								</p>
+							{/if}
+
+							<div class="chips">
+								<button class:on={held.fx?.invert} aria-pressed={!!held.fx?.invert}
+									title="Invert colours" onclick={() => toggle('invert')} data-testid="chip-invert">inv</button>
+								<button class:on={held.fx?.flipX} aria-pressed={!!held.fx?.flipX}
+									title="Mirror left and right" onclick={() => toggle('flipX')}>↔</button>
+								<button class:on={held.fx?.flipY} aria-pressed={!!held.fx?.flipY}
+									title="Mirror top and bottom" onclick={() => toggle('flipY')}>↕</button>
+								<button class:on={held.fx?.rotate}
+									title="Turn 30° clockwise about the centre — shift-click to go back"
+									onclick={(e) => spin(e.shiftKey)}>↻{held.fx?.rotate ?? 0}°</button>
+							</div>
+
+							<div class="row">
+								<span class="lbl">hue</span>
+								{#each HUES as h (h)}
+									<button class="dot" class:on={held.fx?.hue === h} style:background={HUE_SWATCH[h]}
+										aria-pressed={held.fx?.hue === h} aria-label="{h} only" title="Reduce to {h}"
+										onclick={() => apply({ fx: { hue: held?.fx?.hue === h ? null : h } })}></button>
+								{/each}
+								<button class="dot none" class:on={!held.fx?.hue} aria-label="No hue reduction"
+									title="Leave the colours alone" onclick={() => apply({ fx: { hue: null } })}>⌀</button>
+							</div>
+
+							<div class="row">
+								<span class="lbl">nudge</span>
+								<button onclick={() => nudge(-1, 0)} aria-label="Nudge left">←</button>
+								<button onclick={() => nudge(0, -1)} aria-label="Nudge up">↑</button>
+								<button onclick={() => nudge(0, 1)} aria-label="Nudge down">↓</button>
+								<button onclick={() => nudge(1, 0)} aria-label="Nudge right">→</button>
+								<button disabled={!held.fx?.dx && !held.fx?.dy} aria-label="Stop displacing"
+									onclick={() => apply({ fx: { dx: 0, dy: 0 } })}>⌀</button>
+							</div>
+
+							<div class="row">
+								<span class="lbl">trail</span>
+								{#each TRAIL_DOTS as n (n)}
+									<button class="dot ghost" class:on={(held.trail?.frames ?? 0) >= n}
+										aria-pressed={(held.trail?.frames ?? 0) >= n}
+										aria-label="Trail of {n} frame{n === 1 ? '' : 's'}"
+										title="{n} frame{n === 1 ? '' : 's'} of trail — click again to clear"
+										onclick={() => apply({ trail: held?.trail?.frames === n ? null : n })}></button>
+								{/each}
+								{#if held.trail}
+									<input class="fade" type="range" min="0.2" max="0.9" step="0.05"
+										value={held.trail.fade ?? 0.6} aria-label="Trail fade"
+										title="How much brightness each step back keeps"
+										onchange={(e) => apply({ trail: { frames: held!.trail!.frames, fade: Number(e.currentTarget.value) } })} />
+								{/if}
+							</div>
+
+							<div class="row">
+								<span class="lbl">transition</span>
+								<select value={held.transition?.kind ?? ''} data-testid="transition"
+									onchange={(e) => apply({ transition: e.currentTarget.value || null })}>
+									<option value="">none</option>
+									{#each TRANSITIONS as t (t)}
+										<option value={t}>{t}</option>
+									{/each}
+								</select>
+							</div>
+
+							{#if held.trail && held.transition?.kind === 'silhouette'}
+								<!-- documented in AGENTS.md, which is no use at the moment you click it -->
+								<p class="warn" data-testid="trail-silhouette-warning">
+									Silhouette flattens the trail too — these {held.trail.frames} ghosts go flat, not
+									dim. Put the trail on the frames either side to keep a visible tail.
+								</p>
+							{/if}
+
+							{#if held.transition && !editor.running}
+								<!-- A held frame shows its transition finished, so without this you could never
+								     see the middle of one while authoring it. `phase` already drives the canvas. -->
+								<div class="row">
+									<span class="lbl">reveal</span>
+									<input class="grow" type="range" min="0" max={subSteps - 1} step="1"
+										bind:value={editor.phase} aria-label="Scrub the transition"
+										title="Drag to move through the transition" data-testid="scrub" />
+									<span class="pct">{Math.round(((editor.phase + 1) / subSteps) * 100)}%</span>
+								</div>
+							{/if}
+						</div>
 					{/if}
 				</li>
 			{:else}
@@ -270,6 +430,94 @@
 		margin-left: 2.6rem;
 		font-size: 0.68rem;
 		color: #8a7;
+	}
+
+	/* ---- effect tray ---- */
+	.tray {
+		flex-basis: 100%;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		margin: 4px 0 2px 2.6rem;
+		padding: 6px;
+		border: 1px solid #35617d;
+		border-radius: 4px;
+		background: #14242e;
+	}
+	/* every row wraps: the panel is narrow, and overflowing would hide a control entirely */
+	.tray .row,
+	.tray .chips,
+	.tray .scope {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 3px;
+	}
+	.tray .lbl {
+		width: 3.9rem;
+		flex: none;
+		color: #6b8ea3;
+		font-size: 0.66rem;
+	}
+	.tray button {
+		padding: 1px 5px;
+		font-size: 0.68rem;
+		line-height: 1.5;
+		background: #1b1b1b;
+		border-color: #3a3a3a;
+		color: #999;
+	}
+	.tray button.on {
+		background: #24506b;
+		border-color: #4c87ab;
+		color: #cfe9ff;
+	}
+	.tray .scope {
+		margin-bottom: 2px;
+	}
+	.tray .scope button {
+		flex: 1;
+	}
+	.tray .dot {
+		width: 1.05rem;
+		height: 1.05rem;
+		padding: 0;
+		border-radius: 50%;
+		opacity: 0.4;
+	}
+	.tray .dot.on {
+		opacity: 1;
+		box-shadow: 0 0 0 2px #cfe9ff;
+	}
+	.tray .dot.none,
+	.tray .dot.ghost {
+		background: #1b1b1b;
+	}
+	.tray .dot.ghost.on {
+		background: #cfe9ff;
+	}
+	.tray .fade,
+	.tray .grow {
+		flex: 1;
+		min-width: 4rem;
+		accent-color: #7cf;
+	}
+	.tray .pct {
+		width: 2.4rem;
+		text-align: right;
+		font-size: 0.66rem;
+		color: #6b8ea3;
+		font-variant-numeric: tabular-nums;
+	}
+	.tray select {
+		flex: 1;
+		min-width: 0;
+	}
+	.tray .warn {
+		margin: 0;
+		font-size: 0.66rem;
+		line-height: 1.35;
+		color: #d8b46a;
 	}
 	li.now {
 		background: #1d3a4d;

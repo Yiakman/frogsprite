@@ -31,6 +31,22 @@ export function onSet(
 }
 
 /**
+ * Which frames a command lands on: one index, a list of them, or `'*'` for all of them. Effects are
+ * uniform across an animation far more often than not — a trail belongs on every frame of a spin —
+ * so `'*'` is the common case, not the exotic one.
+ */
+export function targetFrames(count: number, target: number | number[] | '*'): number[] {
+	if (target === '*') return Array.from({ length: count }, (_, i) => i);
+	const list = Array.isArray(target) ? target : [target];
+	if (!list.length) throw new Error('no frames given — use an index, a list of them, or "*"');
+	for (const i of list)
+		if (!Number.isInteger(i) || i < 0 || i >= count)
+			throw new Error(`frame ${i} is outside 0..${count - 1}`);
+	// a repeated index would apply the same patch twice, which merge makes harmless but pointless
+	return [...new Set(list)];
+}
+
+/**
  * Which animation `set_animation` writes into: the one asked for, else the active one, else a
  * default. Settle the name *before* looking it up — resolving afterwards misses an existing
  * "animation" and pushes a second one with the same name, so the write lands on a duplicate that
