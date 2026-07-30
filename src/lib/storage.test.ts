@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isProject, parse, readInterchange, readSet, serialise, setPayload } from './storage.ts';
+import {
+	isProject,
+	parse,
+	readInterchange,
+	readSet,
+	readTrail,
+	serialise,
+	setPayload
+} from './storage.ts';
 import { GRIDS } from './grid.ts';
 import { zip } from './zip.ts';
 
@@ -109,6 +117,22 @@ test('a v1 set, with one unnamed frame list, loads as one named animation', () =
 	assert.deepEqual((parse(v1) as any)[0].sets[0].animations, [
 		{ name: 'animation', frames: [{ sprite: 'a', ms: 100 }] }
 	]);
+});
+
+test('readTrail takes the shorthand, clamps the depth and refuses a pointless fade', () => {
+	assert.deepEqual(readTrail(5), { frames: 5 }, 'a bare number is a frame count');
+	assert.deepEqual(readTrail({ frames: 5 }), { frames: 5 }, 'fade is left to the default');
+	assert.deepEqual(readTrail({ frames: 3, fade: 0.55 }), { frames: 3, fade: 0.55 });
+	assert.deepEqual(readTrail({ frames: 1e9 }), { frames: 32 }, 'clamped once, not every redraw');
+	assert.deepEqual(readTrail({ frames: 4.7 }), { frames: 4 }, 'truncated to whole frames');
+
+	// fade 0 would erase the trail and 1 would leave it as bright as the head — neither is a trail,
+	// so the key is dropped and the default stands rather than the frame being thrown away
+	for (const fade of [0, 1, -0.5, 2, 'x', null, NaN])
+		assert.deepEqual(readTrail({ frames: 2, fade }), { frames: 2 }, `fade: ${fade}`);
+
+	for (const junk of [undefined, null, 0, -1, 'x', {}, { frames: 'lots' }, { fade: 0.5 }])
+		assert.equal(readTrail(junk), undefined, `input: ${JSON.stringify(junk)}`);
 });
 
 test('readSet keeps the effects it understands and drops the rest', () => {

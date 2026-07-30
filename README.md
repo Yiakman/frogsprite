@@ -133,7 +133,8 @@ sharing between devices. That is the one feature that would genuinely require a 
 | `src/lib/export.ts` | SVG / animated SVG / PNG / ICO encoders |
 | `src/lib/zip.ts` | dependency-free ZIP writer |
 | `src/lib/grid.ts` | valid grid sizes, the pixel-buffer type, and the reflect/rotate/flip/shift transforms |
-| `src/lib/fx.ts` | frame effects and transitions — the one place a frame becomes the pixels you see |
+| `src/lib/fx.ts` | frame effects, trails and transitions — the one place a frame becomes the pixels you see |
+| `src/lib/selection.ts` | which set and animation a command lands on — pure, so it is testable without a browser |
 | `src/lib/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
 | `src/lib/*.test.ts` | `npm test` — self-checks for the DOM-free logic, one file per module |
 | `public/examples.json` | the `frog16` / `frog32` sets seeded on a first visit |

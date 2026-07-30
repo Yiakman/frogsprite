@@ -5,6 +5,7 @@ import * as history from './history.ts';
 import * as storage from './storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from './image.ts';
 import { reflect as reflectHalf, rotate as spin, shift as slide, SIDES, type Side } from './grid.ts';
+import * as selection from './selection.ts';
 import * as shape from './shapes.ts';
 import type { Point } from './shapes.ts';
 import { blank, editor, GRIDS, type Frame, type GridSize, type Sprite } from './store.svelte.ts';
@@ -158,16 +159,13 @@ const api = {
 		if (set !== undefined) {
 			const found = editor.requirePackage().sets.find((s) => s.name === set);
 			if (!found) throw new Error(`no set "${set}"`);
-			// only on a real move: re-selecting the set you are already on must not throw away the
-			// animation you are inspecting, and the sidebar re-selects freely
-			const moved = set !== editor.sel.set;
-			if (moved) editor.stop(); // playback indexes the animation of the set we are leaving
-			editor.sel = {
-				...editor.sel,
+			const next = selection.onSet(
+				editor.sel,
 				set,
-				sprite: '',
-				anim: moved ? (found.animations[0]?.name ?? '') : editor.sel.anim
-			};
+				found.animations.map((a) => a.name)
+			);
+			if (next.moved) editor.stop(); // playback indexes the animation of the set we are leaving
+			editor.sel = next.sel;
 		}
 		if (sprite !== undefined) {
 			if (!editor.requireSet().sprites.some((s) => s.name === sprite))
@@ -344,13 +342,21 @@ const api = {
 	 *
 	 *   set_animation([{ sprite: 'crouch', ms: 120 },
 	 *                  { sprite: 'jump', ms: 200, fx: { flipX: true, hue: 'red' } },
+	 *                  { sprite: 'spin', ms: 80, trail: { frames: 5, fade: 0.6 } },
 	 *                  { sprite: 'land', ms: 300, transition: 'scan-down' }])
 	 *
-	 * `fx` is applied when the frame is drawn, never to the sprite itself: `invert`, `hue`
-	 * (red/green/blue/cyan/yellow/magenta), `rotate` (multiple of 30, about the grid centre),
-	 * `dx`/`dy`, `flipX`, `flipY`. `transition` plays over the frame's own `ms` and is one of
-	 * scan-down, scan-up, vanish, silhouette (the frame flattened to one colour with the next one
-	 * dissolving in over it — `{ kind: 'silhouette', color }` picks the colour).
+	 * All three are applied when the frame is drawn, never to the sprite itself:
+	 *
+	 * - `fx` — `invert`, `hue` (red/green/blue/cyan/yellow/magenta), `rotate` (multiple of 30, about
+	 *   the grid centre), `dx`/`dy`, `flipX`, `flipY`
+	 * - `trail` — the frames before this one drawn underneath it, dimmed: `{ frames, fade }`, or
+	 *   just `trail: 5` for the default fade of 0.6. Each ghost keeps its own `fx`, so a trail
+	 *   behind a hue-cycling frame fades back through the earlier colours
+	 * - `transition` — plays over the frame's own `ms`: scan-down, scan-up, vanish, or silhouette
+	 *   (the frame flattened to one colour with the next one dissolving in over it;
+	 *   `{ kind: 'silhouette', color }` picks the colour)
+	 *
+	 * See AGENTS.md §Animation for the full rules.
 	 */
 	set_animation: mut(function (frames: Frame[], name?: string) {
 		const set = editor.requireSet();
@@ -368,14 +374,14 @@ const api = {
 					`frame "${f.sprite}" has a bad trail — use a frame count, or { frames, fade } with 0 < fade < 1`
 				);
 		}
-		// settle on the name *before* looking it up: resolving afterwards would miss an existing
-		// "animation" and push a second one, leaving this write somewhere nothing else reads
-		const into = name || editor.sel.anim || 'animation';
-		let anim = set.animations.find((a) => a.name === into);
-		if (!anim) {
-			set.animations.push({ name: into, frames: [] });
-			anim = set.animations[set.animations.length - 1]; // the proxy, not the raw object
-		}
+		const into = selection.targetAnimation(
+			set.animations.map((a) => a.name),
+			name,
+			editor.sel.anim
+		);
+		if (!into.exists) set.animations.push({ name: into.name, frames: [] });
+		// read it back rather than keeping the pushed object: only the $state proxy is observed
+		const anim = set.animations.find((a) => a.name === into.name)!;
 		// through the same validator the format uses, so an fx that survives here survives a reload
 		anim.frames = storage.readFrames(frames, new Set(set.sprites.map((s) => s.name)));
 		editor.stop();
@@ -569,6 +575,8 @@ const api = {
 				'shapes.circle/square/triangle/… fill a whole form in one call, and one undo step. Blocking a body out with shapes then detailing with paint_map beats plotting pixels by hand.',
 				'print_sprite() renders the sprite as ASCII so you can check your own work.',
 				'rotate() only comes back exactly at 90/180/270 about the default centre — check the `lost` it returns.',
+				"set_animation() frames carry `fx`, `trail` and `transition`, all applied when the frame is drawn — so one sprite can look different in every animation it appears in. A motion trail is `trail: 5`, not 5 hand-painted ghosts.",
+				'Rotating pixels resamples them, and a filled shape smears after a few turns. For a spinning object, compute the rotated points yourself and redraw it with shapes.* per frame — that stays crisp and is not limited to 30° steps.',
 				'Async commands (import_image, export_zip, export_ico) must be awaited.',
 				'To import an image you have no file picker for, pass a data: URL.'
 			]

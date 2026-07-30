@@ -275,6 +275,10 @@ The rules worth knowing:
   impossible by construction, and the cost is always one pass per ghost.
 - **A trail counts as an effect**, so `export_animated_svg({ effects: false })` drops it along with
   `fx`.
+- **`silhouette` flattens the trail too.** The trail is built first, so the ghosts are part of what
+  gets painted the flat colour — the shape goes solid, tail and all, rather than a flat head with a
+  coloured tail behind it. That is deliberate: both are "this frame". Put the trail on the frames
+  either side if you want the tail to survive.
 - Dimming is done in the palette, so a trail of coloured pixels stays in its own colours. Combined
   with `hue`, which keeps each pixel's brightness, a grey-ramp sprite through
   `{ hue: 'red' }` + a trail comes out as a red comet that fades to `#330000`.
@@ -487,7 +491,8 @@ frogsprite.export_animated_svg();
 | `src/lib/commands.ts` | the `frogsprite` API above — the only thing agents touch |
 | `src/lib/store.svelte.ts` | reactive state (`$state` class), selection, playback |
 | `src/lib/grid.ts` | the valid grid sizes, and whole-sprite geometry (rotate, flip, shift) — a plain module so non-Svelte code can import them |
-| `src/lib/fx.ts` | frame effects and transitions: the one place a frame becomes the pixels you see |
+| `src/lib/fx.ts` | frame effects, trails and transitions: the one place a frame becomes the pixels you see |
+| `src/lib/selection.ts` | which set and animation a command lands on — the pure decisions, so they are testable without a browser |
 | `src/lib/storage.ts` | the only module that touches `localStorage`: format, validation, writes |
 | `src/lib/history.ts` | undo/redo stacks — whole-document snapshots, session-only |
 | `src/lib/palette.ts` | the 256-colour palette and colour resolution |

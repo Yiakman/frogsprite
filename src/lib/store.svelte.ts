@@ -130,6 +130,15 @@ class Editor {
 		if (f) this.sel = { ...this.sel, sprite: f.sprite };
 	}
 
+	/**
+	 * Park on a frame's last sub-step. Anything that *holds* a frame lands here: a held frame is for
+	 * looking at and editing, so it shows its transition finished rather than caught halfway.
+	 */
+	#hold(frame: Frame | undefined) {
+		const set = this.set;
+		this.phase = set && frame ? Math.max(0, steps(frame, set.grid) - 1) : 0;
+	}
+
 	/** Arm the timer for however long the *current* sub-step lasts. */
 	#arm() {
 		const set = this.set;
@@ -174,6 +183,7 @@ class Editor {
 	pause() {
 		clearTimeout(this.#timer);
 		this.running = false;
+		this.#hold(this.frames[this.frame]);
 		this.#syncSelection();
 	}
 
@@ -193,8 +203,7 @@ class Editor {
 		this.running = false;
 		const n = anim.frames.length;
 		this.frame = this.frame < 0 ? (delta > 0 ? 0 : n - 1) : ((this.frame + delta) % n + n) % n;
-		// a held frame shows its transition finished, not caught halfway through
-		this.phase = Math.max(0, steps(anim.frames[this.frame], this.set!.grid) - 1);
+		this.#hold(anim.frames[this.frame]);
 		this.#syncSelection();
 	}
 
@@ -206,7 +215,7 @@ class Editor {
 		clearTimeout(this.#timer);
 		this.running = false;
 		this.frame = i;
-		this.phase = Math.max(0, steps(anim.frames[i], this.set!.grid) - 1);
+		this.#hold(anim.frames[i]);
 		this.#syncSelection();
 	}
 

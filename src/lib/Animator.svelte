@@ -30,7 +30,7 @@
 			f.fx?.flipY && 'flipY',
 			f.fx?.rotate && `${f.fx.rotate}°`,
 			(f.fx?.dx || f.fx?.dy) && `${f.fx.dx ?? 0},${f.fx.dy ?? 0}`,
-			f.trail && `trail ${f.trail.frames}`,
+			f.trail && `trail ${f.trail.frames}${f.trail.fade ? `@${f.trail.fade}` : ''}`,
 			f.transition?.kind
 		]
 			.filter(Boolean)

@@ -97,13 +97,17 @@ export function compose(
 	const frame = frames[i];
 	if (!frame) return new Uint8Array(cells);
 
+	// indexed once: a trail resolves a sprite per ghost, and `silhouette` reaches for another frame,
+	// so a linear scan per lookup would be repeated work on every tick
+	const byName = new Map(sprites.map((s) => [s.name, s]));
+
 	/**
 	 * One frame's own pixels: its sprite through its own `fx`, and nothing else. Deliberately blind
 	 * to `trail` and `transition` — that is what stops a trail of trails, and what lets `silhouette`
 	 * and `trail` reach for other frames without either recursing.
 	 */
 	const pixelsFor = (f: Frame) => {
-		const sprite = sprites.find((s) => s.name === f.sprite);
+		const sprite = byName.get(f.sprite);
 		return sprite
 			? applyFx(sprite.pixels, grid, effects ? f.fx : undefined)
 			: new Uint8Array(cells);
