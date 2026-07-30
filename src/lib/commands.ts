@@ -170,6 +170,11 @@ const api = {
 		if (sprite !== undefined) {
 			if (!editor.requireSet().sprites.some((s) => s.name === sprite))
 				throw new Error(`no sprite "${sprite}"`);
+			// a held frame wins over the selection in `shown`, so selecting a sprite also drops any
+			// held frame — asking for a sprite is asking to look at it. Includes a re-click of the
+			// highlighted row: that is the sidebar's way back to the pure sprite (same as Escape
+			// and the tray's sprite link).
+			editor.stop();
 			editor.sel = { ...editor.sel, sprite };
 		}
 		return { ...editor.sel };
@@ -597,7 +602,7 @@ const api = {
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
-				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'background', 'silhouette', 'help'],
+				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'background', 'silhouette', 'raw', 'help'],
 				history: ['undo', 'redo', 'history'],
 				storage: ['flush', 'reset']
 			},
@@ -615,6 +620,17 @@ const api = {
 				'To import an image you have no file picker for, pass a data: URL.'
 			]
 		};
+	}),
+
+	/**
+	 * See the sprite as it is stored, with the held frame's `fx`, `trail` and `transition` ignored —
+	 * the pixels an edit would actually land on. `raw(false)` goes back to the composed view.
+	 * Paints nothing and saves nothing; in the UI this is the **show sprite** button on the canvas,
+	 * or holding `\`.
+	 */
+	raw: ro(function (on: boolean = !editor.raw) {
+		editor.peekApi = !!on;
+		return { raw: editor.raw };
 	}),
 
 	/** Canvas backdrop for reviewing a sprite; `background()` restores the checkerboard. Paints nothing. */

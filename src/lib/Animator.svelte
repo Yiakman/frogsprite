@@ -249,6 +249,18 @@
 					{#if editor.frame === i && held}
 						<!-- The tray edits the frame already on the canvas, so every click previews there. -->
 						<div class="tray" data-testid="tray">
+							<!-- Names the sprite this frame draws, as a one-click escape hatch back to the
+							     pure view — select() drops the held frame, so this lands on the editable sprite.
+							     On a long animation it is also the answer to "which sprite is this frame?". -->
+							<div class="row">
+								<span class="lbl">sprite</span>
+								<button
+									class="sprite-link"
+									onclick={() => fs.select(undefined, undefined, held.sprite)}
+									title="Stop and show this sprite on the canvas"
+									data-testid="tray-sprite"
+								>{held.sprite}</button>
+							</div>
 							<div class="scope" role="group" aria-label="What a change applies to">
 								<button class:on={scope === 'frame'} aria-pressed={scope === 'frame'}
 									onclick={() => (scope = 'frame')}>this frame</button>
@@ -512,6 +524,20 @@
 	.tray select {
 		flex: 1;
 		min-width: 0;
+	}
+	/* the escape hatch: reads as a link, not another effect chip */
+	.tray .sprite-link {
+		flex: 1;
+		color: #7cf;
+		background: none;
+		border-color: #2a4a5a;
+		text-decoration: underline;
+		text-underline-offset: 2px;
+		text-align: center;
+	}
+	.tray .sprite-link:hover {
+		color: #cfe9ff;
+		border-color: #4c87ab;
 	}
 	.tray .warn {
 		margin: 0;

@@ -408,13 +408,16 @@ cannot. In the UI: **Project → Save all… / Load…**, or drop a `.json` / `.
 
 #### Reviewing what you drew
 
-Two view settings change how the canvas *looks* without touching a single pixel. Neither is saved
-with your work, and neither affects exports or `print_sprite()`.
+Three view settings change how the canvas *looks* without touching a single pixel. None is saved
+with your work, and none affects exports or `print_sprite()`.
 
 - `background(color?)` — what shows through the **transparent** pixels; `background()` restores the
   checkerboard
 - `silhouette(color?)` — draws every **painted** pixel in one colour, so only the shape is left;
   defaults to black, and `silhouette(null)` turns it off
+- `raw(on?)` — draw the sprite **as it is stored**, ignoring the held frame's `fx`, `trail` and
+  `transition`. This is the answer to "is that shape mine, or did an effect do it?" — and to "what
+  would a brush stroke here actually land on?"
 
 ```js
 frogsprite.background('#ff00ff');   // magenta — nothing in a sprite is meant to be magenta
@@ -430,8 +433,15 @@ also how you check that two animation frames differ where you meant them to. Pic
 contrasts with the background you're on; black on the default checkerboard is deliberately dim.
 
 **If you review by screenshot, read the view back before you judge the pixels.** Both
-`state().view` and the caption under the canvas name the background and the silhouette, so a
-magenta field or a black frog is never mistaken for something you painted.
+`state().view` and the caption under the canvas name the background, the silhouette and whether
+`raw` is on, so a magenta field or a black frog is never mistaken for something you painted.
+
+`raw` is the one to reach for while a frame with effects is held, because there the canvas is
+showing a *composite* rather than any sprite you can edit — which is why painting is off. The UI
+says so twice: the canvas takes an amber border whenever what you see is not what is stored, and
+the caption grows a **hold to show sprite** button. Holding `\` does the same thing. It is a hold
+rather than a toggle on purpose: telling an effect from the art under it is a flick back and forth,
+and a preview mode left switched on is one that misleads you an hour later.
 
 `silhouette(color, { permanent: true, sprite })` is the one exception: it **paints**, flattening
 every non-transparent pixel of one sprite (the active one by default) to that colour for good —

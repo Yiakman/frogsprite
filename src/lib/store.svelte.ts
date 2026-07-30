@@ -32,6 +32,26 @@ class Editor {
 	background = $state(0);
 	/** Show every painted pixel as this index instead of its own colour. 0 is off. Also a view setting. */
 	silhouette = $state(0);
+	/**
+	 * Draw the sprite as it is stored, ignoring the frame's effects — the thing an edit would land
+	 * on, rather than what the animation makes of it. A view setting: nothing is painted or saved.
+	 *
+	 * Three independent sources can ask for it, and any one is enough: the API (`peekApi`, a sticky
+	 * toggle), the keyboard (`peekKey`, hold `\`) and the canvas button (`peekPointer`). They are
+	 * kept apart so releasing one never turns off a peek another is still holding — a single shared
+	 * flag made `\` and the button fight, and let blur desync from a physically held key.
+	 */
+	peekApi = $state(false);
+	peekKey = $state(false);
+	peekPointer = $state(false);
+	get raw() {
+		return this.peekApi || this.peekKey || this.peekPointer;
+	}
+	/** Drop the momentary holds only — a window blur can leave a held key or button stuck. */
+	releaseHolds() {
+		this.peekKey = false;
+		this.peekPointer = false;
+	}
 	/** index into the active animation's frames, or -1 when not looking at the animation at all */
 	frame = $state(-1);
 	/** sub-step within the current frame — only a frame with a transition ever has more than one */
@@ -88,6 +108,9 @@ class Editor {
 		void this.revision;
 		const set = this.set;
 		const frames = this.frames;
+		// `raw` peeks past the effects at the sprite as it is stored — the thing an edit would land
+		// on. `shown` already resolves to the held frame's sprite, so this is the whole of it.
+		if (this.raw) return this.shown?.pixels;
 		if (set && this.frame >= 0 && frames.length) {
 			const n = steps(frames[this.frame], set.grid);
 			return compose(frames, this.frame, set.sprites, set.grid, progress(this.phase, n));
@@ -231,7 +254,8 @@ class Editor {
 			},
 			view: {
 				background: this.background ? PALETTE[this.background] : 'checkerboard',
-				silhouette: this.silhouette ? PALETTE[this.silhouette] : 'off'
+				silhouette: this.silhouette ? PALETTE[this.silhouette] : 'off',
+				raw: this.raw
 			},
 			packages: this.packages.map((p) => ({
 				name: p.name,
