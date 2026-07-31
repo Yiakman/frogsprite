@@ -1,9 +1,9 @@
 import { mount } from 'svelte';
 import './app.css';
 import App from './App.svelte';
-import { frogsprite } from './lib/commands';
-import { editor } from './lib/store.svelte';
-import { stored } from './lib/storage';
+import { frogsprite } from './lib/api/commands';
+import { editor } from './lib/state/store.svelte';
+import { stored } from './lib/io/storage';
 
 const firstVisit = !stored();
 editor.load();

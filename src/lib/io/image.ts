@@ -5,7 +5,7 @@
 // is not a defined box average, and it aliases badly at the ratios involved here (a 1024px source
 // into a 16px grid is 64x). Only the coarse first reduction is left to the browser, where it is
 // both good and cheap.
-import { nearestIndex, TRANSPARENT } from './palette.ts';
+import { nearestIndex, TRANSPARENT } from '../core/palette.ts';
 
 export type Fit = 'contain' | 'cover' | 'stretch';
 export type Rect = { x: number; y: number; w: number; h: number };

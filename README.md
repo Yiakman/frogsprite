@@ -130,18 +130,12 @@ sharing between devices. That is the one feature that would genuinely require a 
 
 | path | |
 | --- | --- |
-| `src/lib/commands.ts` | the `window.frogsprite` API — the only surface agents touch |
-| `src/lib/store.svelte.ts` | reactive state (`$state` class), selection, playback |
-| `src/lib/storage.ts` | the only module that touches `localStorage`: format, validation, writes |
-| `src/lib/palette.ts` | the 256-colour palette and nearest-colour resolution |
-| `src/lib/image.ts` | image import: trim, box-average, palette snap |
-| `src/lib/export.ts` | SVG / animated SVG / PNG / ICO encoders |
-| `src/lib/zip.ts` | dependency-free ZIP writer |
-| `src/lib/grid.ts` | valid grid sizes, the pixel-buffer type, and the reflect/rotate/flip/shift transforms |
-| `src/lib/fx.ts` | frame effects, trails and transitions — the one place a frame becomes the pixels you see |
-| `src/lib/selection.ts` | which set and animation a command lands on — pure, so it is testable without a browser |
-| `src/lib/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
-| `src/lib/*.test.ts` | `npm test` — self-checks for the DOM-free logic, one file per module |
+| `src/lib/api/commands.ts` | the `window.frogsprite` API — the only surface agents touch |
+| `src/lib/state/store.svelte.ts` | reactive state (`$state` class), selection, playback |
+| `src/lib/core/` | the framework-free engine (no Svelte, no DOM): `palette`, `grid`, `shapes`, `fx`, `selection`, `history`, `types` |
+| `src/lib/io/` | pixels in and out: `storage` (localStorage), `export`, `image`, `zip` |
+| `src/lib/ui/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
+| `src/lib/**/*.test.ts` | `npm test` — self-checks for the DOM-free logic, one file per module, co-located |
 | `public/examples.json` | the `frog16` / `frog32` sets seeded on a first visit |
 | `public/icon.svg` | the project icon — favicon, sidebar, README |
 

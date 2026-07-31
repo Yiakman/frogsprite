@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { PALETTE } from './palette.ts';
+import { PALETTE } from '../core/palette.ts';
 import { adjust, contentBounds, layout, sampleInto } from './image.ts';
 
 /** Build RGBA data from rows of [r,g,b,a] tuples. */

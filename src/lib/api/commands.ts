@@ -1,14 +1,15 @@
-import { PALETTE, toIndex, TRANSPARENT } from './palette.ts';
-import * as ex from './export.ts';
-import { TRANSITIONS } from './fx.ts';
-import * as history from './history.ts';
-import * as storage from './storage.ts';
-import { imageToPixels, type ImageSource, type ImportOptions } from './image.ts';
-import { reflect as reflectHalf, rotate as spin, shift as slide, SIDES, type Side } from './grid.ts';
-import * as selection from './selection.ts';
-import * as shape from './shapes.ts';
-import type { Point } from './shapes.ts';
-import { blank, editor, GRIDS, type Frame, type GridSize, type Sprite } from './store.svelte.ts';
+import { PALETTE, toIndex, TRANSPARENT } from '../core/palette.ts';
+import * as ex from '../io/export.ts';
+import { patchEffects, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
+import * as history from '../core/history.ts';
+import * as storage from '../io/storage.ts';
+import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
+import { blank, GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, type GridSize, type Side } from '../core/grid.ts';
+import * as selection from '../core/selection.ts';
+import * as shape from '../core/shapes.ts';
+import type { Point } from '../core/shapes.ts';
+import type { Frame, Sprite } from '../core/types.ts';
+import { editor } from '../state/store.svelte.ts';
 
 type Color = number | string | null;
 /** Trailing options every shape shares: `fill` (ignored by `line`) and the usual sprite override. */
@@ -370,11 +371,11 @@ const api = {
 			if (!set.sprites.some((s) => s.name === f.sprite))
 				throw new Error(`no sprite "${f.sprite}" in set "${set.name}"`);
 			if (!(f.ms > 0)) throw new Error(`frame "${f.sprite}" needs a positive ms`);
-			if (f.transition && !storage.readTransition(f.transition))
+			if (f.transition && !readTransition(f.transition))
 				throw new Error(
 					`frame "${f.sprite}" has an unknown transition (use ${TRANSITIONS.join(', ')})`
 				);
-			if (f.trail !== undefined && !storage.readTrail(f.trail))
+			if (f.trail !== undefined && !readTrail(f.trail))
 				throw new Error(
 					`frame "${f.sprite}" has a bad trail — use a frame count, or { frames, fade } with 0 < fade < 1`
 				);
@@ -411,7 +412,7 @@ const api = {
 	 */
 	set_effects: mut(function (
 		target: number | number[] | '*',
-		patch: storage.EffectPatch,
+		patch: EffectPatch,
 		animation?: string
 	) {
 		const set = editor.requireSet();
@@ -423,7 +424,7 @@ const api = {
 		if (!patch || typeof patch !== 'object') throw new Error('patch must be an object');
 
 		const at = selection.targetFrames(anim.frames.length, target);
-		for (const i of at) anim.frames[i] = storage.patchEffects(anim.frames[i], patch);
+		for (const i of at) anim.frames[i] = patchEffects(anim.frames[i], patch);
 		return { animation: anim.name, frames: at.length };
 	}),
 
