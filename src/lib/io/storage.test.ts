@@ -257,3 +257,39 @@ test('junk layers are dropped and duplicate layer names keep the first', () => {
 	);
 	assert.equal(layers[0].pixels[0], 5, 'the first of a duplicated name wins');
 });
+
+test('a frame arrangement survives serialise/parse, so undo cannot eat it', () => {
+	const doc = pkg({
+		animations: [
+			{
+				name: 'walk',
+				frames: [
+					{ sprite: 'a', ms: 100, layers: { fuji: { dx: -4, wrap: true }, sketch: { hidden: true } } },
+					{ sprite: 'a', ms: 100, layers: { fuji: -8 } } // the shorthand
+				]
+			}
+		]
+	});
+	const back = (parse(serialise(doc as any)) as any)[0].sets[0].animations[0].frames;
+	assert.deepEqual(back[0].layers, { fuji: { dx: -4, wrap: true }, sketch: { hidden: true } });
+	assert.deepEqual(back[1].layers, { fuji: { dx: -8 } }, 'the number shorthand normalises to dx');
+});
+
+test('readSet keeps a frame arrangement it understands and drops the rest', () => {
+	const set = readSet({
+		name: 's',
+		grid: 8,
+		sprites: [{ name: 'a', pixels: [...new Uint8Array(64)] }],
+		animations: [
+			{
+				name: 'x',
+				frames: [
+					{ sprite: 'a', ms: 10, layers: { good: { dx: 2, wrap: true }, junk: 'nope', empty: {}, '': { dx: 1 } } },
+					{ sprite: 'a', ms: 10, layers: 'not an object' }
+				]
+			}
+		]
+	});
+	assert.deepEqual(set!.animations[0].frames[0].layers, { good: { dx: 2, wrap: true } });
+	assert.equal(set!.animations[0].frames[1].layers, undefined, 'junk arrangement is simply absent');
+});

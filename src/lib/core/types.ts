@@ -4,6 +4,15 @@
 import type { Fx, Trail, Transition } from './fx.ts';
 import type { GridSize } from './grid.ts';
 
+/**
+ * What one frame does to one of its sprite's layers. `dx`/`dy` slide it, `wrap` scrolls it round
+ * rather than pushing it off the edge, and `hidden` overrides whatever the layer itself says — so a
+ * layer hidden by default can be shown for a single frame, and vice versa.
+ */
+export type LayerView = { dx?: number; dy?: number; wrap?: boolean; hidden?: boolean };
+/** Per-layer overrides for one frame, keyed by layer name. Layers not named are left alone. */
+export type Arrangement = Record<string, LayerView>;
+
 export type Frame = {
 	sprite: string;
 	ms: number;
@@ -11,6 +20,12 @@ export type Frame = {
 	/** earlier frames drawn underneath this one, dimmed — a motion trail */
 	trail?: Trail;
 	transition?: Transition;
+	/**
+	 * Slide or hide this sprite's layers, for this frame only. One sprite with a layer per depth
+	 * plus a per-frame offset is a parallax scroll — the reason a frame naming a sprite is not the
+	 * wall it looks like.
+	 */
+	layers?: Arrangement;
 };
 /** One image in a sprite's stack. `hidden` is skipped when compositing but keeps its pixels. */
 export type Layer = { name: string; pixels: Uint8Array; hidden?: boolean };

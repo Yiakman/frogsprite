@@ -88,9 +88,72 @@ frogsprite.print_sprite();                          // always the composited sta
 frogsprite.print_sprite(undefined, 'outline');      // …unless you name a layer
 ```
 
-A layer belongs to a *sprite*, not to a frame — a `Frame` names a sprite, so an animation cannot show
-one layer on frame 1 and another on frame 2. For "same body, different arm per frame", make the arms
-separate sprites as before. Layers are for non-destructive editing within one sprite.
+#### Moving layers per frame — parallax
+
+A frame names a sprite, but it can also say **where that sprite's layers sit for this frame only**.
+That is what makes a scrolling background one sprite rather than one sprite per frame:
+
+```js
+frogsprite.set_animation(
+  Array.from({ length: 16 }, (_, i) => ({
+    sprite: 'scene',
+    ms: 70,
+    layers: {
+      fuji: { dx: -2 * i, wrap: true },    // far away, barely moves
+      trees: { dx: -8 * i, wrap: true },   // nearer, faster
+      road: { dx: -16 * i, wrap: true }    // underfoot, fastest
+    }
+  }))
+);
+```
+
+A layer the arrangement does not name is drawn exactly as it is — so the moon, on its own layer with
+no entry, simply never moves. `{ fuji: -4 }` is shorthand for `{ fuji: { dx: -4 } }`.
+
+`wrap` matters: without it whatever slides past an edge is dropped and you get a gap. With it the
+layer scrolls round for ever, which only looks seamless if the art tiles — a layer moving `s` px per
+frame over `N` frames returns to its start when `N·s` is a multiple of the tile width, so a *slow*
+far layer needs a *small* tile or a lot of frames.
+
+`hidden` is a third override, and it beats the layer's own setting in both directions: a frame can
+show a layer the sprite hides, or hide one it shows. That is how one sprite carries two arm poses.
+
+`set_effects` patches arrangements too, merged per layer name:
+
+```js
+frogsprite.set_effects('*', { layers: { road: { wrap: true } } });
+frogsprite.set_effects(3, { layers: null });   // clear them on frame 3
+```
+
+The pixels still live on the *sprite* — what a frame carries is only an arrangement of them. So two
+animations over the same sprite can scroll it at different speeds, and neither touches the art.
+
+#### Stamping vs. arranging
+
+Both put a picture somewhere else. Only one of them stays connected to the original.
+
+| | change the source afterwards |
+| --- | --- |
+| `stamp('tree', { dx: 40 })` | **nothing happens.** The pixels were copied once; the link is gone |
+| a layer, arranged per frame | **every frame follows.** The art is stored once and only referenced |
+
+```js
+frogsprite.stamp('tree', { dx: 40 });      // tree is now *pixels in* this sprite
+frogsprite.select('pkg', 'set', 'tree');
+frogsprite.clear('#00ff00');               // the stamped copy stays exactly as it was
+```
+
+So:
+
+- **`stamp`** — a static backdrop assembled from pieces, or baking a composition down once you have
+  stopped fiddling with it. It is destructive on purpose, the same as `clone_sprite` and
+  `import_image`. A scene built by stamping is a dead end: change the tree and you re-stamp all forty
+  of them.
+- **layers + arrangements** — anything you will still be editing, and anything that repeats across
+  frames. Parallax is squarely this. One edit to the layer updates every frame that arranges it.
+
+If you find yourself stamping the same sprite repeatedly, that is the signal to make it a layer
+instead.
 
 ### Copying
 
@@ -168,6 +231,11 @@ All painting commands take an optional trailing `sprite` name and default to the
     Check `lost` when it matters; `undo()` is the only way back.
   - **Anything that swings off the canvas is cut**, the same rule shapes follow.
 - `shift(dx, dy)` — move all pixels; anything pushed off the edge is dropped
+- `stamp(from, { dx, dy, wrap, sprite, layer })` — paint another sprite into this one at an offset:
+  *same picture, different position*, which nothing else here does. The source is composited first,
+  transparent pixels leave what is underneath alone, and `wrap` re-enters what falls off an edge on
+  the opposite side — which is what makes a tile scroll for ever. Both sprites are in the active set.
+  **It bakes** — see [Stamping vs. arranging](#stamping-vs-arranging) before you build a scene with it
 - `clear(color?)` — fill the sprite (default transparent)
 
 #### Shapes
@@ -526,6 +594,25 @@ since that would erase the sprite rather than flatten it.
 The UI has all of this under **Tools → View** in the sidebar: square swatches set the background, round ones toggle the
 silhouette.
 
+### Doing a lot at once
+
+- `batch(fn)` — run many commands as one change: one undo step, one save, one snapshot for the lot
+
+```js
+frogsprite.batch(() => {
+  for (let y = 0; y < 128; y++) frogsprite.paint_row(y, sky[y]);
+});
+```
+
+Every mutating command serialises the whole document twice — once to snapshot for undo, once to see
+whether anything actually moved. That is nothing for one call and ruinous for hundreds, because the
+cost scales with **every package you have open**, not with the sprite you are drawing. Inside a
+batch those two happen once, at the ends. Measured with a 128 grid set loaded: 200 `paint_pixel`
+calls took 7.0 s loose and 38 ms batched.
+
+Synchronous only — `await` async commands (`import_image`, `export_zip`) outside it. If `fn` throws,
+the work done so far stands and is undoable in one step.
+
 ### Undo
 
 - `undo()` / `redo()` — step the whole document back or forward one change. Both return
@@ -603,7 +690,7 @@ frogsprite.export_animated_svg();
 | `src/lib/core/` | the framework-free engine below — no Svelte, no DOM, so `npm test` runs all of it |
 | `src/lib/core/types.ts` | the domain model (`Frame`, `Sprite`, `Layer`, `SpriteSet`, `Package`, `Animation`) — here so the pure modules never import types from a `.svelte.ts` |
 | `src/lib/core/layers.ts` | a sprite's layer stack, and `flatten()` — the one rule for putting it back together |
-| `src/lib/core/grid.ts` | the valid grid sizes, and whole-sprite geometry (rotate, flip, shift, upscale) |
+| `src/lib/core/grid.ts` | the valid grid sizes, and whole-sprite geometry (rotate, flip, shift, stamp, upscale) |
 | `src/lib/core/shapes.ts` | line, square, circle, ellipse, triangle, polygon — filled or outline, clipped to the grid |
 | `src/lib/core/fx.ts` | frame effects, trails and transitions: the one place a frame becomes the pixels you see |
 | `src/lib/core/selection.ts` | which set, animation and layer a command lands on — the pure decisions, so they are testable without a browser |

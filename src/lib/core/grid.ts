@@ -18,6 +18,43 @@ export const GRIDS: GridSize[] = [8, 16, 32, 64, 128];
 export const blank = (grid: GridSize): Uint8Array => new Uint8Array(grid * grid);
 
 /**
+ * Paint `src` into `dst` at an offset — the missing verb of *same picture, different position*.
+ * Transparent source pixels leave `dst` alone, which is the one blend rule everything here uses.
+ * `wrap` re-enters what falls off an edge on the opposite side, which is what makes a tile scroll
+ * for ever; without it anything past the edge is dropped, exactly as `shift` does.
+ *
+ * Returns how many cells it painted. Both buffers are the same grid — to cross grids, `upscale`
+ * first.
+ */
+export function stamp(
+	dst: Pixels,
+	src: Pixels,
+	grid: number,
+	dx = 0,
+	dy = 0,
+	wrap = false
+): number {
+	dx = Math.round(dx) || 0; // NaN from a junk argument would smear the whole thing off-canvas
+	dy = Math.round(dy) || 0;
+	let painted = 0;
+	for (let y = 0; y < grid; y++) {
+		for (let x = 0; x < grid; x++) {
+			const p = src[y * grid + x];
+			if (p === TRANSPARENT) continue;
+			let nx = x + dx;
+			let ny = y + dy;
+			if (wrap) {
+				nx = ((nx % grid) + grid) % grid;
+				ny = ((ny % grid) + grid) % grid;
+			} else if (nx < 0 || ny < 0 || nx >= grid || ny >= grid) continue;
+			dst[ny * grid + nx] = p;
+			painted++;
+		}
+	}
+	return painted;
+}
+
+/**
  * A copy of `pixels` blown up from one grid to a larger one — each source pixel becomes an n×n
  * block. Every supported grid is a power of two, so the factor is always whole: nothing is
  * resampled, no colour is invented, and the art is pixel-for-pixel the same drawing.

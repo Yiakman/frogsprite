@@ -68,6 +68,10 @@ opacity or blend mode, because pixels are palette *indices* — there is nothing
 index 3 and index 9. Reach for a layer when you want an outline you can redraw without disturbing
 the fill under it. See [AGENTS.md](AGENTS.md#layers).
 
+A frame can also slide or hide its sprite's **layers** for that frame alone, which is how a parallax
+scroll is one sprite instead of one per frame: give each depth a layer, then let each frame say where
+each one sits. A layer no frame mentions never moves. See [AGENTS.md](AGENTS.md#moving-layers-per-frame--parallax).
+
 Sets, sprites, animations, frames and layers can all be **copied**. A copy lands in whatever is
 selected and takes an optional new name. `copy_sprite` is the only one that crosses sets, and only
 into a *larger* grid: 16x16 into 32x32 is an exact 2x2 block per pixel, while the other direction
@@ -187,9 +191,6 @@ sharing between devices. That is the one feature that would genuinely require a 
 
 - **Undo is session-only** — 50 steps, and a reload starts from an empty stack with your saved work.
 - **No delete** for packages, sets or sprites (layers have `delete_layer`).
-- **Layers are per sprite, not per frame** — a frame names a sprite, so an animation cannot show one
-  layer on frame 1 and another on frame 2. Layers are for non-destructive editing within a sprite;
-  for a different arm per frame, the arms are still separate sprites.
 - **No layer UI yet** — layers are driven from the API. The canvas shows the composited stack and
   paints into the active layer, but there is no layer panel in the sidebar.
 - **`rotate` still resamples** — layers do not make free rotation lossless on their own; that needs
@@ -198,4 +199,8 @@ sharing between devices. That is the one feature that would genuinely require a 
   at any size, but every command still serialises the whole document twice for undo, which is
   ~3.5ms once a project holds a few 128 sprites. Snapshotting only the set that changed is the next
   move if that ever bites.
+- **`stamp` bakes, it does not link** — stamping a sprite copies its pixels once, so editing the
+  source afterwards changes nothing already stamped. Layers arranged per frame are the live
+  alternative. A *linked* stamp (a layer that references another sprite instead of holding pixels,
+  resolved at composite time) is the noted upgrade path, marked `ponytail:` in `api/commands.ts`.
 - **No spritesheet export** — the ZIP contains individual PNGs, not a packed strip.

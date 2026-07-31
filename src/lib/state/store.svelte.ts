@@ -113,13 +113,13 @@ class Editor {
 		// `raw` peeks past the frame's *effects*, not past the layers — a multi-layer sprite showing
 		// only one layer here would read as a bug rather than as a peek. `shown` already resolves to
 		// the held frame's sprite, so this is the whole of it.
-		const cells = (set?.grid ?? 0) ** 2;
-		if (this.raw) return this.shown && flatten(this.shown, cells);
+		const grid = set?.grid ?? 0;
+		if (this.raw) return this.shown && flatten(this.shown, grid);
 		if (set && this.frame >= 0 && frames.length) {
 			const n = steps(frames[this.frame], set.grid);
 			return compose(frames, this.frame, set.sprites, set.grid, progress(this.phase, n));
 		}
-		return this.sprite && flatten(this.sprite, cells);
+		return this.sprite && flatten(this.sprite, grid);
 	}
 
 	requirePackage() {

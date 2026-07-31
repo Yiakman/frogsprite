@@ -8,7 +8,7 @@
 import { flip, rotate, shift, STEP, type Pixels } from './grid.ts';
 import { flatten } from './layers.ts';
 import { darken, invert, tint, TRANSPARENT, HUES, type Hue } from './palette.ts';
-import type { Frame, Sprite } from './types.ts';
+import type { Arrangement, Frame, LayerView, Sprite } from './types.ts';
 
 /** Applied in a fixed order: invert → hue → flip → rotate → displace. */
 export type Fx = {
@@ -112,7 +112,7 @@ export function compose(
 		// flattened here rather than when `byName` is built: that map covers every sprite in the set
 		// and a frame reaches for two or three of them
 		return sprite
-			? applyFx(flatten(sprite, cells), grid, effects ? f.fx : undefined)
+			? applyFx(flatten(sprite, grid, effects ? f.layers : undefined), grid, effects ? f.fx : undefined)
 			: new Uint8Array(cells);
 	};
 
@@ -204,6 +204,35 @@ export function readTrail(v: any): Trail | undefined {
 	return trail;
 }
 
+/**
+ * A frame's per-layer overrides. Also the normaliser for the shorthand: `{ fuji: -4 }` means
+ * `{ fuji: { dx: -4 } }`, because sliding a layer sideways is what this is nearly always for.
+ *
+ * Layers are named, not indexed, so an entry naming a layer the sprite does not have is kept rather
+ * than dropped — the same arrangement is meant to be reused across sprites whose stacks differ, and
+ * `flatten` simply ignores a name it cannot find.
+ */
+export function readArrangement(v: any): Arrangement | undefined {
+	if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+	const out: Arrangement = {};
+	for (const [name, raw] of Object.entries(v)) {
+		if (!name) continue;
+		const spec: any = typeof raw === 'number' ? { dx: raw } : raw;
+		if (!spec || typeof spec !== 'object') continue;
+		const view: LayerView = {};
+		const dx = Math.round(Number(spec.dx));
+		const dy = Math.round(Number(spec.dy));
+		if (dx) view.dx = dx;
+		if (dy) view.dy = dy;
+		if (spec.wrap === true) view.wrap = true;
+		// tri-state on purpose: absent leaves the layer's own `hidden` alone, where `false` overrides
+		// it to show a layer the sprite hides. `!!spec.hidden` would collapse those two.
+		if (typeof spec.hidden === 'boolean') view.hidden = spec.hidden;
+		if (Object.keys(view).length) out[name] = view;
+	}
+	return Object.keys(out).length ? out : undefined;
+}
+
 /** Also the normaliser for the shorthand: `transition: 'vanish'` means `{ kind: 'vanish' }`. */
 export function readTransition(v: any): Transition | undefined {
 	const kind = typeof v === 'string' ? v : v?.kind;
@@ -223,6 +252,7 @@ export type EffectPatch = {
 	fx?: FxPatch | null;
 	trail?: Trail | number | null;
 	transition?: Transition | string | null;
+	layers?: Arrangement | null;
 };
 
 /**
@@ -251,6 +281,12 @@ export function patchEffects(frame: Frame, patch: EffectPatch): Frame {
 		const transition = patch.transition === null ? undefined : readTransition(patch.transition);
 		if (transition) next.transition = transition;
 		else delete next.transition;
+	}
+	if (patch.layers !== undefined) {
+		// merged per layer name, like fx is per key: nudging `fuji` leaves the `road` beside it alone
+		const merged = patch.layers === null ? undefined : readArrangement({ ...next.layers, ...patch.layers });
+		if (merged) next.layers = merged;
+		else delete next.layers;
 	}
 	return next;
 }

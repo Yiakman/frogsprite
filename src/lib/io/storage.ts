@@ -2,7 +2,7 @@
 // validation of what comes back, and write scheduling. The rest of the app only calls
 // load() / save() / flush() / clear() and never touches localStorage.
 import { GRIDS, type GridSize } from '../core/grid.ts';
-import { readFx, readTrail, readTransition } from '../core/fx.ts';
+import { readArrangement, readFx, readTrail, readTransition } from '../core/fx.ts';
 import { BASE } from '../core/layers.ts';
 import { unzip } from './zip.ts';
 import type { Animation, Frame, Layer, Package, Sprite, SpriteSet } from '../core/types.ts';
@@ -101,9 +101,11 @@ export function readFrames(v: unknown, known: Set<string>): Frame[] {
 		const fx = readFx(f.fx);
 		const trail = readTrail(f.trail);
 		const transition = readTransition(f.transition);
+		const layers = readArrangement(f.layers);
 		if (fx) frame.fx = fx;
 		if (trail) frame.trail = trail;
 		if (transition) frame.transition = transition;
+		if (layers) frame.layers = layers;
 		frames.push(frame);
 	}
 	return frames;

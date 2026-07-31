@@ -190,7 +190,7 @@ export async function setArchive(
 	];
 	for (const sprite of set.sprites) {
 		// the whole layer stack composited — a picture file has no layers to carry
-		const pixels = flatten(sprite, set.grid * set.grid);
+		const pixels = flatten(sprite, set.grid);
 		entries.push({
 			name: `png/${safeFile(sprite.name)}.png`,
 			data: await toPNGBytes(pixels, set.grid, scale)

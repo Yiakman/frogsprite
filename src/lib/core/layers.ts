@@ -8,9 +8,8 @@
 // Layers are non-destructive editing *within* one sprite: an outline you can redraw without
 // touching the fill underneath. They are deliberately not per-frame — a `Frame` names a sprite, not
 // a layer set (see types.ts), so "same body, different arm per frame" is still separate sprites.
-import { blank, type GridSize } from './grid.ts';
-import { TRANSPARENT } from './palette.ts';
-import type { Layer, Sprite } from './types.ts';
+import { blank, stamp, type GridSize } from './grid.ts';
+import type { Arrangement, Layer, Sprite } from './types.ts';
 
 /** What a sprite's first layer is called, and what every pre-layers sprite migrates into. */
 export const BASE = 'layer-0';
@@ -21,18 +20,25 @@ export const newLayer = (name: string, grid: GridSize): Layer => ({ name, pixels
  * The stack flattened to the pixels you actually see: bottom to top, `TRANSPARENT` is the hole,
  * hidden layers skipped.
  *
+ * `view` is one frame's per-layer overrides — an offset, a wrap, a visibility flip. Passing it is
+ * how a single sprite becomes a parallax scroll: the layers hold the art once, and each frame only
+ * says where each one sits. A layer the arrangement does not name is drawn exactly as it is.
+ *
  * Always a fresh buffer, even for the single-layer case where handing back the live one would save
  * an allocation. That shortcut works right up until someone routes a write through here, at which
  * point it paints for a one-layer sprite and silently discards for a two-layer one — the worst kind
  * of bug to find. `applyFx` allocates on every path anyway, so the saving was never real.
  */
-export function flatten(sprite: Sprite, cells: number): Uint8Array {
-	const out = new Uint8Array(cells);
+export function flatten(sprite: Sprite, grid: number, view?: Arrangement): Uint8Array {
+	const out = new Uint8Array(grid * grid);
 	const layers = sprite.layers; // hoisted: the array is a $state proxy, the buffers inside are not
 	for (const layer of layers) {
-		if (layer.hidden) continue;
-		const px = layer.pixels;
-		for (let i = 0; i < cells; i++) if (px[i] !== TRANSPARENT) out[i] = px[i];
+		const v = view?.[layer.name];
+		// the frame's word beats the layer's own, so one frame can show a layer the sprite hides
+		if (v?.hidden ?? layer.hidden) continue;
+		// same blit as `stamp`, because it is the same operation: paint a buffer into another at an
+		// offset, transparent pixels leaving what is underneath alone
+		stamp(out, layer.pixels, grid, v?.dx ?? 0, v?.dy ?? 0, v?.wrap ?? false);
 	}
 	return out;
 }

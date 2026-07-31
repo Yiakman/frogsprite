@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { GRIDS, SIDES, reflect, rotate, upscale } from './grid.ts';
+import { GRIDS, SIDES, reflect, rotate, stamp, upscale } from './grid.ts';
 
 /** 4x4 grid from rows of digits, for readable expectations. */
 const grid4 = (...rows: string[]) => rows.flatMap((r) => [...r].map(Number));
@@ -198,4 +198,35 @@ test('upscale refuses to go down, and says how to', () => {
 	// downscaling picks one winner per block, which eats every one-pixel highlight — refusing says
 	// so rather than quietly damaging the art
 	assert.throws(() => upscale(new Uint8Array(16), 4 as any, 2 as any), /upscale only.*import_image/s);
+});
+
+test('stamp paints a source into a destination at an offset', () => {
+	const dst = new Uint8Array(16); // 4x4
+	const src = Uint8Array.from([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+	assert.equal(stamp(dst, src, 4, 2, 1), 1, 'one painted cell');
+	assert.equal(dst[1 * 4 + 2], 1, 'moved to (2,1)');
+	assert.equal(dst[0], 0, 'and nothing left behind');
+});
+
+test('stamp leaves what is underneath alone where the source is transparent', () => {
+	const dst = Uint8Array.from([5, 5, 5, 5]);
+	const src = Uint8Array.from([0, 7, 0, 0]);
+	stamp(dst, src, 2, 0, 0);
+	assert.deepEqual(Array.from(dst), [5, 7, 5, 5], 'paint-over, not replace');
+});
+
+test('stamp drops what falls off the edge, or wraps it round', () => {
+	const off = new Uint8Array(4);
+	assert.equal(stamp(off, Uint8Array.from([0, 9, 0, 0]), 2, 1, 0), 0, 'pushed off and dropped');
+	assert.deepEqual(Array.from(off), [0, 0, 0, 0]);
+
+	const round = new Uint8Array(4);
+	assert.equal(stamp(round, Uint8Array.from([0, 9, 0, 0]), 2, 1, 0, true), 1, 'wrapped, so kept');
+	assert.equal(round[0], 9, 're-entered on the opposite side — this is what scrolls a tile');
+});
+
+test('stamp survives a junk offset rather than smearing everything off-canvas', () => {
+	const dst = new Uint8Array(4);
+	stamp(dst, Uint8Array.from([3, 0, 0, 0]), 2, NaN as unknown as number, undefined as unknown as number);
+	assert.equal(dst[0], 3, 'NaN is treated as no offset');
 });

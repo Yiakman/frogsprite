@@ -1,10 +1,10 @@
 import { PALETTE, toIndex, TRANSPARENT } from '../core/palette.ts';
 import * as ex from '../io/export.ts';
-import { patchEffects, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
+import { patchEffects, readArrangement, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
 import * as history from '../core/history.ts';
 import * as storage from '../io/storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
-import { blank, GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, upscale, type GridSize, type Side } from '../core/grid.ts';
+import { blank, GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, upscale, type GridSize, type Side } from '../core/grid.ts';
 import { BASE, flatten, layerOf, newLayer } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
@@ -17,6 +17,9 @@ type Color = number | string | null;
 type ShapeOpts = { fill?: boolean; sprite?: string };
 /** Centre of rotation, in pixel coordinates: whole for a pixel, `.5` for the corner between two. */
 type RotateOpts = { cx?: number; cy?: number; sprite?: string };
+
+/** Everything a frame may carry. `set_animation` refuses anything else rather than dropping it. */
+const FRAME_KEYS = new Set(['sprite', 'ms', 'fx', 'trail', 'transition', 'layers']);
 
 const taken = (list: { name: string }[], name: string, what: string) => {
 	if (!name || typeof name !== 'string') throw new Error(`${what} needs a name`);
@@ -90,8 +93,16 @@ export const endStroke = () => {
 // must save once they have actually finished, not when they hand back a promise. `settle` drops
 // the snapshot again when a command turns out to change nothing, so `mut` on a command that only
 // sometimes paints costs nothing — a verb left unwrapped is the only real error.
+/**
+ * True while `batch()` owns the snapshot. Every command inside one skips its own checkpoint and
+ * settle, which is the whole point: those two serialise the entire document, so the cost of a
+ * command grows with everything else you have open, not with what it draws.
+ */
+let batching = false;
+
 const wrap = (mutating: boolean, fn: any) => {
 	const w = (...args: any[]) => {
+		if (batching) return fn(...args); // the batch takes the snapshot and saves, once, around the lot
 		const before = mutating ? checkpoint() : undefined;
 		let out: unknown;
 		try {
@@ -137,7 +148,7 @@ function target(name?: string, layer?: string): { sprite: Sprite; layer: Layer; 
 }
 
 /** The pixels a read or an export shows: the whole stack, composited. */
-const seen = (t: { sprite: Sprite; grid: GridSize }) => flatten(t.sprite, t.grid * t.grid);
+const seen = (t: { sprite: Sprite; grid: GridSize }) => flatten(t.sprite, t.grid);
 
 /**
  * A detached copy of a sprite, layer for layer, optionally into a larger grid. The one place
@@ -339,6 +350,46 @@ const api = {
 		set.sprites.push(copyOfSprite(src, to, set.grid, set.grid));
 		editor.sel = { ...editor.sel, sprite: to, layer: '' };
 		return to;
+	}),
+
+	/**
+	 * Paint another sprite into this one at an offset — *same picture, different position*, which
+	 * nothing else in the API does. The source is composited first, so it arrives as you see it.
+	 *
+	 *   stamp('tree', { dx: 40 })                       // the tree, 40px right, on the active layer
+	 *   stamp('hills', { dx: -12, wrap: true })         // scrolled, re-entering from the right
+	 *   stamp('rider', { dx: 8, dy: 4, layer: 'fg' })   // into a layer by name
+	 *
+	 * Transparent source pixels leave what is underneath alone, so stamping builds a scene up in
+	 * pieces. `wrap` re-enters what falls off an edge on the opposite side — that is what makes a
+	 * tile scroll for ever; without it anything past the edge is dropped.
+	 *
+	 * **This bakes.** The pixels are copied once and the link is gone: repaint `from` afterwards and
+	 * what you stamped does not change. For art you are still tweaking, put it on a layer and move it
+	 * per frame with `set_animation`'s `layers` instead — that stays live, because the layer holds the
+	 * art and the frame only says where it sits.
+	 *
+	 * Both sprites live in the active set, so they share a grid. Reach for `copy_sprite` to bring art
+	 * in from a smaller set first.
+	 *
+	 * ponytail: a one-time blit, so a scene assembled by stamping is a dead end — change the tree and
+	 * you re-stamp all forty of them. The upgrade is a *linked* stamp, and the cheap way in is the
+	 * layer stack we already have: let a layer be `{ name, from: 'tree', dx, dy, wrap }` instead of
+	 * `{ name, pixels }`, and have `flatten` resolve `from` against the set's sprites. Arrangements
+	 * then work on it unchanged. Needs `flatten` to take the sprite list (it takes one sprite today),
+	 * a cycle guard for A→B→A, and a decision on what `paint_pixel` into a linked layer means —
+	 * probably refuse, the way a held frame with effects refuses. Do it when someone actually builds a
+	 * scene big enough to hurt; until then `stamp` plus arrangements covers both jobs.
+	 */
+	stamp: mut(function (from: string, { dx = 0, dy = 0, wrap = false, sprite, layer }: { dx?: number; dy?: number; wrap?: boolean; sprite?: string; layer?: string } = {}) {
+		const set = editor.requireSet();
+		const src = set.sprites.find((s) => s.name === from);
+		if (!src) throw new Error(`no sprite "${from}" in set "${set.name}"`);
+		const t = target(sprite, layer);
+		if (src.name === t.sprite.name)
+			throw new Error(`stamp("${from}") would read and write the same sprite — clone_sprite it first`);
+		const painted = blit(t.layer.pixels, flatten(src, set.grid), set.grid, dx, dy, wrap);
+		return { sprite: t.sprite.name, layer: t.layer.name, from, painted };
 	}),
 
 	/**
@@ -667,6 +718,18 @@ const api = {
 				throw new Error(
 					`frame "${f.sprite}" has a bad trail — use a frame count, or { frames, fade } with 0 < fade < 1`
 				);
+			if (f.layers !== undefined && !readArrangement(f.layers))
+				throw new Error(
+					`frame "${f.sprite}" has a bad layers arrangement — use { layerName: { dx, dy, wrap, hidden } }, or { layerName: dx }`
+				);
+			// A key we do not know is nearly always a near-miss for one we do — `layer` for `layers`
+			// being the obvious one. Dropping it silently taught nothing at precisely the moment
+			// something needed teaching, so it is an error now.
+			const stray = Object.keys(f).filter((k) => !FRAME_KEYS.has(k));
+			if (stray.length)
+				throw new Error(
+					`frame "${f.sprite}" has unknown key${stray.length > 1 ? 's' : ''} ${stray.map((k) => `"${k}"`).join(', ')} — a frame takes ${[...FRAME_KEYS].join(', ')}`
+				);
 		}
 		const into = selection.targetAnimation(
 			set.animations.map((a) => a.name),
@@ -888,13 +951,13 @@ const api = {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select'],
 				layers: ['new_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'flatten_sprite'],
 				copying: ['copy_set', 'copy_sprite', 'copy_animation', 'copy_frames', 'copy_layer'],
-				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'reflect', 'rotate', 'shift', 'clear', 'import_image'],
+				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
 				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'background', 'silhouette', 'raw', 'help'],
-				history: ['undo', 'redo', 'history'],
+				history: ['undo', 'redo', 'history', 'batch'],
 				storage: ['flush', 'reset']
 			},
 			// derived, so this stays true even if the curated groups above fall behind
@@ -1067,6 +1130,35 @@ for (const [k, fn] of [...Object.entries(api), ...Object.entries(shapes)])
 // push the state they are undoing straight back onto the stack.
 export const frogsprite = Object.assign(api, {
 	shapes,
+	/**
+	 * Run many commands as one change: one undo step, one save, one snapshot for the lot.
+	 *
+	 *   frogsprite.batch(() => { for (let i = 0; i < 200; i++) frogsprite.paint_pixel(i % 16, (i / 16) | 0, '#ff0000'); });
+	 *
+	 * Every mutating command serialises the whole document twice — once to snapshot for undo, once to
+	 * check whether anything actually moved. That is fine for one call and ruinous for hundreds,
+	 * because the cost scales with *every package you have open*, not with the sprite you are
+	 * drawing. Inside a batch those two happen once, at the ends.
+	 *
+	 * Synchronous only: an `await` inside would let the batch close while the rest is still queued.
+	 * Await async commands (`import_image`, `export_zip`) outside it. If `fn` throws the work done so
+	 * far stands and is undoable in one step — the same deal as a command that throws halfway.
+	 *
+	 * ponytail: a flag, not a queue. Nesting is a no-op rather than an error, which is what you want
+	 * when a helper that batches is called from inside another batch.
+	 */
+	batch: (fn: () => unknown) => {
+		if (typeof fn !== 'function') throw new Error('batch needs a function');
+		if (batching) return fn(); // already inside one — the outer batch owns the snapshot
+		const before = checkpoint();
+		batching = true;
+		try {
+			return fn();
+		} finally {
+			batching = false;
+			settle(before);
+		}
+	},
 	/** Step back one change. Selection and playback follow the document; view settings don't. */
 	undo: () => ({ ok: restore(history.undo(snap())), ...history.depth() }),
 	redo: () => ({ ok: restore(history.redo(snap())), ...history.depth() }),
