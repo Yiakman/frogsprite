@@ -46,6 +46,14 @@ one. New packages/sets/sprites become the current selection automatically.
 - `clone_sprite(from, to)` — copy a sprite with all its layers; the usual way to start the next
   animation frame
 - `select(pkg?, set?, sprite?)` — pass `undefined` to leave a level unchanged
+- `delete_sprite(name, { force })` — remove a sprite and its layers. Refuses while an animation still
+  shows it, naming which; `force` drops those frames too and reports how many. (A frame pointing at a
+  missing sprite is discarded silently on the next load, so the refusal is there to stop you losing a
+  frame without being told)
+- `delete_set(name)` — the set and everything in it
+- `delete_package(name)` — the package and everything under it. `reset()` still empties the lot
+
+All three move the selection off whatever they removed, and each is one undo step.
 
 ### Layers
 
@@ -230,7 +238,9 @@ All painting commands take an optional trailing `sprite` name and default to the
       `rotate(90, { cx: 4, cy: 4 })` **loses pixels**, and undoing it will not bring them back.
     Check `lost` when it matters; `undo()` is the only way back.
   - **Anything that swings off the canvas is cut**, the same rule shapes follow.
-- `shift(dx, dy)` — move all pixels; anything pushed off the edge is dropped
+- `shift(dx, dy, opts?)` — move all pixels. Anything pushed off the edge is dropped, unless
+  `{ wrap: true }` brings it back in on the opposite side, which scrolls a tile endlessly in place.
+  `opts` also takes `sprite` and `layer`; a bare string is still the sprite, as before
 - `stamp(from, { dx, dy, wrap, sprite, layer })` — paint another sprite into this one at an offset:
   *same picture, different position*, which nothing else here does. The source is composited first,
   transparent pixels leave what is underneath alone, and `wrap` re-enters what falls off an edge on
@@ -246,7 +256,8 @@ like every other painting command.
 
 | call | |
 | --- | --- |
-| `shapes.line(x0, y0, x1, y1, color)` | endpoints included; no `fill` — a line has no inside |
+| `shapes.line(x0, y0, x1, y1, color, opts?)` | endpoints included; no `fill` — a line has no inside. `{ width }` thickens it, square caps and joins |
+| `shapes.rect(x0, y0, x1, y1, color, opts?)` | two opposite corners, in either order — the rectangle `square` cannot draw |
 | `shapes.square(x, y, size, color, opts?)` | axis-aligned, from the **top-left** corner |
 | `shapes.circle(cx, cy, r, color, opts?)` | `r` is a radius in pixels; `r: 0` is a single pixel |
 | `shapes.ellipse(cx, cy, rx, ry, color, opts?)` | separate radii |
@@ -544,9 +555,26 @@ cannot. In the UI: **Project → Save all… / Load…**, or drop a `.json` / `.
 ### Inspection
 
 - `state()` — JSON snapshot of every package, set, sprite (with its layers) and frame
-- `read_sprite(sprite?, layer?)` — pixels as rows of palette indices. The composited stack, unless
-  you name a layer
-- `print_sprite(sprite?, layer?)` — the same as ASCII rows plus a legend; easiest to eyeball
+- `read_sprite(sprite?, opts?)` — pixels as rows of palette indices. The composited stack, unless you
+  name a layer. `opts` is `{ layer, set, pkg }`, or a bare string for the layer
+- `print_sprite(sprite?, opts?)` — the same as ASCII rows plus a legend; easiest to eyeball
+
+`set` and `pkg` read straight out of another set **without selecting it** — the selection, and any
+playback riding on it, stay exactly where they were:
+
+```js
+frogsprite.read_sprite('f0', { set: 'scene', pkg: 'parallax' });
+```
+
+For everything at once, `export_json()` is the bulk read: every sprite, every layer, every pixel of a
+set in one call, and it takes the same `{ set, pkg }`. Reach for it rather than looping `read_sprite`
+over a set — `state()` deliberately carries no pixel data, since it is a map of the document rather
+than its contents.
+
+```js
+const set = frogsprite.export_json({ set: 'scene' });
+set.sprites[0].layers[0].pixels;   // a plain array, grid * grid long
+```
 - `palette()` — all 256 colours
 
 #### Reviewing what you drew

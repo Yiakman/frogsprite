@@ -113,3 +113,49 @@ test('triangle is the polygon of its three points, and a polygon needs three', (
 	assert.throws(() => shapes.polygon(new Array(64).fill(0), 8, [[0, 0], [1, 1]], 4), /at least 3/);
 	assert.throws(() => shapes.polygon(new Array(64).fill(0), 8, [[0, 0], [1, 1], [2]] as any, 4), /\[x, y\]/);
 });
+
+test('rect spans two corners given in either order', () => {
+	const a = new Uint8Array(16);
+	const b = new Uint8Array(16);
+	assert.equal(shapes.rect(a, 4, 1, 0, 3, 2, 6), 9, '3x3 filled');
+	shapes.rect(b, 4, 3, 2, 1, 0, 6); // corners swapped
+	assert.deepEqual(Array.from(a), Array.from(b), 'corner order must not matter');
+});
+
+test('rect draws a non-square rectangle, which square cannot', () => {
+	const px = new Uint8Array(16);
+	assert.equal(shapes.rect(px, 4, 0, 0, 3, 0, 5), 4, 'one row, four wide');
+	assert.deepEqual(Array.from(px).slice(0, 4), [5, 5, 5, 5]);
+});
+
+test('an unfilled rect is its border only', () => {
+	const px = new Uint8Array(25);
+	assert.equal(shapes.rect(px, 5, 0, 0, 2, 2, 7, false), 8, '3x3 outline is 8 cells, not 9');
+	assert.equal(px[1 * 5 + 1], 0, 'the middle is left alone');
+});
+
+test('a square is exactly the rect with matching sides', () => {
+	const a = new Uint8Array(36);
+	const b = new Uint8Array(36);
+	shapes.square(a, 6, 1, 1, 3, 4);
+	shapes.rect(b, 6, 1, 1, 3, 3, 4);
+	assert.deepEqual(Array.from(a), Array.from(b));
+});
+
+test('line width thickens the stroke and defaults to one', () => {
+	const thin = new Uint8Array(25);
+	const thick = new Uint8Array(25);
+	const n1 = shapes.line(thin, 5, 0, 2, 4, 2, 3);
+	const n3 = shapes.line(thick, 5, 0, 2, 4, 2, 3, 3);
+	assert.equal(n1, 5, 'a 5-wide horizontal line');
+	assert.equal(n3, 15, 'three rows of it');
+	assert.equal(thick[1 * 5 + 0], 3, 'the row above is painted too');
+	assert.equal(thick[3 * 5 + 0], 3, 'and the row below');
+});
+
+test('a thick line is clipped at the edge like everything else', () => {
+	const px = new Uint8Array(25);
+	shapes.line(px, 5, 0, 0, 4, 0, 2, 3); // hugging the top edge, so a third of the width falls off
+	assert.equal(px[0], 2, 'the line itself lands');
+	assert.equal(px.filter((v) => v).length, 10, 'two rows survive, the one above is dropped');
+});

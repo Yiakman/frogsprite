@@ -190,7 +190,6 @@ sharing between devices. That is the one feature that would genuinely require a 
 ## Known limitations
 
 - **Undo is session-only** — 50 steps, and a reload starts from an empty stack with your saved work.
-- **No delete** for packages, sets or sprites (layers have `delete_layer`).
 - **No layer UI yet** — layers are driven from the API. The canvas shows the composited stack and
   paints into the active layer, but there is no layer panel in the sidebar.
 - **`rotate` still resamples** — layers do not make free rotation lossless on their own; that needs

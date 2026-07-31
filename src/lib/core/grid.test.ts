@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { GRIDS, SIDES, reflect, rotate, stamp, upscale } from './grid.ts';
+import { GRIDS, SIDES, reflect, rotate, shift, stamp, upscale } from './grid.ts';
 
 /** 4x4 grid from rows of digits, for readable expectations. */
 const grid4 = (...rows: string[]) => rows.flatMap((r) => [...r].map(Number));
@@ -229,4 +229,21 @@ test('stamp survives a junk offset rather than smearing everything off-canvas', 
 	const dst = new Uint8Array(4);
 	stamp(dst, Uint8Array.from([3, 0, 0, 0]), 2, NaN as unknown as number, undefined as unknown as number);
 	assert.equal(dst[0], 3, 'NaN is treated as no offset');
+});
+
+test('shift wraps what falls off the edge when asked', () => {
+	const drop = Uint8Array.of(1, 2, 3, 4);
+	shift(drop, 2, 1, 0);
+	assert.deepEqual(Array.from(drop), [0, 1, 0, 3], 'the right column is lost');
+
+	const round = Uint8Array.of(1, 2, 3, 4);
+	shift(round, 2, 1, 0, true);
+	assert.deepEqual(Array.from(round), [2, 1, 4, 3], 'it comes back on the left instead');
+});
+
+test('a wrapped shift keeps every painted cell, which is what scrolls a tile', () => {
+	const px = Uint8Array.from({ length: 16 }, (_, i) => (i % 3 ? 0 : 9));
+	const before = px.filter((v) => v).length;
+	shift(px, 4, 3, 1, true);
+	assert.equal(px.filter((v) => v).length, before, 'nothing lost going round');
 });

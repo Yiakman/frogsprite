@@ -175,6 +175,26 @@ function source(set?: string, pkg?: string): SpriteSet {
 	return found;
 }
 
+/**
+ * A sprite to *read*, which unlike one to paint may live in another set entirely — reading is safe
+ * across sets in a way painting is not, since nothing has to agree about grids. `layer` picks one
+ * layer; without it you get the whole stack composited, which is what you are looking at.
+ */
+function reading(sprite?: string, { layer, set, pkg }: { layer?: string; set?: string; pkg?: string } = {}) {
+	if (!set && !pkg) {
+		const t = target(sprite, layer);
+		return { sprite: t.sprite, grid: t.grid, pixels: layer ? t.layer.pixels : seen(t) };
+	}
+	const from = source(set, pkg);
+	const found = sprite ? from.sprites.find((s) => s.name === sprite) : from.sprites[0];
+	if (!found) throw new Error(`no sprite "${sprite}" in set "${from.name}"`);
+	return {
+		sprite: found,
+		grid: from.grid,
+		pixels: layer ? layerOf(found, layer).pixels : flatten(found, from.grid)
+	};
+}
+
 /** An animation in the active set, by name or the selected one. */
 function animOf(name?: string): Animation {
 	const set = editor.requireSet();
@@ -419,9 +439,85 @@ const api = {
 	}),
 
 	/** Shift a sprite's pixels; anything pushed off the edge is dropped. */
-	shift: mut(function (dx: number, dy: number, sprite?: string) {
-		const t = target(sprite);
-		slide(t.layer.pixels, t.grid, dx, dy);
+	/**
+	 * Shift a sprite's pixels. Anything pushed off the edge is dropped, unless `wrap` brings it back
+	 * in on the opposite side — which is what scrolls a tile endlessly in place.
+	 *
+	 *   shift(4, 0)                       // 4px right, losing the right-hand column
+	 *   shift(-2, 0, { wrap: true })      // scrolled, nothing lost
+	 *   shift(0, 1, 'clouds')             // a named sprite, as before
+	 */
+	shift: mut(function (dx: number, dy: number, opts: string | { wrap?: boolean; sprite?: string; layer?: string } = {}) {
+		// a bare string is the sprite, which is how every other painting verb spells it
+		const o = typeof opts === 'string' ? { sprite: opts } : opts;
+		const t = target(o.sprite, o.layer);
+		slide(t.layer.pixels, t.grid, dx, dy, o.wrap ?? false);
+	}),
+
+	// ---- deleting --------------------------------------------------------
+	// Iterative work needs a bin. Each of these reports what is left rather than nothing, so a script
+	// can check its own tidying, and each moves the selection off whatever it just removed.
+
+	/**
+	 * Remove a sprite and its layers. Refuses while an animation still shows it, naming them, because
+	 * a frame pointing at a sprite that is gone is dropped silently on the next load — you would lose
+	 * the frame and never be told. `{ force: true }` removes those frames too, and says how many.
+	 */
+	delete_sprite: mut(function (name: string, { force = false } = {}) {
+		const set = editor.requireSet();
+		const i = set.sprites.findIndex((s) => s.name === name);
+		if (i < 0) throw new Error(`no sprite "${name}" in set "${set.name}"`);
+		const used = set.animations.filter((a) => a.frames.some((f) => f.sprite === name));
+		if (used.length && !force)
+			throw new Error(
+				`"${name}" is still used by ${used.map((a) => `"${a.name}"`).join(', ')} — ` +
+					`delete_sprite("${name}", { force: true }) to drop those frames too`
+			);
+		let dropped = 0;
+		for (const a of used) {
+			const keep = a.frames.filter((f) => f.sprite !== name);
+			dropped += a.frames.length - keep.length;
+			a.frames = keep;
+		}
+		set.sprites.splice(i, 1);
+		editor.stop(); // playback may have been sitting on a frame that no longer exists
+		if (editor.sel.sprite === name)
+			editor.sel = { ...editor.sel, sprite: set.sprites[0]?.name ?? '', layer: '' };
+		return { deleted: name, framesDropped: dropped, sprites: set.sprites.map((s) => s.name) };
+	}),
+
+	/** Remove a set, with every sprite and animation in it. */
+	delete_set: mut(function (name: string) {
+		const pkg = editor.requirePackage();
+		const i = pkg.sets.findIndex((s) => s.name === name);
+		if (i < 0) throw new Error(`no set "${name}" in package "${pkg.name}"`);
+		const [gone] = pkg.sets.splice(i, 1);
+		editor.stop();
+		if (editor.sel.set === name) {
+			const next = pkg.sets[0];
+			editor.sel = {
+				...editor.sel,
+				set: next?.name ?? '',
+				sprite: next?.sprites[0]?.name ?? '',
+				layer: '',
+				anim: next?.animations[0]?.name ?? ''
+			};
+		}
+		return { deleted: name, sprites: gone.sprites.length, sets: pkg.sets.map((s) => s.name) };
+	}),
+
+	/** Remove a package and everything under it. `reset()` is still the way to empty the lot. */
+	delete_package: mut(function (name: string) {
+		const i = editor.packages.findIndex((p) => p.name === name);
+		if (i < 0) throw new Error(`no package "${name}"`);
+		const [gone] = editor.packages.splice(i, 1);
+		editor.stop();
+		// selectFirst lands on whatever is left, or clears the selection when nothing is
+		if (editor.sel.pkg === name) {
+			editor.sel = { pkg: '', set: '', sprite: '', anim: '', layer: '' };
+			editor.selectFirst();
+		}
+		return { deleted: name, sets: gone.sets.length, packages: editor.packages.map((p) => p.name) };
 	}),
 
 	// ---- layers ----------------------------------------------------------
@@ -847,8 +943,8 @@ const api = {
 
 	// ---- interchange -----------------------------------------------------
 	/** The active set as plain JSON — the ZIP's `set.json`, without the pictures. */
-	export_json: ro(function ({ download = false } = {} as any) {
-		const set = editor.requireSet();
+	export_json: ro(function ({ download = false, set: which, pkg }: { download?: boolean; set?: string; pkg?: string } = {}) {
+		const set = which || pkg ? source(which, pkg) : editor.requireSet();
 		const data = storage.setPayload(set);
 		if (download) ex.downloadJSON(data, `${ex.safeFile(set.name)}.json`);
 		return data;
@@ -948,7 +1044,7 @@ const api = {
 				'await frogsprite.export_zip({ download: true })'
 			],
 			groups: {
-				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select'],
+				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select', 'delete_sprite', 'delete_set', 'delete_package'],
 				layers: ['new_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'flatten_sprite'],
 				copying: ['copy_set', 'copy_sprite', 'copy_animation', 'copy_frames', 'copy_layer'],
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'import_image'],
@@ -1020,22 +1116,21 @@ const api = {
 	 * The active sprite as rows of palette indices — read this back to verify a drawing. Shows the
 	 * whole stack composited, which is what you are looking at; pass `layer` to read just one.
 	 */
-	read_sprite: ro(function (sprite?: string, layer?: string) {
-		const t = target(sprite, layer);
+	read_sprite: ro(function (sprite?: string, opts: string | { layer?: string; set?: string; pkg?: string } = {}) {
 		// display, not edit: without `layer` this is every layer, or an agent that drew a body on one
 		// and an outline on the next would read its work back and see only the outline
-		const px = layer ? t.layer.pixels : seen(t);
+		const t = reading(sprite, typeof opts === 'string' ? { layer: opts } : opts);
 		const rows: number[][] = [];
 		// plain arrays, not the Uint8Array slice: this is what an agent reads back and JSON-prints
 		for (let y = 0; y < t.grid; y++)
-			rows.push(Array.from(px.subarray(y * t.grid, (y + 1) * t.grid)));
+			rows.push(Array.from(t.pixels.subarray(y * t.grid, (y + 1) * t.grid)));
 		return rows;
 	}),
 
 	/** Same thing as ASCII: '.' is transparent, other chars are per-colour. Easier to eyeball. */
-	print_sprite: ro(function (sprite?: string, layer?: string) {
-		const t = target(sprite, layer);
-		const px = layer ? t.layer.pixels : seen(t); // display, not edit — see read_sprite
+	print_sprite: ro(function (sprite?: string, opts: string | { layer?: string; set?: string; pkg?: string } = {}) {
+		const t = reading(sprite, typeof opts === 'string' ? { layer: opts } : opts); // display — see read_sprite
+		const px = t.pixels;
 		const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 		const seenChars = new Map<number, string>();
 		const rows: string[] = [];
@@ -1080,11 +1175,21 @@ const api = {
  * Every shape paints, so every one is `mut`: one call, one undo step, however many cells it covers.
  */
 const shapes = {
-	/** Straight line between two points, endpoints included. No fill — a line has no inside. */
-	line: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { sprite }: ShapeOpts = {}) {
+	/**
+	 * Straight line between two points, endpoints included. No fill — a line has no inside. `width`
+	 * thickens it, with square caps and joins.
+	 */
+	line: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { width = 1, sprite }: ShapeOpts & { width?: number } = {}) {
 		const t = target(sprite);
-		const painted = shape.line(t.layer.pixels, t.grid, x0, y0, x1, y1, toIndex(color));
+		const painted = shape.line(t.layer.pixels, t.grid, x0, y0, x1, y1, toIndex(color), width);
 		return { sprite: t.sprite.name, shape: 'line', painted };
+	}),
+
+	/** Rectangle between two opposite corners, given in either order — the non-square one. */
+	rect: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.rect(t.layer.pixels, t.grid, x0, y0, x1, y1, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'rect', painted };
 	}),
 
 	/** Axis-aligned square from its top-left corner. */

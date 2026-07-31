@@ -171,20 +171,18 @@ export function flip(pixels: Pixels, grid: number, axis: 'x' | 'y'): void {
 	}
 }
 
-/** Move every pixel by (dx, dy), in place. Anything pushed past an edge is dropped. */
-export function shift(pixels: Pixels, grid: number, dx: number, dy: number): void {
-	dx = Math.round(dx) || 0; // NaN from a junk argument would smear the whole sprite off-canvas
-	dy = Math.round(dy) || 0;
-	if (!dx && !dy) return;
+/**
+ * Move every pixel by (dx, dy), in place. Anything pushed past an edge is dropped, unless `wrap`
+ * brings it back in on the opposite side — which is what turns a tile into an endless scroll.
+ *
+ * The move itself is `stamp` into a clean buffer, so there is one blit in this file rather than two
+ * that could disagree about wrapping.
+ */
+export function shift(pixels: Pixels, grid: number, dx: number, dy: number, wrap = false): void {
+	if (!(Math.round(dx) || 0) && !(Math.round(dy) || 0)) return;
 	const next = new Uint8Array(grid * grid);
-	for (let y = 0; y < grid; y++) {
-		for (let x = 0; x < grid; x++) {
-			const nx = x + dx;
-			const ny = y + dy;
-			if (nx < 0 || ny < 0 || nx >= grid || ny >= grid) continue;
-			next[ny * grid + nx] = pixels[y * grid + x];
-		}
-	}
+	stamp(next, pixels, grid, dx, dy, wrap);
+	// in place, never reassign: the sprite's buffer is the one the canvas reads from
 	for (let i = 0; i < next.length; i++) pixels[i] = next[i];
 }
 
