@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { onSet, targetAnimation, targetFrames, type Selection } from './selection.ts';
+import { onSet, targetAnimation, targetFrames, targetLayer, type Selection } from './selection.ts';
 
 const at = (over: Partial<Selection> = {}): Selection => ({
 	pkg: 'p',
 	set: 'hero',
 	sprite: 'idle',
 	anim: 'walk',
+	layer: 'layer-0',
 	...over
 });
 
@@ -19,7 +20,8 @@ test('re-selecting the set already active changes nothing and is not a move', ()
 test('selecting a different set clears the sprite and lands on that set first animation', () => {
 	const { sel, moved } = onSet(at(), 'boss', ['stomp', 'roar']);
 	assert.equal(moved, true);
-	assert.deepEqual(sel, { pkg: 'p', set: 'boss', sprite: '', anim: 'stomp' });
+	// the layer goes with the sprite: its name means nothing in the set we just moved to
+	assert.deepEqual(sel, { pkg: 'p', set: 'boss', sprite: '', anim: 'stomp', layer: '' });
 });
 
 test('a set with no animations selects no animation rather than keeping the old one', () => {
@@ -60,4 +62,34 @@ test('an explicit name wins, then the selected one, then the default', () => {
 		name: 'animation',
 		exists: false
 	});
+});
+
+test('targetLayer honours a name, then the selection, then the topmost', () => {
+	const stack: [string, boolean][] = [
+		['back', false],
+		['front', false]
+	];
+	assert.equal(targetLayer(stack, 'back', 'front'), 'back', 'an explicit name wins');
+	assert.equal(targetLayer(stack, undefined, 'back'), 'back', 'else the selected one');
+	assert.equal(targetLayer(stack, undefined, undefined), 'front', 'else the topmost');
+});
+
+test('targetLayer falls back rather than throwing when the selection went stale', () => {
+	// the layer was deleted or renamed underneath the selection — resolving by name with a fallback
+	// is what stops that painting into whatever slid into the old slot
+	const stack: [string, boolean][] = [['back', false]];
+	assert.equal(targetLayer(stack, undefined, 'deleted'), 'back');
+	assert.throws(() => targetLayer(stack, 'deleted'), /no layer "deleted"/, 'but an explicit name still throws');
+});
+
+test('only the fallback skips hidden layers — a chosen one is honoured', () => {
+	const stack: [string, boolean][] = [
+		['back', false],
+		['sketch', true]
+	];
+	// nothing chosen: painting somewhere you cannot see would be a bug, not a feature
+	assert.equal(targetLayer(stack, undefined, undefined), 'back', 'the fallback skips the hidden top');
+	// chosen: the stroke lands where it was asked to and is simply invisible, as in any pixel editor
+	assert.equal(targetLayer(stack, undefined, 'sketch'), 'sketch', 'a selected hidden layer stands');
+	assert.equal(targetLayer(stack, 'sketch'), 'sketch', 'as does one named outright');
 });

@@ -40,7 +40,7 @@ file is fetched rather than bundled, so it costs nothing on later visits.
 ## Concepts
 
 ```
-package  →  set (fixed grid size)  →  sprites
+package  →  set (fixed grid size)  →  sprites  →  layers
                                  →  animations  →  frames
 ```
 
@@ -59,6 +59,20 @@ Click a frame's thumbnail in the timeline and it expands into an effect tray, wi
 `this frame | all frames` switch — effects are usually uniform across an animation, so one click can
 set the lot. A frame with a transition also gets a slider that scrubs through it. **Effects** in the
 sidebar holds one-click recipes (Comet, Ghost, Flash, Fade in, Hue cycle, Clear effects).
+
+A sprite is a stack of **layers** composited bottom to top, and one layer is the ordinary case — a
+fresh sprite has a single `layer-0` and behaves exactly as it did before layers existed. Painting
+lands on the active layer; reading and exporting always show the whole stack. Higher layers win
+where they overlap, and transparent is the hole that lets the layer below show through. There is no
+opacity or blend mode, because pixels are palette *indices* — there is nothing to average between
+index 3 and index 9. Reach for a layer when you want an outline you can redraw without disturbing
+the fill under it. See [AGENTS.md](AGENTS.md#layers).
+
+Sets, sprites, animations, frames and layers can all be **copied**. A copy lands in whatever is
+selected and takes an optional new name. `copy_sprite` is the only one that crosses sets, and only
+into a *larger* grid: 16x16 into 32x32 is an exact 2x2 block per pixel, while the other direction
+would have to drop detail, so it refuses. Animations and frames stay inside one set, because a frame
+names a sprite. See [AGENTS.md](AGENTS.md#copying).
 
 Colours come from a fixed 256-entry palette: index `0` is transparent, `1`–`216` are a 6×6×6 RGB
 cube, and `217`–`255` are a 39-step grey ramp. Anywhere a colour is accepted you can pass an index,
@@ -132,7 +146,7 @@ sharing between devices. That is the one feature that would genuinely require a 
 | --- | --- |
 | `src/lib/api/commands.ts` | the `window.frogsprite` API — the only surface agents touch |
 | `src/lib/state/store.svelte.ts` | reactive state (`$state` class), selection, playback |
-| `src/lib/core/` | the framework-free engine (no Svelte, no DOM): `palette`, `grid`, `shapes`, `fx`, `selection`, `history`, `types` |
+| `src/lib/core/` | the framework-free engine (no Svelte, no DOM): `palette`, `grid`, `shapes`, `fx`, `layers`, `selection`, `history`, `types` |
 | `src/lib/io/` | pixels in and out: `storage` (localStorage), `export`, `image`, `zip` |
 | `src/lib/ui/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
 | `src/lib/**/*.test.ts` | `npm test` — self-checks for the DOM-free logic, one file per module, co-located |
@@ -172,7 +186,14 @@ sharing between devices. That is the one feature that would genuinely require a 
 ## Known limitations
 
 - **Undo is session-only** — 50 steps, and a reload starts from an empty stack with your saved work.
-- **No delete** for packages, sets or sprites.
+- **No delete** for packages, sets or sprites (layers have `delete_layer`).
+- **Layers are per sprite, not per frame** — a frame names a sprite, so an animation cannot show one
+  layer on frame 1 and another on frame 2. Layers are for non-destructive editing within a sprite;
+  for a different arm per frame, the arms are still separate sprites.
+- **No layer UI yet** — layers are driven from the API. The canvas shows the composited stack and
+  paints into the active layer, but there is no layer panel in the sidebar.
+- **`rotate` still resamples** — layers do not make free rotation lossless on their own; that needs
+  an unrotated source kept alongside the rotated one, which is a separate idea.
 - **Large grids cost snapshot time, not render time** — the canvas redraws in about a millisecond
   at any size, but every command still serialises the whole document twice for undo, which is
   ~3.5ms once a project holds a few 128 sprites. Snapshotting only the set that changed is the next

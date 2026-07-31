@@ -1,5 +1,6 @@
 import { compose, progress, steps } from '../core/fx.ts';
 import type { Pixels } from '../core/grid.ts';
+import { flatten } from '../core/layers.ts';
 import { PALETTE, TRANSPARENT } from '../core/palette.ts';
 import { setPayload } from './storage.ts';
 import { zip, type ZipEntry } from './zip.ts';
@@ -188,13 +189,15 @@ export async function setArchive(
 		{ name: 'set.json', data: text.encode(JSON.stringify(setPayload(set), null, 2)) }
 	];
 	for (const sprite of set.sprites) {
+		// the whole layer stack composited — a picture file has no layers to carry
+		const pixels = flatten(sprite, set.grid * set.grid);
 		entries.push({
 			name: `png/${safeFile(sprite.name)}.png`,
-			data: await toPNGBytes(sprite.pixels, set.grid, scale)
+			data: await toPNGBytes(pixels, set.grid, scale)
 		});
 		entries.push({
 			name: `svg/${safeFile(sprite.name)}.svg`,
-			data: text.encode(toSVG(sprite.pixels, set.grid))
+			data: text.encode(toSVG(pixels, set.grid))
 		});
 	}
 	const wanted = Array.isArray(animations)

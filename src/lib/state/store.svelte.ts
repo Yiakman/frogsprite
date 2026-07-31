@@ -1,16 +1,18 @@
 import { compose, progress, steps } from '../core/fx.ts';
+import { flatten, layerOf } from '../core/layers.ts';
 import { PALETTE } from '../core/palette.ts';
+import { targetLayer } from '../core/selection.ts';
 import * as storage from '../io/storage.ts';
 
 import type { GridSize } from '../core/grid.ts';
-import type { Frame, Package, Sprite } from '../core/types.ts';
+import type { Frame, Layer, Package, Sprite } from '../core/types.ts';
 
 const find = <T extends { name: string }>(list: T[], name: string) =>
 	list.find((x) => x.name === name);
 
 class Editor {
 	packages = $state<Package[]>([]);
-	sel = $state({ pkg: '', set: '', sprite: '', anim: '' });
+	sel = $state({ pkg: '', set: '', sprite: '', anim: '', layer: '' });
 	color = $state(1);
 	/** Canvas backdrop: a palette index, or 0 for the checkerboard. A view setting, not persisted. */
 	background = $state(0);
@@ -78,6 +80,22 @@ class Editor {
 		return this.sprite;
 	}
 
+	/**
+	 * The layer an edit lands on — the canvas paints here, and `commands.target()` resolves the same
+	 * way through the same `targetLayer`, so the API and the pointer can never end up on different
+	 * layers. Follows `shown`, not `sprite`, because a held frame is editable.
+	 */
+	get shownLayer(): Layer | undefined {
+		const sprite = this.shown;
+		if (!sprite) return undefined;
+		const name = targetLayer(
+			sprite.layers.map((l) => [l.name, !!l.hidden] as [string, boolean]),
+			undefined,
+			this.sel.layer
+		);
+		return layerOf(sprite, name);
+	}
+
 	/** True while the canvas is showing something other than the raw sprite, so painting is off. */
 	get transformed() {
 		const f = this.frame >= 0 ? this.frames[this.frame] : undefined;
@@ -92,14 +110,16 @@ class Editor {
 		void this.revision;
 		const set = this.set;
 		const frames = this.frames;
-		// `raw` peeks past the effects at the sprite as it is stored — the thing an edit would land
-		// on. `shown` already resolves to the held frame's sprite, so this is the whole of it.
-		if (this.raw) return this.shown?.pixels;
+		// `raw` peeks past the frame's *effects*, not past the layers — a multi-layer sprite showing
+		// only one layer here would read as a bug rather than as a peek. `shown` already resolves to
+		// the held frame's sprite, so this is the whole of it.
+		const cells = (set?.grid ?? 0) ** 2;
+		if (this.raw) return this.shown && flatten(this.shown, cells);
 		if (set && this.frame >= 0 && frames.length) {
 			const n = steps(frames[this.frame], set.grid);
 			return compose(frames, this.frame, set.sprites, set.grid, progress(this.phase, n));
 		}
-		return this.sprite?.pixels;
+		return this.sprite && flatten(this.sprite, cells);
 	}
 
 	requirePackage() {
@@ -246,7 +266,12 @@ class Editor {
 				sets: p.sets.map((s) => ({
 					name: s.name,
 					grid: s.grid,
-					sprites: s.sprites.map((sp) => sp.name),
+					// objects, not bare names: this is the only place an agent can discover that a
+					// sprite has layers at all, and a one-layer sprite says so plainly
+					sprites: s.sprites.map((sp) => ({
+						name: sp.name,
+						layers: sp.layers.map((l) => (l.hidden ? `${l.name} (hidden)` : l.name))
+					})),
 					animations: s.animations.map((a) => ({
 						name: a.name,
 						frames: a.frames.map((f) => ({ ...f }))
@@ -283,6 +308,7 @@ class Editor {
 			pkg: pkg.name,
 			set: set?.name ?? '',
 			sprite: set?.sprites[0]?.name ?? '',
+			layer: set?.sprites[0]?.layers[0]?.name ?? '',
 			anim: set?.animations[0]?.name ?? ''
 		};
 	}
@@ -291,12 +317,12 @@ class Editor {
 export const editor = new Editor();
 
 /**
- * Read a sprite's pixels from anywhere reactive — a component, a `$derived`, an `$effect`. Writes
- * to the buffer are invisible to Svelte (see `Sprite`), so anything that reaches for
- * `sprite.pixels` directly renders once and then never updates again. Going through here
- * subscribes to `revision`, which every save() bumps. Writers can use `sprite.pixels` as they are.
+ * Read a layer's pixels from anywhere reactive — a component, a `$derived`, an `$effect`. Writes
+ * to the buffer are invisible to Svelte (see `Layer`), so anything that reaches for
+ * `layer.pixels` directly renders once and then never updates again. Going through here
+ * subscribes to `revision`, which every save() bumps. Writers can use `layer.pixels` as they are.
  */
-export function pixelsOf(sprite: Sprite): Uint8Array {
+export function pixelsOf(layer: Layer): Uint8Array {
 	void editor.revision;
-	return sprite.pixels;
+	return layer.pixels;
 }

@@ -12,7 +12,14 @@ export type Frame = {
 	trail?: Trail;
 	transition?: Transition;
 };
-export type Sprite = { name: string; pixels: Uint8Array };
+/** One image in a sprite's stack. `hidden` is skipped when compositing but keeps its pixels. */
+export type Layer = { name: string; pixels: Uint8Array; hidden?: boolean };
+/**
+ * An ordered stack of layers, composited bottom-to-top — `layers[0]` is the back. Always holds at
+ * least one; a sprite with exactly one layer behaves precisely as a sprite did before layers
+ * existed, which is the common case and the one every migrated sprite lands in.
+ */
+export type Sprite = { name: string; layers: Layer[] };
 /** A named frame list. Several of them share one set's sprites — that is the point of them. */
 export type Animation = { name: string; frames: Frame[] };
 export type SpriteSet = { name: string; grid: GridSize; sprites: Sprite[]; animations: Animation[] };

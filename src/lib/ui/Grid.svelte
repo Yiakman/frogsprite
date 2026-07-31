@@ -57,7 +57,9 @@
 
 	function paint(i: number) {
 		if (!live || i < 0 || i === from) return; // a drag re-enters the same cell constantly
-		const pixels = editor.shown!.pixels;
+		// the active layer, not the flattened sprite the canvas is showing: a stroke on a spot another
+		// layer covers lands underneath it and stays invisible, which is what layers mean
+		const pixels = editor.shownLayer!.pixels;
 		const prev = from;
 		from = i;
 		if (prev < 0) {

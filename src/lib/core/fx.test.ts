@@ -9,6 +9,9 @@ import { PALETTE } from './palette.ts';
 const corners = () => Uint8Array.of(1, 2, 3, 4);
 const rows = (px: Uint8Array) => Array.from(px);
 
+/** A one-layer sprite — the simple case, and what these fixtures were before layers. */
+const sp = (name: string, pixels: Uint8Array) => ({ name, layers: [{ name: 'layer-0', pixels }] });
+
 /**
  * How bright a palette entry is, 0–255. Index order is NOT brightness order — the grey ramp lives
  * at 217+, so a dimmed white comes back as a *higher* index than the white it came from.
@@ -64,7 +67,7 @@ test('steps subdivides a transition only, and never past 60fps or the grid', () 
 });
 
 test('compose applies fx, and honours the bake opt-outs', () => {
-	const sprites = [{ name: 'a', pixels: corners() }];
+	const sprites = [sp('a', corners())];
 	const frames = [{ sprite: 'a', ms: 100, fx: { flipX: true } }];
 	assert.deepEqual(rows(compose(frames, 0, sprites, 2)), [2, 1, 4, 3]);
 	assert.deepEqual(rows(compose(frames, 0, sprites, 2, 1, { effects: false })), [1, 2, 3, 4]);
@@ -79,9 +82,9 @@ test('compose applies fx, and honours the bake opt-outs', () => {
 test('trail draws earlier frames underneath, dimmed, newest on top', () => {
 	// three single-pixel sprites in three different cells, so a ghost is identifiable by position
 	const sprites = [
-		{ name: 'a', pixels: Uint8Array.of(216, 0, 0, 0) }, // #ffffff, top-left
-		{ name: 'b', pixels: Uint8Array.of(0, 216, 0, 0) },
-		{ name: 'c', pixels: Uint8Array.of(0, 0, 216, 0) }
+		sp('a', Uint8Array.of(216, 0, 0, 0)), // #ffffff, top-left
+		sp('b', Uint8Array.of(0, 216, 0, 0)),
+		sp('c', Uint8Array.of(0, 0, 216, 0))
 	];
 	const frames = [
 		{ sprite: 'a', ms: 100 },
@@ -98,7 +101,7 @@ test('trail draws earlier frames underneath, dimmed, newest on top', () => {
 });
 
 test('the head wins where it overlaps its own trail', () => {
-	const sprites = [{ name: 'a', pixels: Uint8Array.of(216, 216, 0, 0) }];
+	const sprites = [sp('a', Uint8Array.of(216, 216, 0, 0))];
 	const frames = [
 		{ sprite: 'a', ms: 100 },
 		{ sprite: 'a', ms: 100, trail: { frames: 1, fade: 0.5 } }
@@ -109,8 +112,8 @@ test('the head wins where it overlaps its own trail', () => {
 
 test('trail wraps at the loop seam, and never eats its own frame', () => {
 	const sprites = [
-		{ name: 'a', pixels: Uint8Array.of(216, 0, 0, 0) },
-		{ name: 'b', pixels: Uint8Array.of(0, 216, 0, 0) }
+		sp('a', Uint8Array.of(216, 0, 0, 0)),
+		sp('b', Uint8Array.of(0, 216, 0, 0))
 	];
 	// frame 0 is the first frame; its ghost has to come from the last one, because animations loop
 	const frames = [
@@ -133,8 +136,8 @@ test('trail wraps at the loop seam, and never eats its own frame', () => {
 
 test('trail is an effect, so effects:false drops it', () => {
 	const sprites = [
-		{ name: 'a', pixels: Uint8Array.of(216, 0, 0, 0) },
-		{ name: 'b', pixels: Uint8Array.of(0, 216, 0, 0) }
+		sp('a', Uint8Array.of(216, 0, 0, 0)),
+		sp('b', Uint8Array.of(0, 216, 0, 0))
 	];
 	const frames = [
 		{ sprite: 'a', ms: 100 },
@@ -145,8 +148,8 @@ test('trail is an effect, so effects:false drops it', () => {
 
 test('a ghost carries its own fx but never its own trail or transition', () => {
 	const sprites = [
-		{ name: 'a', pixels: Uint8Array.of(216, 0, 0, 0) },
-		{ name: 'b', pixels: Uint8Array.of(0, 216, 0, 0) }
+		sp('a', Uint8Array.of(216, 0, 0, 0)),
+		sp('b', Uint8Array.of(0, 216, 0, 0))
 	];
 	// frame 0 flips, and also has a trail of its own — the flip must show in the ghost, the trail
 	// must not recurse (it would reach back to frame 1 and paint cell 1 twice over)
@@ -161,7 +164,7 @@ test('a ghost carries its own fx but never its own trail or transition', () => {
 });
 
 test('scan reveals from the edge it is named for, and finishes whole', () => {
-	const sprites = [{ name: 'a', pixels: corners() }];
+	const sprites = [sp('a', corners())];
 	const at = (kind: 'scan-down' | 'scan-up', t: number) =>
 		rows(compose([{ sprite: 'a', ms: 100, transition: { kind } }], 0, sprites, 2, t));
 
@@ -172,7 +175,7 @@ test('scan reveals from the edge it is named for, and finishes whole', () => {
 });
 
 test('vanish empties the frame as it runs, and is the same every time', () => {
-	const sprites = [{ name: 'a', pixels: new Uint8Array(64).fill(5) }];
+	const sprites = [sp('a', new Uint8Array(64).fill(5))];
 	const frames = [{ sprite: 'a', ms: 100, transition: { kind: 'vanish' as const } }];
 	const left = (t: number) => compose(frames, 0, sprites, 8, t).reduce((n, p) => n + (p ? 1 : 0), 0);
 
@@ -185,9 +188,9 @@ test('vanish empties the frame as it runs, and is the same every time', () => {
 
 test('silhouette flattens the frame and dissolves the next one in over it', () => {
 	const sprites = [
-		{ name: 'a', pixels: Uint8Array.of(7, 8, 9, 0) },
-		{ name: 'b', pixels: Uint8Array.of(0, 0, 0, 4) },
-		{ name: 'c', pixels: Uint8Array.of(0, 0, 0, 6) }
+		sp('a', Uint8Array.of(7, 8, 9, 0)),
+		sp('b', Uint8Array.of(0, 0, 0, 4)),
+		sp('c', Uint8Array.of(0, 0, 0, 6))
 	];
 	const flat = { sprite: 'a', ms: 100, transition: { kind: 'silhouette' as const, color: 2 } };
 	const frames = [flat, { sprite: 'b', ms: 100 }];

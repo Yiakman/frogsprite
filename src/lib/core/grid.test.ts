@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { GRIDS, reflect, rotate, SIDES } from './grid.ts';
+import { GRIDS, SIDES, reflect, rotate, upscale } from './grid.ts';
 
 /** 4x4 grid from rows of digits, for readable expectations. */
 const grid4 = (...rows: string[]) => rows.flatMap((r) => [...r].map(Number));
@@ -172,4 +172,30 @@ test('reflect produces a genuinely symmetric result on every grid', () => {
 				assert.equal(py[y * g + x], py[(g - 1 - y) * g + x], `grid ${g} asymmetric at ${x},${y}`);
 	}
 	assert.deepEqual(SIDES, ['left', 'right', 'up', 'down']);
+});
+
+test('upscale expands each pixel into a whole block', () => {
+	// 2x2 -> 4x4: every source pixel becomes a 2x2 block, in place, nothing resampled
+	const out = upscale([1, 2, 3, 4], 2 as any, 4 as any);
+	assert.deepEqual(Array.from(out), [1, 1, 2, 2, 1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 4, 4]);
+});
+
+test('upscale keeps transparency transparent and invents no colour', () => {
+	const out = upscale([0, 5, 0, 0], 2 as any, 4 as any);
+	assert.deepEqual(Array.from(out.slice(0, 4)), [0, 0, 5, 5]);
+	assert.deepEqual([...new Set(out)].sort(), [0, 5], 'only the colours that were already there');
+});
+
+test('upscale at the same grid is a plain copy, detached from the source', () => {
+	const src = Uint8Array.of(1, 2, 3, 4);
+	const out = upscale(src, 2 as any, 2 as any);
+	assert.deepEqual(Array.from(out), [1, 2, 3, 4]);
+	out[0] = 9;
+	assert.equal(src[0], 1);
+});
+
+test('upscale refuses to go down, and says how to', () => {
+	// downscaling picks one winner per block, which eats every one-pixel highlight — refusing says
+	// so rather than quietly damaging the art
+	assert.throws(() => upscale(new Uint8Array(16), 4 as any, 2 as any), /upscale only.*import_image/s);
 });

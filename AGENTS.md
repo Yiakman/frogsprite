@@ -43,8 +43,82 @@ one. New packages/sets/sprites become the current selection automatically.
   returns 128 lines of 128 characters. Prefer 8–32 for hand-drawn sprites and reach for 64/128
   mainly when importing an image.
 - `new_sprite(name)`
-- `clone_sprite(from, to)` — copy a sprite; the usual way to start the next animation frame
+- `clone_sprite(from, to)` — copy a sprite with all its layers; the usual way to start the next
+  animation frame
 - `select(pkg?, set?, sprite?)` — pass `undefined` to leave a level unchanged
+
+### Layers
+
+A sprite is a stack of layers composited bottom to top, and **one layer is the ordinary case**. A
+fresh sprite has a single `layer-0` and behaves exactly as sprites did before layers existed, so you
+can ignore this whole section until you want an outline you can redraw without disturbing the fill
+underneath it.
+
+Two rules cover everything:
+
+- **painting lands on the active layer** — `paint_*`, `shapes.*`, `clear`, `rotate`, `shift`,
+  `reflect`, `silhouette` and `import_image` all write to one layer, never the whole sprite
+- **reading and exporting show the whole stack** — `read_sprite`, `print_sprite`, the canvas, the
+  timeline thumbnails and every export composite it for you
+
+Where two layers overlap the higher one wins; transparent (index `0`) is the hole that lets what is
+underneath show through. There is no opacity and no blend mode, and there cannot be: pixels are
+palette *indices*, so there is nothing meaningful to average between index 3 and index 9.
+
+- `new_layer(name?)` — add a layer above the active one and select it
+- `select_layer(name)` — which layer painting lands on
+- `delete_layer(name)` — remove it and its pixels; a sprite must keep at least one
+- `hide_layer(name?, on = true)` — hide one layer, or show it again with `hide_layer(name, false)`.
+  Defaults to the active layer. A hidden layer keeps its pixels: it is skipped when the sprite is
+  composited, not erased
+- `set_layers([...])` — reorder, and show/hide several at once, bottom first. Every existing layer
+  must appear exactly once: this rearranges the stack, it never destroys part of it
+- `flatten_sprite(sprite?)` — collapse the stack into a single `layer-0`, as it looks composited.
+  Hidden layers are dropped rather than merged. This is the way back to a plain sprite
+
+```js
+frogsprite.new_sprite('knight');
+frogsprite.shapes.circle(8, 8, 6, '#8899aa');       // body, on layer-0
+frogsprite.new_layer('outline');                    // a layer above it, now active
+frogsprite.shapes.circle(8, 8, 6, '#111122', { fill: false });
+frogsprite.select_layer('layer-0');
+frogsprite.clear('#aa4444');                        // recolour the body; the outline is untouched
+frogsprite.hide_layer('outline');                   // out of sight, pixels kept
+frogsprite.print_sprite();                          // always the composited stack…
+frogsprite.print_sprite(undefined, 'outline');      // …unless you name a layer
+```
+
+A layer belongs to a *sprite*, not to a frame — a `Frame` names a sprite, so an animation cannot show
+one layer on frame 1 and another on frame 2. For "same body, different arm per frame", make the arms
+separate sprites as before. Layers are for non-destructive editing within one sprite.
+
+### Copying
+
+Each of these reads from a named source and lands in whatever is currently selected, takes an
+optional `to` name, and selects what it made. Left unnamed, the copy gets `name-2`, `name-3`…
+
+- `copy_set(name, { from?: { pkg }, to?, animations = true })` — duplicate a whole set into the
+  active package. `animations: false` copies the sprites on their own
+- `copy_sprite(name, { from?: { set, pkg }, to? })` — copy a sprite, layers and all
+- `copy_animation(name, { to? })` — duplicate an animation inside its set
+- `copy_frames(name, { which = '*', to?, at? })` — copy frames between animations in one set.
+  `which` is an index, a list of them, or `'*'`; `at` is where they land, appending by default
+- `copy_layer(name, { from?: sprite, to? })` — copy a layer into the active sprite
+
+`copy_sprite` is the only one that crosses sets, and across sets the grids have to be compatible —
+which means **larger only**. A 16x16 goes into a 32x32 as an exact 2x2 block per pixel, with nothing
+resampled and no colour invented. The other direction has to pick one winner per block, which eats
+every one-pixel highlight, so it throws rather than quietly damaging the art; `export_png()` then
+`import_image()` is the way down and resamples properly.
+
+Animations and frames stay inside one set because a frame names a *sprite*: carried across, it would
+point at nothing.
+
+```js
+frogsprite.copy_frames('walk', { which: [0, 1], to: 'walk-back', at: 0 });
+frogsprite.copy_sprite('hero', { from: { set: 'icons16' } });   // 16 → the active 32 set
+frogsprite.copy_set('hero', { to: 'villain' });
+```
 
 ### Painting
 
@@ -401,9 +475,10 @@ cannot. In the UI: **Project → Save all… / Load…**, or drop a `.json` / `.
 
 ### Inspection
 
-- `state()` — JSON snapshot of every package, set, sprite name and frame
-- `read_sprite(sprite?)` — pixels as rows of palette indices
-- `print_sprite(sprite?)` — the same as ASCII rows plus a legend; easiest to eyeball
+- `state()` — JSON snapshot of every package, set, sprite (with its layers) and frame
+- `read_sprite(sprite?, layer?)` — pixels as rows of palette indices. The composited stack, unless
+  you name a layer
+- `print_sprite(sprite?, layer?)` — the same as ASCII rows plus a legend; easiest to eyeball
 - `palette()` — all 256 colours
 
 #### Reviewing what you drew
@@ -526,11 +601,12 @@ frogsprite.export_animated_svg();
 | `src/lib/api/commands.ts` | the `frogsprite` API above — the only thing agents touch |
 | `src/lib/state/store.svelte.ts` | reactive state (`$state` class), selection, playback |
 | `src/lib/core/` | the framework-free engine below — no Svelte, no DOM, so `npm test` runs all of it |
-| `src/lib/core/types.ts` | the domain model (`Frame`, `Sprite`, `SpriteSet`, `Package`, `Animation`) — here so the pure modules never import types from a `.svelte.ts` |
-| `src/lib/core/grid.ts` | the valid grid sizes, and whole-sprite geometry (rotate, flip, shift) |
+| `src/lib/core/types.ts` | the domain model (`Frame`, `Sprite`, `Layer`, `SpriteSet`, `Package`, `Animation`) — here so the pure modules never import types from a `.svelte.ts` |
+| `src/lib/core/layers.ts` | a sprite's layer stack, and `flatten()` — the one rule for putting it back together |
+| `src/lib/core/grid.ts` | the valid grid sizes, and whole-sprite geometry (rotate, flip, shift, upscale) |
 | `src/lib/core/shapes.ts` | line, square, circle, ellipse, triangle, polygon — filled or outline, clipped to the grid |
 | `src/lib/core/fx.ts` | frame effects, trails and transitions: the one place a frame becomes the pixels you see |
-| `src/lib/core/selection.ts` | which set and animation a command lands on — the pure decisions, so they are testable without a browser |
+| `src/lib/core/selection.ts` | which set, animation and layer a command lands on — the pure decisions, so they are testable without a browser |
 | `src/lib/core/history.ts` | undo/redo stacks — whole-document snapshots, session-only |
 | `src/lib/core/palette.ts` | the 256-colour palette and colour resolution |
 | `src/lib/io/storage.ts` | the only module that touches `localStorage`: format, validation, writes |

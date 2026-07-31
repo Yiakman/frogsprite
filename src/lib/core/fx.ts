@@ -6,6 +6,7 @@
 // way out: to the canvas, to the timeline thumbnails, and to an exported SVG, all through the same
 // `compose()`.
 import { flip, rotate, shift, STEP, type Pixels } from './grid.ts';
+import { flatten } from './layers.ts';
 import { darken, invert, tint, TRANSPARENT, HUES, type Hue } from './palette.ts';
 import type { Frame, Sprite } from './types.ts';
 
@@ -108,8 +109,10 @@ export function compose(
 	 */
 	const pixelsFor = (f: Frame) => {
 		const sprite = byName.get(f.sprite);
+		// flattened here rather than when `byName` is built: that map covers every sprite in the set
+		// and a frame reaches for two or three of them
 		return sprite
-			? applyFx(sprite.pixels, grid, effects ? f.fx : undefined)
+			? applyFx(flatten(sprite, cells), grid, effects ? f.fx : undefined)
 			: new Uint8Array(cells);
 	};
 

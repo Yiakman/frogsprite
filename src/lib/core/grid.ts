@@ -17,6 +17,36 @@ export const GRIDS: GridSize[] = [8, 16, 32, 64, 128];
 /** A zeroed buffer — zero is TRANSPARENT, so there is nothing to fill. */
 export const blank = (grid: GridSize): Uint8Array => new Uint8Array(grid * grid);
 
+/**
+ * A copy of `pixels` blown up from one grid to a larger one — each source pixel becomes an n×n
+ * block. Every supported grid is a power of two, so the factor is always whole: nothing is
+ * resampled, no colour is invented, and the art is pixel-for-pixel the same drawing.
+ *
+ * Upscale only, and that asymmetry is deliberate rather than missing work. Going the other way has
+ * to pick one winner per block, which drops every one-pixel highlight and breaks any outline
+ * thinner than the factor — on palette-indexed art there is no average to fall back on. Refusing
+ * says so; `export_png` then `import_image` is the path when you do want a smaller version, and it
+ * resamples with the whole image in hand.
+ */
+export function upscale(pixels: Pixels, from: GridSize, to: GridSize): Uint8Array {
+	if (to < from)
+		throw new Error(
+			`can't fit a ${from}x${from} sprite into a ${to}x${to} grid — upscale only. ` +
+				`Export it and import_image() it back to go smaller.`
+		);
+	const n = to / from;
+	const out = new Uint8Array(to * to);
+	if (n === 1) return out.set(pixels), out;
+	for (let y = 0; y < from; y++)
+		for (let x = 0; x < from; x++) {
+			const p = pixels[y * from + x];
+			if (p === TRANSPARENT) continue; // out is already zeroed
+			for (let dy = 0; dy < n; dy++)
+				for (let dx = 0; dx < n; dx++) out[(y * n + dy) * to + x * n + dx] = p;
+		}
+	return out;
+}
+
 export type Side = 'left' | 'right' | 'up' | 'down';
 export const SIDES: Side[] = ['left', 'right', 'up', 'down'];
 

@@ -8,7 +8,11 @@
 		const set = editor.set;
 		if (!set) return [];
 		const seen = new Set<number>();
-		for (const s of set.sprites) for (const p of pixelsOf(s)) if (p) seen.add(p);
+		// every layer's own buffer, hidden ones included, rather than the flattened sprite: a colour
+		// parked under something else is still one you reached for, and flattening would allocate
+		// per sprite per revision to hide it
+		for (const s of set.sprites)
+			for (const l of s.layers) for (const p of pixelsOf(l)) if (p) seen.add(p);
 		return [...seen].sort((a, b) => a - b);
 	});
 </script>
