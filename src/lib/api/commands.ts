@@ -4,8 +4,8 @@ import { compose, patchEffects, readArrangement, readTrail, readTransition, TRAN
 import * as history from '../core/history.ts';
 import * as storage from '../io/storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
-import { blank, GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
-import { BASE, cycles, flatten, frameStep, layerOf, loops, newLayer, period as periodOf, poseAt, scrollStep } from '../core/layers.ts';
+import { GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
+import { BASE, cycles, flatten, frameStep, layerOf, loops, moves, newLayer, period as periodOf, poseAt, scrollStep } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
 import type { Point } from '../core/shapes.ts';
@@ -746,6 +746,17 @@ const api = {
 		const l = layerOf(t.sprite, layer);
 		const n = anim.frames.length;
 		const p = periodOf(l.pixels, t.grid);
+		// a step that is a whole number of repeats lands on identical pixels every frame, and `loops`
+		// waves it through because a layer that never moves trivially ends where it started. Caught
+		// first, since the seamless check below can only ever say yes to it
+		if (!moves(p, speed) && seamless)
+			throw new Error(
+				`"${layer}" repeats every ${p}px, so scrolling it ${Math.abs(Math.round(speed))}px per frame ` +
+					`moves it exactly ${Math.abs(Math.round(speed)) / p} whole repeat(s) each frame and every frame ` +
+					`lands on identical pixels — the layer would sit perfectly still. Use a speed that is not a ` +
+					`multiple of ${p}, or tile the layer with a larger { period } so a step is a fraction of the ` +
+					`repeat. { seamless: false } allows it.`
+			);
 		const ok = loops(p, speed, n);
 		if (!ok && seamless) {
 			const step = scrollStep(p, n);
@@ -1253,12 +1264,12 @@ const api = {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select', 'delete_sprite', 'delete_set', 'delete_package'],
 				layers: ['new_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'tile_layer', 'scroll_layer', 'cycle_layers', 'flatten_sprite'],
 				copying: ['copy_set', 'copy_sprite', 'copy_animation', 'copy_frames', 'copy_layer'],
-				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'import_image'],
+				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'ramp', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
-				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'contact_sheet', 'palette', 'color', 'ramp', 'background', 'silhouette', 'zoom', 'raw', 'help'],
+				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'contact_sheet', 'palette', 'color', 'background', 'silhouette', 'zoom', 'raw', 'help'],
 				history: ['undo', 'redo', 'history', 'batch'],
 				storage: ['flush', 'reset']
 			},

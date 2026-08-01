@@ -95,6 +95,18 @@ export const loops = (period: number, speed: number, frames: number): boolean =>
 	(frames * Math.abs(Math.round(speed))) % period === 0;
 
 /**
+ * Whether scrolling at `speed` actually *moves* art that repeats every `period`.
+ *
+ * A step that is a whole number of repeats lands every frame on pixels identical to frame 0, so the
+ * layer is perfectly still — and `loops` says yes, because a scroll that never moves trivially ends
+ * where it began. That combination is the one failure `scroll_layer` cannot let through quietly: it
+ * is invisible in a still, invisible in the return value, and reads on playback as a layer someone
+ * forgot to animate.
+ */
+export const moves = (period: number, speed: number): boolean =>
+	Math.abs(Math.round(speed)) % period !== 0;
+
+/**
  * The smallest speed that loops over `frames`. Every speed that works is a multiple of this, so it
  * is both the answer to "what should I have used?" and the spacing of every other valid answer.
  */

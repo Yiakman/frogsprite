@@ -30,6 +30,24 @@ Anywhere a colour is accepted you may pass an index (`0`–`255`), a hex string 
 which snaps to the nearest palette entry, or `null` / `'transparent'`. `frogsprite.color('#22aa33')`
 returns the index a hex string resolves to.
 
+**Nearest is measured across all 256 entries at once, greys included** — not per channel, and not
+within the cube. So a muted colour can land on a flat grey that is nowhere near the hue you asked
+for, because the grey ramp is 39 steps fine where the cube is 6 steps coarse:
+
+```js
+frogsprite.color('#4a4a66');   // → 229, which is #535353 — grey, not the blue-purple you drew
+frogsprite.color('#333366');   // → 45, an exact cube corner, and exactly what you asked for
+```
+
+Two consequences worth taking on faith rather than rediscovering:
+
+- **Pick colours that are already cube coordinates** (channels from `00 33 66 99 cc ff`) whenever the
+  hue matters. Then there is nothing to round and nothing to be surprised by.
+- **Never `ramp()` between two different hue families.** Interpolation is linear in RGB, so a
+  navy→peach sky necessarily passes through a point where all three channels are equal — that is
+  grey by definition, and the middle of your gradient snaps to it. Ramp within one hue and butt the
+  segments together, rather than asking for one ramp across the whole sky.
+
 ## Commands
 
 Every call throws a descriptive `Error` on bad input, and state is saved to `localStorage` after each
@@ -89,6 +107,18 @@ palette *indices*, so there is nothing meaningful to average between index 3 and
 - `scroll_layer(name, { speed, animation, wrap, seamless })` — scroll one layer across an animation,
   `speed` px per frame and signed. Writes the offsets into every frame for you, and **refuses a
   scroll that would not loop** (see below)
+- `cycle_layers(names, { animation, every, sprite, seamless })` — show one of a ring of layers per
+  frame: a pedal stroke, a walk cycle, a flame. The pose counterpart to `scroll_layer`, and the other
+  half of what an animation needs — reach for it instead of hand-writing an `i % n` of `hidden`
+  overrides. Every listed layer is set explicitly on every frame, shown when its turn comes and
+  hidden otherwise, so re-running it in a different order never leaves a stale pose visible; layers
+  you do not list are untouched. `every` holds each pose for that many frames. It **refuses a ring
+  that would not close**, for the same reason `scroll_layer` does — land mid-cycle and the loop cuts
+  back with the legs in the wrong place
+  ```js
+  frogsprite.cycle_layers(['pose-0', 'pose-1', 'pose-2', 'pose-3']);   // one per frame, round and round
+  frogsprite.cycle_layers(['step-a', 'step-b'], { every: 4 });         // held four frames each
+  ```
 - `flatten_sprite(sprite?)` — collapse the stack into a single `layer-0`, as it looks composited.
   Hidden layers are dropped rather than merged. This is the way back to a plain sprite
 
@@ -161,6 +191,26 @@ frogsprite.tile_layer('fuji', { period: 32 });                  // now it repeat
 frogsprite.scroll_layer('fuji', { speed: -2 });                 // 16 x 2 = 32 — accepted
 ```
 
+**There is a second trap at the other end of the same arithmetic, and it is the one that ships.** A
+step that is a *whole number of repeats* also loops perfectly — it just never moves. Art tiling every
+16px scrolled at 16px a frame lands every frame on pixels identical to frame 0, so the layer sits
+perfectly still while every check says yes:
+
+```js
+frogsprite.tile_layer('road', { period: 16 });
+frogsprite.scroll_layer('road', { speed: -16 });   // loops flawlessly. also completely motionless
+```
+
+This is nastier than a jump, because a jump at least *looks* wrong. A frozen layer looks like a layer
+you forgot to animate, and no single frame, no return value and no contact sheet shows it — only
+diffing two frames does. `scroll_layer` now refuses it by name, so you will get a real error rather
+than a still road; `{ seamless: false }` allows it if you actually meant it.
+
+The rule that avoids both traps: **the per-frame step must be a fraction of the repeat, and the whole
+journey a whole number of them.** A layer wants its own tile to be several steps wide — `period: 64`
+at `speed: -16` is four states and reads as motion; the same `-16` against a 16px tile is one state
+and reads as a bug.
+
 Doing that by hand is where this goes wrong: a motif that overruns its period by two pixels has no
 counterpart at the far edge, so the layer's true repeat silently becomes the whole grid and a legal
 speed turns into a refused one for reasons nothing on screen explains. `tile_layer` returns the
@@ -173,7 +223,7 @@ An arrangement also takes **the same geometry and colour keys `fx` does** — `i
 `rotate`, `flipX`, `flipY` — applied to that layer alone:
 
 ```js
-layers: { spokes: { rotate: 15 * i }, fg: { dx: -48 * i, wrap: true, hue: 'blue' } }
+layers: { spokes: { rotate: 30 * i }, fg: { dx: -6 * i, wrap: true, hue: 'blue' } }
 ```
 
 A spinning wheel is one layer plus a `rotate` per frame, rather than a drawn pose per frame — but
@@ -181,8 +231,20 @@ give it `cx`/`cy`, or it turns about the **grid** centre and swings across the c
 turning in place:
 
 ```js
-layers: { wheel: { rotate: 45 * i, cx: 48, cy: 96 } }   // on its own hub
+layers: { wheel: { rotate: 30 * i, cx: 48, cy: 96 } }   // on its own hub
 ```
+
+Two things this shares with `rotate()` itself, and one it does not. It takes **multiples of 30 only**
+— an arrangement is validated exactly as `fx` is, so a `rotate: 45` is *dropped on the way in* and you
+get a wheel that never turns rather than an error. And `cx`/`cy` are one centre, so a bicycle needs
+one layer per hub.
+
+What it does **not** share is a guard. `scroll_layer` and `cycle_layers` both refuse a loop that would
+not close; a per-frame `rotate` has the identical failure — land mid-turn and the last frame snaps
+back — and nothing checks it, because nothing here knows what your art's rotational symmetry is. Do
+that arithmetic yourself: `frames · degrees` must be a whole number of turns of the **motif**, so
+three evenly spaced spokes repeat every 120°, and 16 frames × 30° = 480° = four repeats. Even spacing
+is what makes the symmetry real — draw the spokes by hand and 120° is a lie the loop will expose.
 
 Colour and geometry are applied first and the position second, which is `fx`'s own order — except
 that the displacement goes through `stamp`, so unlike a whole-frame `fx.dx` it can `wrap`.
@@ -315,6 +377,17 @@ All painting commands take an optional trailing `sprite` name and default to the
   the opposite side — which is what makes a tile scroll for ever. Both sprites are in the active set.
   **It bakes** — see [Stamping vs. arranging](#stamping-vs-arranging) before you build a scene with it
 - `clear(color?)` — fill the sprite (default transparent)
+- `ramp(from, to, steps = 8)` — palette indices blending evenly between two colours, ends included.
+  Writes a shading ramp or a band of sky without snapping hexes by hand:
+  ```js
+  frogsprite.ramp('#000033', '#3399cc', 10).forEach((c, y) => frogsprite.paint_row(y, c));
+  ```
+  Two limits, both from the palette rather than from `ramp`. Steps can repeat an index — six levels
+  per channel means 20 steps between close colours cannot give 20 distinct ones. And the blend is
+  linear in RGB, so it is only trustworthy **within one hue family and over a short span**: ramp from
+  navy to peach and the middle of it turns grey (see [Colours](#colours)), while a 90-row sky in one
+  call bands unevenly even when it doesn't. For a whole sky, butt a few short same-hue ramps or
+  hand-picked cube colours together, band by band.
 
 #### Shapes
 
@@ -631,6 +704,21 @@ cannot. In the UI: **Project → Save all… / Load…**, or drop a `.json` / `.
   name a layer. `opts` is `{ layer, set, pkg, rect }`, or a bare string for the layer
 - `print_sprite(sprite?, opts?)` — the same as ASCII rows plus a legend; easiest to eyeball. Also
   takes `{ legend }`, in `paint_map`'s shape
+- `read_frame(i?, { rect, animation })` / `print_frame(i?, { rect, animation, legend })` — the same
+  two reads, but of **a frame as the timeline draws it**: `fx`, trails, transitions and the frame's
+  per-layer arrangement all applied. `i` defaults to the frame being held, so `view_frame(3)` then
+  `print_frame()` reads what is on screen
+
+**`print_sprite` cannot see a frame, and this is the mistake to get out of the way early.** A
+parallax scene is *one* sprite, and every `dx` and `hidden` that makes frame 4 differ from frame 3
+lives on the animation, not on the sprite — so printing the sprite at two frames returns
+byte-identical output and it looks as though nothing you wrote applied. Reach for `print_frame` the
+moment you are checking an animation rather than the art:
+
+```js
+frogsprite.print_sprite('scene');        // the stack as stored — no offsets, no pose toggles
+frogsprite.print_frame(4);               // …what frame 4 actually looks like
+```
 
 `rect: [x0, y0, x1, y1]` reads back one window. At 128 a full dump is 128 lines of 128 characters,
 which nobody reads — the thing you are checking is a 40×35 rider:
@@ -663,11 +751,9 @@ than its contents.
 const set = frogsprite.export_json({ set: 'scene' });
 set.sprites[0].layers[0].pixels;   // a plain array, grid * grid long
 ```
+- `help()` — the command list, grouped, straight from the running build. Worth a call at the start of
+  a session: if it names something this document does not, the build is ahead of the manual
 - `palette()` — all 256 colours
-- `ramp(from, to, steps = 8)` — palette indices blending evenly between two colours, ends included.
-  Writes a sky gradient or a shading ramp without snapping hexes by hand:
-  `ramp('#000033', '#ffcc99', 10).forEach((c, y) => paint_row(y, c))`. Steps can repeat an index —
-  six levels per channel means 20 steps between close colours cannot give 20 distinct ones
 
 #### Reviewing what you drew
 

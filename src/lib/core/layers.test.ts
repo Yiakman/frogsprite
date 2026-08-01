@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BASE, cycles, flatten, frameStep, layerOf, loops, newLayer, period, poseAt, scrollStep } from './layers.ts';
+import { BASE, cycles, flatten, frameStep, layerOf, loops, moves, newLayer, period, poseAt, scrollStep } from './layers.ts';
 import type { Sprite } from './types.ts';
 
 const sprite = (...layers: [string, number[], boolean?][]): Sprite => ({
@@ -144,6 +144,18 @@ test('loops is the whole-number-of-repeats test', () => {
 	assert.equal(loops(64, 5, 16), false, '80px is a repeat and a quarter — it jumps');
 	assert.equal(loops(64, 8, 16), true, '128px = two repeats');
 	assert.equal(loops(64, -4, 16), true, 'direction does not change whether it lands');
+});
+
+test('moves catches the still layer that loops says is fine', () => {
+	// the trap: art tiled every 16px scrolled 16px a frame is a whole repeat per frame, so every
+	// frame draws pixels identical to frame 0 — motionless, while loops happily says yes
+	assert.equal(loops(16, 16, 16), true, 'loops cannot see this');
+	assert.equal(moves(16, 16), false, 'but it never moves');
+	assert.equal(moves(16, 32), false, 'two whole repeats a frame is just as still');
+	assert.equal(moves(16, 0), false, 'and nor does standing still');
+	assert.equal(moves(16, 4), true, 'a quarter of a repeat does move');
+	assert.equal(moves(16, -4), true, 'direction does not change whether it moves');
+	assert.equal(moves(64, 16), true, 'the same 16px step against a bigger tile is fine');
 });
 
 test('scrollStep is the smallest speed that lands, and spaces every other one', () => {
