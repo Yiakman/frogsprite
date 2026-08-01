@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BASE, flatten, layerOf, newLayer } from './layers.ts';
+import { BASE, flatten, layerOf, loops, newLayer, period, scrollStep } from './layers.ts';
 import type { Sprite } from './types.ts';
 
 const sprite = (...layers: [string, number[], boolean?][]): Sprite => ({
@@ -118,4 +118,43 @@ test('an arrangement naming a layer that is not there is simply ignored', () => 
 	// arrangements are meant to be reused across sprites whose stacks differ
 	const s = sprite(['back', [1, 2, 3, 4]]);
 	assert.deepEqual(Array.from(flatten(s, 2, { ghost: { dx: 1 } })), [1, 2, 3, 4]);
+});
+
+// --- scroll looping -----------------------------------------------------------
+
+test('period finds the smallest horizontal repeat', () => {
+	// 4 wide, repeating every 2
+	const s = sprite(['t', [1, 2, 1, 2, 3, 4, 3, 4, 1, 2, 1, 2, 3, 4, 3, 4]]);
+	assert.equal(period(s.layers[0].pixels, 4), 2);
+});
+
+test('art with no repeat counts as one repeat per screen', () => {
+	const s = sprite(['t', [1, 2, 3, 4]]);
+	assert.equal(period(s.layers[0].pixels, 2), 2, 'the grid itself');
+});
+
+test('an empty layer repeats every pixel, and so always loops', () => {
+	const s = sprite(['t', [0, 0, 0, 0]]);
+	assert.equal(period(s.layers[0].pixels, 2), 1);
+	assert.equal(loops(1, 7, 3), true, 'nothing to jump');
+});
+
+test('loops is the whole-number-of-repeats test', () => {
+	assert.equal(loops(64, 4, 16), true, '16 frames x 4px = 64px = one repeat');
+	assert.equal(loops(64, 5, 16), false, '80px is a repeat and a quarter — it jumps');
+	assert.equal(loops(64, 8, 16), true, '128px = two repeats');
+	assert.equal(loops(64, -4, 16), true, 'direction does not change whether it lands');
+});
+
+test('scrollStep is the smallest speed that lands, and spaces every other one', () => {
+	// the case from the parallax report: 64px tile over 16 frames
+	const step = scrollStep(64, 16);
+	assert.equal(step, 4);
+	for (const k of [1, 2, 3, 7]) assert.equal(loops(64, k * step, 16), true, `${k}x step must loop`);
+	assert.equal(loops(64, step - 1, 16), false, 'and one less must not');
+});
+
+test('a period that already divides the frame count needs only one pixel a frame', () => {
+	assert.equal(scrollStep(16, 16), 1);
+	assert.equal(loops(16, 1, 16), true);
 });

@@ -5,7 +5,7 @@ import * as history from '../core/history.ts';
 import * as storage from '../io/storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
 import { blank, GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, upscale, type GridSize, type Side } from '../core/grid.ts';
-import { BASE, flatten, layerOf, newLayer } from '../core/layers.ts';
+import { BASE, flatten, layerOf, loops, newLayer, period, scrollStep } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
 import type { Point } from '../core/shapes.ts';
@@ -619,6 +619,49 @@ const api = {
 	}),
 
 	/**
+	 * Scroll one layer across an animation — parallax without doing the modular arithmetic yourself.
+	 *
+	 *   scroll_layer('fuji', { speed: -2 })     // far away, drifts
+	 *   scroll_layer('road', { speed: -16 })    // underfoot, races
+	 *
+	 * Writes `dx: speed * i` into every frame, leaving other layers' arrangements alone. `speed` is
+	 * px per frame and signed: negative scrolls left, which is what a rider moving right sees.
+	 *
+	 * **It refuses a scroll that would not loop.** A layer moving `s` px over `n` frames travels
+	 * `n·s`, and unless that is a whole number of the art's own repeats the last frame cuts back to
+	 * the first mid-tile and the scene visibly jumps. That is invisible in any one frame and glaring
+	 * the moment it plays, so it is an error with the speeds that *do* work, rather than a surprise.
+	 * `{ seamless: false }` allows it anyway.
+	 *
+	 * The repeat is measured from the pixels, so it costs nothing to be right: art that tiles every
+	 * 32px is detected as 32, and art with no repeat counts as one repeat per screen.
+	 */
+	scroll_layer: mut(function (layer: string, { speed, animation, sprite, wrap = true, seamless = true }: { speed: number; animation?: string; sprite?: string; wrap?: boolean; seamless?: boolean }) {
+		if (!Number.isFinite(speed)) throw new Error('scroll_layer needs a numeric speed in px per frame');
+		const anim = animOf(animation);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames to scroll`);
+		const t = target(sprite);
+		const l = layerOf(t.sprite, layer);
+		const n = anim.frames.length;
+		const p = period(l.pixels, t.grid);
+		const ok = loops(p, speed, n);
+		if (!ok && seamless) {
+			const step = scrollStep(p, n);
+			throw new Error(
+				`"${layer}" repeats every ${p}px and would travel ${n * Math.abs(speed)}px over ${n} frames, ` +
+					`which is not a whole number of repeats — the loop would jump. ` +
+					`Speeds that work here are multiples of ${step} (${[1, 2, 3].map((k) => (speed < 0 ? -k * step : k * step)).join(', ')}…), ` +
+					`or pass { seamless: false } to allow the jump.`
+			);
+		}
+		anim.frames = anim.frames.map((f, i) =>
+			patchEffects(f, { layers: { [layer]: { dx: Math.round(speed) * i, wrap } } })
+		);
+		editor.stop();
+		return { animation: anim.name, layer, speed, frames: n, repeatsEvery: p, seamless: ok };
+	}),
+
+	/**
 	 * Collapse a sprite's layers into one, as they look composited — the way back to simple sprite
 	 * mode, and the escape hatch for anything downstream that would rather not think about layers.
 	 * Hidden layers are dropped, not merged: they are hidden.
@@ -1045,7 +1088,7 @@ const api = {
 			],
 			groups: {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select', 'delete_sprite', 'delete_set', 'delete_package'],
-				layers: ['new_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'flatten_sprite'],
+				layers: ['new_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'scroll_layer', 'flatten_sprite'],
 				copying: ['copy_set', 'copy_sprite', 'copy_animation', 'copy_frames', 'copy_layer'],
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),

@@ -81,6 +81,9 @@ palette *indices*, so there is nothing meaningful to average between index 3 and
   composited, not erased
 - `set_layers([...])` — reorder, and show/hide several at once, bottom first. Every existing layer
   must appear exactly once: this rearranges the stack, it never destroys part of it
+- `scroll_layer(name, { speed, animation, wrap, seamless })` — scroll one layer across an animation,
+  `speed` px per frame and signed. Writes the offsets into every frame for you, and **refuses a
+  scroll that would not loop** (see below)
 - `flatten_sprite(sprite?)` — collapse the stack into a single `layer-0`, as it looks composited.
   Hidden layers are dropped rather than merged. This is the way back to a plain sprite
 
@@ -118,10 +121,31 @@ frogsprite.set_animation(
 A layer the arrangement does not name is drawn exactly as it is — so the moon, on its own layer with
 no entry, simply never moves. `{ fuji: -4 }` is shorthand for `{ fuji: { dx: -4 } }`.
 
-`wrap` matters: without it whatever slides past an edge is dropped and you get a gap. With it the
-layer scrolls round for ever, which only looks seamless if the art tiles — a layer moving `s` px per
-frame over `N` frames returns to its start when `N·s` is a multiple of the tile width, so a *slow*
-far layer needs a *small* tile or a lot of frames.
+`wrap` matters: without it whatever slides past an edge is dropped and you get a gap.
+
+**Use `scroll_layer` rather than writing the offsets by hand**, because the arithmetic is easy to get
+wrong in a way you cannot see:
+
+```js
+frogsprite.scroll_layer('fuji', { speed: -2 });    // far away, drifts
+frogsprite.scroll_layer('trees', { speed: -8 });
+frogsprite.scroll_layer('road', { speed: -16 });   // underfoot, races
+```
+
+A layer moving `s` px per frame over `N` frames travels `N·s`. Unless that is a whole number of the
+art's own repeats, the last frame cuts back to the first mid-tile and the scene **jumps** — invisible
+in any single frame, glaring the moment it plays. `scroll_layer` measures the repeat straight from
+the pixels and refuses, telling you which speeds do work:
+
+```
+"fuji" repeats every 64px and would travel 80px over 16 frames, which is not a whole number of
+repeats — the loop would jump. Speeds that work here are multiples of 4 (-4, -8, -12…), or pass
+{ seamless: false } to allow the jump.
+```
+
+The trap that catches people is the other direction: a *slow* far layer needs a *small* repeat. Fuji
+at 2px over 16 frames covers 32px, so its art has to tile every 32 or 16 — draw one lone mountain
+128px wide and no slow speed will ever loop. Either tile the art, add frames, or accept the jump.
 
 `hidden` is a third override, and it beats the layer's own setting in both directions: a frame can
 show a layer the sprite hides, or hide one it shows. That is how one sprite carries two arm poses.

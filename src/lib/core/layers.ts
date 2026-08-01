@@ -8,7 +8,7 @@
 // Layers are non-destructive editing *within* one sprite: an outline you can redraw without
 // touching the fill underneath. They are deliberately not per-frame — a `Frame` names a sprite, not
 // a layer set (see types.ts), so "same body, different arm per frame" is still separate sprites.
-import { blank, stamp, type GridSize } from './grid.ts';
+import { blank, stamp, type GridSize, type Pixels } from './grid.ts';
 import type { Arrangement, Layer, Sprite } from './types.ts';
 
 /** What a sprite's first layer is called, and what every pre-layers sprite migrates into. */
@@ -42,6 +42,49 @@ export function flatten(sprite: Sprite, grid: number, view?: Arrangement): Uint8
 	}
 	return out;
 }
+
+// --- scrolling ---------------------------------------------------------------
+// A layer scrolled `s` px per frame over `n` frames has moved `n·s` px by the time the animation
+// loops. That only looks seamless if it lands on a whole number of the art's own repeats — otherwise
+// the last frame cuts back to the first mid-tile and the whole scene visibly jumps. Getting it wrong
+// is invisible in any single frame and obvious the moment it plays, which is the worst way for a
+// mistake to behave, so the arithmetic lives here rather than in the author's head.
+
+const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+
+/**
+ * The smallest horizontal repeat in a buffer: the least `p` where sliding the whole thing `p` px
+ * round leaves it identical. Art with no repeat comes back as `grid`, which is the honest answer —
+ * it repeats once per screen.
+ *
+ * Only divisors of `grid` can qualify (if a shift of `p` maps the buffer onto itself then so does
+ * `gcd(p, grid)`), so this tries a handful of candidates rather than every offset.
+ */
+export function period(pixels: Pixels, grid: number): number {
+	for (let p = 1; p < grid; p++) {
+		if (grid % p) continue;
+		let same = true;
+		for (let y = 0; y < grid && same; y++)
+			for (let x = 0; x < grid; x++)
+				if (pixels[y * grid + x] !== pixels[y * grid + ((x + p) % grid)]) {
+					same = false;
+					break;
+				}
+		if (same) return p;
+	}
+	return grid;
+}
+
+/** Whether `frames` of scrolling at `speed` lands back on a whole number of repeats. */
+export const loops = (period: number, speed: number, frames: number): boolean =>
+	(frames * Math.abs(Math.round(speed))) % period === 0;
+
+/**
+ * The smallest speed that loops over `frames`. Every speed that works is a multiple of this, so it
+ * is both the answer to "what should I have used?" and the spacing of every other valid answer.
+ */
+export const scrollStep = (period: number, frames: number): number =>
+	period / gcd(frames % period || period, period);
 
 /** A layer by name, or the sprite's top one. Throws with the stack, since the name is user input. */
 export function layerOf(sprite: Sprite, name?: string): Layer {
