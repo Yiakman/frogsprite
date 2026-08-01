@@ -111,6 +111,7 @@
 			class:live
 			class:composed={showingComposite}
 			style:--n={grid}
+			style:--zoom={editor.zoom}
 			style:background={backdrop}
 			role="img"
 			aria-label="{grid} by {grid} pixel canvas showing {sprite.name}"
@@ -187,6 +188,8 @@
 		gap: 0.75rem;
 		padding: 1rem;
 		border: 2px dashed transparent;
+		/* a zoomed canvas is meant to outgrow the pane — that is the point of zooming */
+		overflow: auto;
 	}
 	.stage.dropping {
 		border-color: #7cf;
@@ -201,7 +204,8 @@
 			#232323 270deg
 		);
 		position: relative;
-		width: min(64vh, 100%);
+		width: calc(min(64vh, 100%) * var(--zoom, 1));
+		flex: none;
 		aspect-ratio: 1;
 		border: 1px solid #444;
 		background-size: calc(200% / var(--n)) calc(200% / var(--n));

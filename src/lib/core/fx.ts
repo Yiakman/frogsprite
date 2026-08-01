@@ -5,7 +5,10 @@
 // whole reason a set can hold more than one animation. Everything here is therefore applied on the
 // way out: to the canvas, to the timeline thumbnails, and to an exported SVG, all through the same
 // `compose()`.
-import { flip, rotate, shift, STEP, type Pixels } from './grid.ts';
+import { applyFx, STEP } from './grid.ts';
+// re-exported: applyFx moved to grid.ts so layers.ts can reach it without importing this module,
+// which already imports layers.ts. Every existing caller keeps working.
+export { applyFx };
 import { flatten } from './layers.ts';
 import { darken, invert, tint, TRANSPARENT, HUES, type Hue } from './palette.ts';
 import type { Arrangement, Frame, LayerView, Sprite } from './types.ts';
@@ -65,18 +68,6 @@ export const progress = (i: number, n: number): number => (i + 1) / n;
 /** Deterministic dissolve order — the same on screen and in an export, with no RNG state to carry. */
 const hash = (i: number): number => ((i * 2654435761) >>> 0) / 4294967296;
 
-/** A copy of `pixels` with `fx` applied. The source buffer is never touched. */
-export function applyFx(pixels: Pixels, grid: number, fx?: Fx): Uint8Array {
-	const out = new Uint8Array(pixels);
-	if (!fx) return out;
-	if (fx.invert) for (let i = 0; i < out.length; i++) out[i] = invert(out[i]);
-	if (fx.hue) for (let i = 0; i < out.length; i++) out[i] = tint(out[i], fx.hue);
-	if (fx.flipX) flip(out, grid, 'x');
-	if (fx.flipY) flip(out, grid, 'y');
-	if (fx.rotate) rotate(out, grid, fx.rotate);
-	if (fx.dx || fx.dy) shift(out, grid, fx.dx ?? 0, fx.dy ?? 0);
-	return out;
-}
 
 /**
  * Frame `i` of an animation, `t` of the way through it — the one renderer. `t` only matters to a
@@ -225,6 +216,14 @@ export function readArrangement(v: any): Arrangement | undefined {
 		if (dx) view.dx = dx;
 		if (dy) view.dy = dy;
 		if (spec.wrap === true) view.wrap = true;
+		// the fx keys go through readFx, so a layer effect survives a reload on exactly the same terms
+		// a frame effect does — and a bad rotate is dropped here rather than at every redraw
+		const fx = readFx(spec);
+		if (fx?.invert) view.invert = true;
+		if (fx?.hue) view.hue = fx.hue;
+		if (fx?.rotate) view.rotate = fx.rotate;
+		if (fx?.flipX) view.flipX = true;
+		if (fx?.flipY) view.flipY = true;
 		// tri-state on purpose: absent leaves the layer's own `hidden` alone, where `false` overrides
 		// it to show a layer the sprite hides. `!!spec.hidden` would collapse those two.
 		if (typeof spec.hidden === 'boolean') view.hidden = spec.hidden;

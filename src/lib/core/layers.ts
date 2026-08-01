@@ -8,7 +8,7 @@
 // Layers are non-destructive editing *within* one sprite: an outline you can redraw without
 // touching the fill underneath. They are deliberately not per-frame — a `Frame` names a sprite, not
 // a layer set (see types.ts), so "same body, different arm per frame" is still separate sprites.
-import { blank, stamp, type GridSize, type Pixels } from './grid.ts';
+import { applyFx, blank, stamp, type GridSize, type Pixels } from './grid.ts';
 import type { Arrangement, Layer, Sprite } from './types.ts';
 
 /** What a sprite's first layer is called, and what every pre-layers sprite migrates into. */
@@ -36,9 +36,22 @@ export function flatten(sprite: Sprite, grid: number, view?: Arrangement): Uint8
 		const v = view?.[layer.name];
 		// the frame's word beats the layer's own, so one frame can show a layer the sprite hides
 		if (v?.hidden ?? layer.hidden) continue;
+		// Colour and geometry first, position second. That is fx's own order (invert -> hue -> flip ->
+		// rotate -> displace), with the displace handed to `stamp` instead so it can wrap — which
+		// `shift`, and therefore a whole-frame `fx.dx`, cannot do.
+		const px =
+			v && (v.invert || v.hue || v.rotate || v.flipX || v.flipY)
+				? applyFx(layer.pixels, grid, {
+						invert: v.invert,
+						hue: v.hue,
+						rotate: v.rotate,
+						flipX: v.flipX,
+						flipY: v.flipY
+					})
+				: layer.pixels;
 		// same blit as `stamp`, because it is the same operation: paint a buffer into another at an
 		// offset, transparent pixels leaving what is underneath alone
-		stamp(out, layer.pixels, grid, v?.dx ?? 0, v?.dy ?? 0, v?.wrap ?? false);
+		stamp(out, px, grid, v?.dx ?? 0, v?.dy ?? 0, v?.wrap ?? false);
 	}
 	return out;
 }
@@ -85,6 +98,16 @@ export const loops = (period: number, speed: number, frames: number): boolean =>
  */
 export const scrollStep = (period: number, frames: number): number =>
 	period / gcd(frames % period || period, period);
+
+/**
+ * The other way out of a scroll that will not loop: keep the speed and change the frame count. Every
+ * count that works is a multiple of this. Author-facing, because "slow down" and "add frames" are
+ * genuinely different decisions and only one of them changes how the motion reads.
+ */
+export const frameStep = (period: number, speed: number): number => {
+	const s = Math.abs(Math.round(speed)) % period;
+	return s ? period / gcd(s, period) : 1;
+};
 
 /** A layer by name, or the sprite's top one. Throws with the stack, since the name is user input. */
 export function layerOf(sprite: Sprite, name?: string): Layer {

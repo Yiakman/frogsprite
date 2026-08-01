@@ -19,6 +19,12 @@ class Editor {
 	/** Show every painted pixel as this index instead of its own colour. 0 is off. Also a view setting. */
 	silhouette = $state(0);
 	/**
+	 * Canvas magnification, 1 = fit the pane. A view setting like the two above: not persisted, and
+	 * exports never see it. At 128 a fitted canvas is a few hundred CSS pixels, which is fine for
+	 * composition and hopeless for a two-pixel detail.
+	 */
+	zoom = $state(1);
+	/**
 	 * Draw the sprite as it is stored, ignoring the frame's effects — the thing an edit would land
 	 * on, rather than what the animation makes of it. A view setting: nothing is painted or saved.
 	 *
@@ -268,9 +274,11 @@ class Editor {
 					grid: s.grid,
 					// objects, not bare names: this is the only place an agent can discover that a
 					// sprite has layers at all, and a one-layer sprite says so plainly
+					// `{ name, hidden }`, not "name (hidden)": this is read by agents, and parsing a flag
+					// out of a display suffix is unpleasant. It is also the shape set_layers accepts.
 					sprites: s.sprites.map((sp) => ({
 						name: sp.name,
-						layers: sp.layers.map((l) => (l.hidden ? `${l.name} (hidden)` : l.name))
+						layers: sp.layers.map((l) => ({ name: l.name, hidden: !!l.hidden }))
 					})),
 					animations: s.animations.map((a) => ({
 						name: a.name,

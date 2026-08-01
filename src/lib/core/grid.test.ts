@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { GRIDS, SIDES, reflect, rotate, shift, stamp, upscale } from './grid.ts';
+import { GRIDS, SIDES, reflect, rotate, shift, stamp, tile, upscale } from './grid.ts';
 
 /** 4x4 grid from rows of digits, for readable expectations. */
 const grid4 = (...rows: string[]) => rows.flatMap((r) => [...r].map(Number));
@@ -246,4 +246,39 @@ test('a wrapped shift keeps every painted cell, which is what scrolls a tile', (
 	const before = px.filter((v) => v).length;
 	shift(px, 4, 3, 1, true);
 	assert.equal(px.filter((v) => v).length, before, 'nothing lost going round');
+});
+
+test('tile repeats the leftmost columns across the grid', () => {
+	// 4 wide, period 2: columns [1,2] become [1,2,1,2] on every row
+	const px = Uint8Array.from([1, 2, 9, 9, 3, 4, 9, 9, 5, 6, 9, 9, 7, 8, 9, 9]);
+	assert.equal(tile(px, 4, 2), 2, 'two copies across');
+	assert.deepEqual(Array.from(px), [1, 2, 1, 2, 3, 4, 3, 4, 5, 6, 5, 6, 7, 8, 7, 8]);
+});
+
+test('tile makes the period real, which is what scroll_layer measures', () => {
+	const px = Uint8Array.from({ length: 64 }, (_, i) => (i % 8 < 3 ? 7 : 0));
+	// deliberately break the tiling, then repair it
+	px[5] = 4;
+	tile(px, 8, 4);
+	for (let y = 0; y < 8; y++)
+		for (let x = 0; x < 4; x++)
+			assert.equal(px[y * 8 + x], px[y * 8 + x + 4], `(${x},${y}) must match its repeat`);
+});
+
+test('tile reads the motif before writing, so it cannot copy its own output', () => {
+	const px = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7]);
+	tile(px, 4, 1); // one column, smeared across
+	for (let y = 0; y < 4; y++)
+		for (let x = 0; x < 4; x++) assert.equal(px[y * 4 + x], px[y * 4], 'every column is column 0');
+});
+
+test('tile refuses a period that does not divide the grid', () => {
+	assert.throws(() => tile(new Uint8Array(64), 8, 3), /does not divide.*1, 2, 4, 8/s);
+	assert.throws(() => tile(new Uint8Array(64), 8, 0), /does not divide/);
+});
+
+test('tile from an offset window', () => {
+	const px = Uint8Array.from([9, 1, 2, 9, 9, 3, 4, 9, 9, 5, 6, 9, 9, 7, 8, 9]);
+	tile(px, 4, 2, 1); // take columns 1..2
+	assert.deepEqual(Array.from(px).slice(0, 4), [1, 2, 1, 2]);
 });

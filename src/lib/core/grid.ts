@@ -1,7 +1,8 @@
 // Deliberately a plain module, not part of store.svelte.ts: storage.ts needs this list at runtime,
 // and importing a value from a runes module would drag `$state` into plain-JS consumers like
 // `node --test`. Types are erased at compile time, so only real values matter here.
-import { TRANSPARENT } from './palette.ts';
+import { invert, tint, TRANSPARENT } from './palette.ts';
+import type { Fx } from './fx.ts';
 
 export type GridSize = 8 | 16 | 32 | 64 | 128;
 
@@ -16,6 +17,58 @@ export const GRIDS: GridSize[] = [8, 16, 32, 64, 128];
 
 /** A zeroed buffer — zero is TRANSPARENT, so there is nothing to fill. */
 export const blank = (grid: GridSize): Uint8Array => new Uint8Array(grid * grid);
+
+/**
+ * Repeat the columns `[from, from + period)` across the whole width, replacing what is there.
+ *
+ * This is what makes a scrolling layer's repeat a *guarantee* rather than a hope. `scroll_layer`
+ * only accepts speeds that divide into the art's measured repeat, so authoring that repeat exactly
+ * is the critical step — and doing it by hand fails silently, because a motif that overruns its
+ * period by two pixels has no counterpart at the far edge and quietly doubles the true repeat.
+ *
+ * `period` must divide the grid: anything else leaves a partial tile at the right-hand edge, which
+ * is a seam by construction and would make the layer's repeat the whole grid again.
+ */
+export function tile(pixels: Pixels, grid: number, period: number, from = 0): number {
+	const p = Math.trunc(period);
+	if (!(p >= 1) || grid % p)
+		throw new Error(
+			`a period of ${period} does not divide a ${grid}px grid — use one of ` +
+				`${Array.from({ length: grid }, (_, i) => i + 1).filter((n) => grid % n === 0).join(', ')}`
+		);
+	const start = ((Math.trunc(from) % grid) + grid) % grid;
+	// read the motif out first: writing straight across would copy cells this loop has just replaced
+	const motif = new Uint8Array(p * grid);
+	for (let y = 0; y < grid; y++)
+		for (let x = 0; x < p; x++) motif[y * p + x] = pixels[y * grid + ((start + x) % grid)];
+	let copies = 0;
+	for (let ox = 0; ox < grid; ox += p) {
+		for (let y = 0; y < grid; y++)
+			for (let x = 0; x < p; x++) pixels[y * grid + ox + x] = motif[y * p + x];
+		copies++;
+	}
+	return copies;
+}
+
+/**
+ * A copy of `pixels` with `fx` applied, in a fixed order: invert → hue → flip → rotate → displace.
+ * The source buffer is never touched.
+ *
+ * Lives here rather than in fx.ts because it is pure buffer geometry, and because both `compose`
+ * (whole frames) and `flatten` (single layers) need it — routing it through fx.ts would make
+ * layers.ts import a module that already imports layers.ts.
+ */
+export function applyFx(pixels: Pixels, grid: number, fx?: Fx): Uint8Array {
+	const out = new Uint8Array(pixels);
+	if (!fx) return out;
+	if (fx.invert) for (let i = 0; i < out.length; i++) out[i] = invert(out[i]);
+	if (fx.hue) for (let i = 0; i < out.length; i++) out[i] = tint(out[i], fx.hue);
+	if (fx.flipX) flip(out, grid, 'x');
+	if (fx.flipY) flip(out, grid, 'y');
+	if (fx.rotate) rotate(out, grid, fx.rotate);
+	if (fx.dx || fx.dy) shift(out, grid, fx.dx ?? 0, fx.dy ?? 0);
+	return out;
+}
 
 /**
  * Paint `src` into `dst` at an offset — the missing verb of *same picture, different position*.

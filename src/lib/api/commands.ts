@@ -1,11 +1,11 @@
-import { PALETTE, toIndex, TRANSPARENT } from '../core/palette.ts';
+import { PALETTE, ramp as rampOf, toIndex, TRANSPARENT } from '../core/palette.ts';
 import * as ex from '../io/export.ts';
 import { patchEffects, readArrangement, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
 import * as history from '../core/history.ts';
 import * as storage from '../io/storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
-import { blank, GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, upscale, type GridSize, type Side } from '../core/grid.ts';
-import { BASE, flatten, layerOf, loops, newLayer, period, scrollStep } from '../core/layers.ts';
+import { blank, GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
+import { BASE, flatten, frameStep, layerOf, loops, newLayer, period as periodOf, scrollStep } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
 import type { Point } from '../core/shapes.ts';
@@ -180,19 +180,37 @@ function source(set?: string, pkg?: string): SpriteSet {
  * across sets in a way painting is not, since nothing has to agree about grids. `layer` picks one
  * layer; without it you get the whole stack composited, which is what you are looking at.
  */
-function reading(sprite?: string, { layer, set, pkg }: { layer?: string; set?: string; pkg?: string } = {}) {
+type ReadOpts = { layer?: string; set?: string; pkg?: string; rect?: [number, number, number, number] };
+
+function reading(sprite?: string, { layer, set, pkg, rect }: ReadOpts = {}) {
+	let found: Sprite;
+	let grid: GridSize;
+	let pixels: Uint8Array;
 	if (!set && !pkg) {
 		const t = target(sprite, layer);
-		return { sprite: t.sprite, grid: t.grid, pixels: layer ? t.layer.pixels : seen(t) };
+		[found, grid, pixels] = [t.sprite, t.grid, layer ? t.layer.pixels : seen(t)];
+	} else {
+		const from = source(set, pkg);
+		const hit = sprite ? from.sprites.find((s) => s.name === sprite) : from.sprites[0];
+		if (!hit) throw new Error(`no sprite "${sprite}" in set "${from.name}"`);
+		[found, grid, pixels] = [hit, from.grid, layer ? layerOf(hit, layer).pixels : flatten(hit, from.grid)];
 	}
-	const from = source(set, pkg);
-	const found = sprite ? from.sprites.find((s) => s.name === sprite) : from.sprites[0];
-	if (!found) throw new Error(`no sprite "${sprite}" in set "${from.name}"`);
-	return {
-		sprite: found,
-		grid: from.grid,
-		pixels: layer ? layerOf(found, layer).pixels : flatten(found, from.grid)
-	};
+	// A window, because 128 lines of 128 characters is not something anyone reads — the thing you
+	// are checking is a 40x35 rider, and the rest is noise you have to scroll past to find it.
+	const [x0, y0, x1, y1] = rect ?? [0, 0, grid - 1, grid - 1];
+	for (const [v, n] of [[x0, 'x0'], [y0, 'y0'], [x1, 'x1'], [y1, 'y1']] as [number, string][])
+		if (!Number.isInteger(v) || v < 0 || v >= grid)
+			throw new Error(`rect ${n} is ${v}, outside 0..${grid - 1}`);
+	if (x1 < x0 || y1 < y0) throw new Error(`rect [${x0},${y0},${x1},${y1}] has no area`);
+	return { sprite: found, grid, pixels, box: [x0, y0, x1, y1] as const };
+}
+
+/** Rows of one window of a buffer, as plain arrays — what an agent reads back and JSON-prints. */
+function windowRows(t: { grid: number; pixels: Uint8Array; box: readonly [number, number, number, number] }) {
+	const [x0, y0, x1, y1] = t.box;
+	const rows: number[][] = [];
+	for (let y = y0; y <= y1; y++) rows.push(Array.from(t.pixels.subarray(y * t.grid + x0, y * t.grid + x1 + 1)));
+	return rows;
 }
 
 /** An animation in the active set, by name or the selected one. */
@@ -528,13 +546,22 @@ const api = {
 	// blend there can be is paint-over, where index 0 is the hole.
 
 	/** Add a layer above the active one and select it. Names itself `layer-1`, `layer-2`… if asked. */
-	new_layer: mut(function (name?: string) {
+	new_layer: mut(function (name?: string, { at, above, below }: { at?: 'top' | 'bottom'; above?: string; below?: string } = {}) {
 		const t = target();
 		const sprite = t.sprite;
-		const at = sprite.layers.findIndex((l) => l.name === t.layer.name);
 		const named = name ?? freeName(sprite.layers, `layer-${sprite.layers.length}`);
 		taken(sprite.layers, named, 'layer');
-		sprite.layers.splice(at + 1, 0, newLayer(named, t.grid));
+		// Placement is explicit or it is relative to the active layer — and the active layer is a
+		// cursor some earlier select_layer moved, which is exactly how a stack ends up in the wrong
+		// order with nothing on screen to explain it.
+		const index = (): number => {
+			if (at === 'top') return sprite.layers.length;
+			if (at === 'bottom') return 0;
+			if (above) return sprite.layers.findIndex((l) => l.name === layerOf(sprite, above).name) + 1;
+			if (below) return sprite.layers.findIndex((l) => l.name === layerOf(sprite, below).name);
+			return sprite.layers.findIndex((l) => l.name === t.layer.name) + 1;
+		};
+		sprite.layers.splice(index(), 0, newLayer(named, t.grid));
 		editor.sel = { ...editor.sel, layer: named };
 		return { sprite: sprite.name, layer: named, layers: sprite.layers.map((l) => l.name) };
 	}),
@@ -619,6 +646,27 @@ const api = {
 	}),
 
 	/**
+	 * Repeat a layer's leftmost `period` columns across the whole grid, replacing what is there.
+	 *
+	 *   tile_layer('trees', { period: 32 })    // draw one tree, get four
+	 *
+	 * Draw one motif inside `[0, period)` and this makes the rest. It also makes the layer's repeat a
+	 * *guarantee*, which is what `scroll_layer` needs: authoring a period by hand fails silently,
+	 * because a motif overrunning its period by two pixels has no counterpart at the far edge and
+	 * quietly doubles the true repeat — turning a legal speed into a refused one for reasons nothing
+	 * on screen explains.
+	 *
+	 * `period` must divide the grid; `from` picks a different source window.
+	 */
+	tile_layer: mut(function (layer?: string, { period, from = 0, sprite }: { period: number; from?: number; sprite?: string } = {} as any) {
+		const t = target(sprite, layer);
+		const copies = tileAcross(t.layer.pixels, t.grid, period, from);
+		// read the repeat back rather than trusting the argument — this is the number scroll_layer
+		// will measure, so returning it closes the loop between the two commands
+		return { sprite: t.sprite.name, layer: t.layer.name, period, copies, repeatsEvery: periodOf(t.layer.pixels, t.grid) };
+	}),
+
+	/**
 	 * Scroll one layer across an animation — parallax without doing the modular arithmetic yourself.
 	 *
 	 *   scroll_layer('fuji', { speed: -2 })     // far away, drifts
@@ -643,15 +691,18 @@ const api = {
 		const t = target(sprite);
 		const l = layerOf(t.sprite, layer);
 		const n = anim.frames.length;
-		const p = period(l.pixels, t.grid);
+		const p = periodOf(l.pixels, t.grid);
 		const ok = loops(p, speed, n);
 		if (!ok && seamless) {
 			const step = scrollStep(p, n);
+			const atThisSpeed = frameStep(p, speed);
 			throw new Error(
 				`"${layer}" repeats every ${p}px and would travel ${n * Math.abs(speed)}px over ${n} frames, ` +
-					`which is not a whole number of repeats — the loop would jump. ` +
-					`Speeds that work here are multiples of ${step} (${[1, 2, 3].map((k) => (speed < 0 ? -k * step : k * step)).join(', ')}…), ` +
-					`or pass { seamless: false } to allow the jump.`
+					`which is not a whole number of repeats — the loop would jump. Either ` +
+					`change speed to a multiple of ${step} (${[1, 2, 3].map((k) => (speed < 0 ? -k * step : k * step)).join(', ')}…), ` +
+					`or keep ${speed} and use a frame count that is a multiple of ${atThisSpeed} ` +
+					`(${[1, 2, 3].map((k) => k * atThisSpeed).join(', ')}…). ` +
+					`{ seamless: false } allows the jump.`
 			);
 		}
 		anim.frames = anim.frames.map((f, i) =>
@@ -1088,14 +1139,14 @@ const api = {
 			],
 			groups: {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select', 'delete_sprite', 'delete_set', 'delete_package'],
-				layers: ['new_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'scroll_layer', 'flatten_sprite'],
+				layers: ['new_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'tile_layer', 'scroll_layer', 'flatten_sprite'],
 				copying: ['copy_set', 'copy_sprite', 'copy_animation', 'copy_frames', 'copy_layer'],
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
-				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'background', 'silhouette', 'raw', 'help'],
+				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'ramp', 'background', 'silhouette', 'zoom', 'raw', 'help'],
 				history: ['undo', 'redo', 'history', 'batch'],
 				storage: ['flush', 'reset']
 			},
@@ -1126,6 +1177,20 @@ const api = {
 	raw: ro(function (on: boolean = !editor.raw) {
 		editor.peekApi = !!on;
 		return { raw: editor.raw };
+	}),
+
+	/**
+	 * Scale the canvas for a closer look — `zoom()` goes back to fitting the pane. A view setting:
+	 * nothing is painted, nothing is saved, and exports are unaffected.
+	 *
+	 * At 128 the canvas fits a whole sprite into a few hundred CSS pixels, which is fine for judging
+	 * composition and useless for judging two pixels. The stage scrolls when the canvas outgrows it.
+	 */
+	zoom: ro(function (factor: number = 1) {
+		const z = Number(factor);
+		if (!Number.isFinite(z) || z < 1 || z > 8) throw new Error('zoom takes a factor from 1 to 8');
+		editor.zoom = z;
+		return { zoom: editor.zoom };
 	}),
 
 	/** Canvas backdrop for reviewing a sprite; `background()` restores the checkerboard. Paints nothing. */
@@ -1159,38 +1224,36 @@ const api = {
 	 * The active sprite as rows of palette indices — read this back to verify a drawing. Shows the
 	 * whole stack composited, which is what you are looking at; pass `layer` to read just one.
 	 */
-	read_sprite: ro(function (sprite?: string, opts: string | { layer?: string; set?: string; pkg?: string } = {}) {
+	read_sprite: ro(function (sprite?: string, opts: string | ReadOpts = {}) {
 		// display, not edit: without `layer` this is every layer, or an agent that drew a body on one
 		// and an outline on the next would read its work back and see only the outline
-		const t = reading(sprite, typeof opts === 'string' ? { layer: opts } : opts);
-		const rows: number[][] = [];
-		// plain arrays, not the Uint8Array slice: this is what an agent reads back and JSON-prints
-		for (let y = 0; y < t.grid; y++)
-			rows.push(Array.from(t.pixels.subarray(y * t.grid, (y + 1) * t.grid)));
-		return rows;
+		return windowRows(reading(sprite, typeof opts === 'string' ? { layer: opts } : opts));
 	}),
 
 	/** Same thing as ASCII: '.' is transparent, other chars are per-colour. Easier to eyeball. */
-	print_sprite: ro(function (sprite?: string, opts: string | { layer?: string; set?: string; pkg?: string } = {}) {
-		const t = reading(sprite, typeof opts === 'string' ? { layer: opts } : opts); // display — see read_sprite
-		const px = t.pixels;
+	print_sprite: ro(function (sprite?: string, opts: string | (ReadOpts & { legend?: Record<string, Color> }) = {}) {
+		const o = typeof opts === 'string' ? { layer: opts } : opts;
+		const t = reading(sprite, o); // display — see read_sprite
+		const cells = windowRows(t);
 		const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-		const seenChars = new Map<number, string>();
-		const rows: string[] = [];
-		for (let y = 0; y < t.grid; y++) {
-			let row = '';
-			for (let x = 0; x < t.grid; x++) {
-				const p = px[y * t.grid + x];
-				if (p === 0) {
-					row += '.';
-					continue;
-				}
-				if (!seenChars.has(p)) seenChars.set(p, chars[seenChars.size % chars.length]);
-				row += seenChars.get(p);
+		// Glyphs are assigned by ascending palette index, not by first appearance, so two dumps of the
+		// same colours agree and can be diffed — "did frame 4 change where I meant it to" is the whole
+		// reason to print twice. `legend` in pins them outright, and takes paint_map's legend shape,
+		// so a dump can be edited and pasted straight back.
+		const pinned = new Map<number, string>();
+		for (const [ch, c] of Object.entries(o.legend ?? {})) pinned.set(toIndex(c), ch);
+		const used = [...new Set(cells.flat())].filter((p) => p !== TRANSPARENT).sort((a, b) => a - b);
+		const glyph = new Map<number, string>();
+		let next = 0;
+		for (const i of used) {
+			if (pinned.has(i)) glyph.set(i, pinned.get(i)!);
+			else {
+				while ([...pinned.values()].includes(chars[next % chars.length])) next++;
+				glyph.set(i, chars[next++ % chars.length]);
 			}
-			rows.push(row);
 		}
-		const legend = Object.fromEntries([...seenChars].map(([i, c]) => [c, `${PALETTE[i]} (${i})`]));
+		const rows = cells.map((row) => row.map((p) => (p === TRANSPARENT ? '.' : glyph.get(p)!)).join(''));
+		const legend = Object.fromEntries([...glyph].map(([i, c]) => [c, `${PALETTE[i]} (${i})`]));
 		return { rows, legend };
 	}),
 
@@ -1202,6 +1265,19 @@ const api = {
 
 	/** Palette index for a colour — color('#22aa33') → nearest index. */
 	color: ro((c: Color) => toIndex(c)),
+
+	/**
+	 * `steps` palette indices blending evenly between two colours, ends included — a sky gradient or
+	 * a shading ramp without snapping hexes by hand against a palette whose channels only take
+	 * 00/33/66/99/cc/ff.
+	 *
+	 *   ramp('#000033', '#ffcc99', 10).forEach((c, y) => paint_row(y, c))
+	 *
+	 * Neighbouring steps can repeat an index: six levels per channel means 20 steps between two close
+	 * colours cannot give 20 distinct ones, and repeating is truer than inventing a colour that the
+	 * palette does not have.
+	 */
+	ramp: ro((from: Color, to: Color, steps = 8) => rampOf(toIndex(from), toIndex(to), steps)),
 	palette: ro(() => PALETTE.slice()),
 
 	reset: mut(function () {

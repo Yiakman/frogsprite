@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BASE, flatten, layerOf, loops, newLayer, period, scrollStep } from './layers.ts';
+import { BASE, flatten, frameStep, layerOf, loops, newLayer, period, scrollStep } from './layers.ts';
 import type { Sprite } from './types.ts';
 
 const sprite = (...layers: [string, number[], boolean?][]): Sprite => ({
@@ -157,4 +157,36 @@ test('scrollStep is the smallest speed that lands, and spaces every other one', 
 test('a period that already divides the frame count needs only one pixel a frame', () => {
 	assert.equal(scrollStep(16, 16), 1);
 	assert.equal(loops(16, 1, 16), true);
+});
+
+test('frameStep is the other way out of a scroll that will not loop', () => {
+	// keep the speed, change the frame count
+	const step = frameStep(64, 5);
+	assert.equal(step, 64, '5 and 64 are coprime, so it takes 64 frames');
+	assert.equal(loops(64, 5, step), true);
+	assert.equal(frameStep(64, 4), 16, 'the count the report actually used');
+	assert.equal(loops(64, 4, 16), true);
+});
+
+test('a per-layer fx is applied before the layer is positioned', () => {
+	// flipX mirrors the layer, then dx slides it — fx order, with the displace handed to stamp
+	const s = sprite(['a', [1, 0, 0, 0]]);
+	assert.deepEqual(Array.from(flatten(s, 2, { a: { flipX: true } })), [0, 1, 0, 0], 'mirrored');
+	assert.deepEqual(
+		Array.from(flatten(s, 2, { a: { flipX: true, dx: -1, wrap: true } })),
+		[1, 0, 0, 0],
+		'mirrored, then slid back'
+	);
+});
+
+test('a per-layer fx touches only the layer it names', () => {
+	const s = sprite(['back', [5, 5, 5, 5]], ['front', [0, 0, 0, 9]]);
+	const out = Array.from(flatten(s, 2, { front: { flipY: true } }));
+	assert.deepEqual(out, [5, 9, 5, 5], 'front mirrored up; back untouched');
+});
+
+test('a per-layer rotate leaves the source buffer alone', () => {
+	const s = sprite(['a', [1, 2, 3, 4]]);
+	flatten(s, 2, { a: { rotate: 90 } });
+	assert.deepEqual(Array.from(s.layers[0].pixels), [1, 2, 3, 4], 'applyFx copies, never mutates');
 });

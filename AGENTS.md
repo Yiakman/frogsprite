@@ -73,7 +73,9 @@ Where two layers overlap the higher one wins; transparent (index `0`) is the hol
 underneath show through. There is no opacity and no blend mode, and there cannot be: pixels are
 palette *indices*, so there is nothing meaningful to average between index 3 and index 9.
 
-- `new_layer(name?)` — add a layer above the active one and select it
+- `new_layer(name?, { at, above, below })` — add a layer and select it. `at: 'top' | 'bottom'`, or
+  `above: 'road'` / `below: 'fg'`. With none of them it lands above the *active* layer — which is a
+  cursor an earlier `select_layer` moved, so say where you mean when building a stack in several calls
 - `select_layer(name)` — which layer painting lands on
 - `delete_layer(name)` — remove it and its pixels; a sprite must keep at least one
 - `hide_layer(name?, on = true)` — hide one layer, or show it again with `hide_layer(name, false)`.
@@ -81,6 +83,9 @@ palette *indices*, so there is nothing meaningful to average between index 3 and
   composited, not erased
 - `set_layers([...])` — reorder, and show/hide several at once, bottom first. Every existing layer
   must appear exactly once: this rearranges the stack, it never destroys part of it
+- `tile_layer(name?, { period, from })` — repeat the layer's leftmost `period` columns across the
+  grid. Draw one motif, get the rest; `period` must divide the grid. Use it before `scroll_layer`,
+  because it makes the repeat a **guarantee** rather than a hope
 - `scroll_layer(name, { speed, animation, wrap, seamless })` — scroll one layer across an animation,
   `speed` px per frame and signed. Writes the offsets into every frame for you, and **refuses a
   scroll that would not loop** (see below)
@@ -147,8 +152,36 @@ The trap that catches people is the other direction: a *slow* far layer needs a 
 at 2px over 16 frames covers 32px, so its art has to tile every 32 or 16 — draw one lone mountain
 128px wide and no slow speed will ever loop. Either tile the art, add frames, or accept the jump.
 
+So draw the motif once and let `tile_layer` make the repeat exact:
+
+```js
+frogsprite.select_layer('fuji');
+frogsprite.shapes.triangle(4, 60, 16, 30, 28, 60, '#663366');   // one mountain, inside 0..31
+frogsprite.tile_layer('fuji', { period: 32 });                  // now it repeats every 32, for real
+frogsprite.scroll_layer('fuji', { speed: -2 });                 // 16 x 2 = 32 — accepted
+```
+
+Doing that by hand is where this goes wrong: a motif that overruns its period by two pixels has no
+counterpart at the far edge, so the layer's true repeat silently becomes the whole grid and a legal
+speed turns into a refused one for reasons nothing on screen explains. `tile_layer` returns the
+`repeatsEvery` it actually achieved, which is the number `scroll_layer` will measure.
+
 `hidden` is a third override, and it beats the layer's own setting in both directions: a frame can
 show a layer the sprite hides, or hide one it shows. That is how one sprite carries two arm poses.
+
+An arrangement also takes **the same geometry and colour keys `fx` does** — `invert`, `hue`,
+`rotate`, `flipX`, `flipY` — applied to that layer alone:
+
+```js
+layers: { spokes: { rotate: 15 * i }, fg: { dx: -48 * i, wrap: true, hue: 'blue' } }
+```
+
+A spinning wheel is one layer plus a `rotate` per frame, rather than a drawn pose per frame. Colour
+and geometry are applied first and the position second, which is `fx`'s own order — except that the
+displacement goes through `stamp`, so unlike a whole-frame `fx.dx` it can `wrap`.
+
+Not `trail`: a trail reaches back into *other* frames, so a per-layer one would have to resolve every
+ghost frame's arrangement of that layer too. That is a different feature.
 
 `set_effects` patches arrangements too, merged per layer name:
 
@@ -580,8 +613,24 @@ cannot. In the UI: **Project → Save all… / Load…**, or drop a `.json` / `.
 
 - `state()` — JSON snapshot of every package, set, sprite (with its layers) and frame
 - `read_sprite(sprite?, opts?)` — pixels as rows of palette indices. The composited stack, unless you
-  name a layer. `opts` is `{ layer, set, pkg }`, or a bare string for the layer
-- `print_sprite(sprite?, opts?)` — the same as ASCII rows plus a legend; easiest to eyeball
+  name a layer. `opts` is `{ layer, set, pkg, rect }`, or a bare string for the layer
+- `print_sprite(sprite?, opts?)` — the same as ASCII rows plus a legend; easiest to eyeball. Also
+  takes `{ legend }`, in `paint_map`'s shape
+
+`rect: [x0, y0, x1, y1]` reads back one window. At 128 a full dump is 128 lines of 128 characters,
+which nobody reads — the thing you are checking is a 40×35 rider:
+
+```js
+frogsprite.print_sprite('scene', { layer: 'bike', rect: [44, 54, 96, 116] });
+```
+
+Glyphs are assigned by ascending palette index rather than by first appearance, so two dumps of the
+same colours agree and can be diffed — which is what "did frame 4 change where I meant it to"
+actually needs. Pass `legend` to pin them outright:
+
+```js
+frogsprite.print_sprite('scene', { rect, legend: { M: '#4a3a6a', s: '#ffee99' } });
+```
 
 `set` and `pkg` read straight out of another set **without selecting it** — the selection, and any
 playback riding on it, stay exactly where they were:
@@ -600,6 +649,10 @@ const set = frogsprite.export_json({ set: 'scene' });
 set.sprites[0].layers[0].pixels;   // a plain array, grid * grid long
 ```
 - `palette()` — all 256 colours
+- `ramp(from, to, steps = 8)` — palette indices blending evenly between two colours, ends included.
+  Writes a sky gradient or a shading ramp without snapping hexes by hand:
+  `ramp('#000033', '#ffcc99', 10).forEach((c, y) => paint_row(y, c))`. Steps can repeat an index —
+  six levels per channel means 20 steps between close colours cannot give 20 distinct ones
 
 #### Reviewing what you drew
 
@@ -610,6 +663,8 @@ with your work, and none affects exports or `print_sprite()`.
   checkerboard
 - `silhouette(color?)` — draws every **painted** pixel in one colour, so only the shape is left;
   defaults to black, and `silhouette(null)` turns it off
+- `zoom(n = 1)` — magnify the canvas, 1 to 8; `zoom()` fits the pane again. At 128 a fitted canvas is
+  fine for composition and hopeless for a two-pixel detail. The stage scrolls once it outgrows the pane
 - `raw(on?)` — draw the sprite **as it is stored**, ignoring the held frame's `fx`, `trail` and
   `transition`. This is the answer to "is that shape mine, or did an effect do it?" — and to "what
   would a brush stroke here actually land on?"
@@ -742,7 +797,7 @@ frogsprite.export_animated_svg();
 | `src/lib/core/` | the framework-free engine below — no Svelte, no DOM, so `npm test` runs all of it |
 | `src/lib/core/types.ts` | the domain model (`Frame`, `Sprite`, `Layer`, `SpriteSet`, `Package`, `Animation`) — here so the pure modules never import types from a `.svelte.ts` |
 | `src/lib/core/layers.ts` | a sprite's layer stack, and `flatten()` — the one rule for putting it back together |
-| `src/lib/core/grid.ts` | the valid grid sizes, and whole-sprite geometry (rotate, flip, shift, stamp, upscale) |
+| `src/lib/core/grid.ts` | the valid grid sizes, and whole-buffer geometry (rotate, flip, shift, stamp, tile, upscale, applyFx) |
 | `src/lib/core/shapes.ts` | line, square, circle, ellipse, triangle, polygon — filled or outline, clipped to the grid |
 | `src/lib/core/fx.ts` | frame effects, trails and transitions: the one place a frame becomes the pixels you see |
 | `src/lib/core/selection.ts` | which set, animation and layer a command lands on — the pure decisions, so they are testable without a browser |

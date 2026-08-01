@@ -68,9 +68,12 @@ opacity or blend mode, because pixels are palette *indices* — there is nothing
 index 3 and index 9. Reach for a layer when you want an outline you can redraw without disturbing
 the fill under it. See [AGENTS.md](AGENTS.md#layers).
 
-A frame can also slide or hide its sprite's **layers** for that frame alone, which is how a parallax
-scroll is one sprite instead of one per frame: give each depth a layer, then let each frame say where
-each one sits. A layer no frame mentions never moves. See [AGENTS.md](AGENTS.md#moving-layers-per-frame--parallax).
+A frame can also slide, hide or transform its sprite's **layers** for that frame alone, which is how a
+parallax scroll is one sprite instead of one per frame: give each depth a layer, then let each frame
+say where each one sits. A layer no frame mentions never moves, and a per-layer `rotate` turns a
+wheel without drawing a pose per frame. `tile_layer` makes a layer's repeat exact and `scroll_layer`
+writes the offsets, refusing any speed that would make the loop jump. See
+[AGENTS.md](AGENTS.md#moving-layers-per-frame--parallax).
 
 Sets, sprites, animations, frames and layers can all be **copied**. A copy lands in whatever is
 selected and takes an optional new name. `copy_sprite` is the only one that crosses sets, and only
@@ -198,6 +201,8 @@ sharing between devices. That is the one feature that would genuinely require a 
   at any size, but every command still serialises the whole document twice for undo, which is
   ~3.5ms once a project holds a few 128 sprites. Snapshotting only the set that changed is the next
   move if that ever bites.
+- **No per-layer `trail`** — a trail reaches into other frames, so a per-layer one would have to
+  resolve every ghost frame's arrangement of that layer. The other `fx` keys do work per layer.
 - **`stamp` bakes, it does not link** — stamping a sprite copies its pixels once, so editing the
   source afterwards changes nothing already stamped. Layers arranged per frame are the live
   alternative. A *linked* stamp (a layer that references another sprite instead of holding pixels,

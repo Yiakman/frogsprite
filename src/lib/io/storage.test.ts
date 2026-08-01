@@ -293,3 +293,27 @@ test('readSet keeps a frame arrangement it understands and drops the rest', () =
 	assert.deepEqual(set!.animations[0].frames[0].layers, { good: { dx: 2, wrap: true } });
 	assert.equal(set!.animations[0].frames[1].layers, undefined, 'junk arrangement is simply absent');
 });
+
+test('a per-layer fx in an arrangement round-trips, so undo cannot eat it', () => {
+	const doc = pkg({
+		animations: [
+			{
+				name: 'x',
+				frames: [{ sprite: 'a', ms: 10, layers: { w: { rotate: 90, flipX: true, hue: 'red', dx: -4, wrap: true } } }]
+			}
+		]
+	});
+	const back = (parse(serialise(doc as any)) as any)[0].sets[0].animations[0].frames[0];
+	assert.deepEqual(back.layers, { w: { dx: -4, wrap: true, hue: 'red', rotate: 90, flipX: true } });
+});
+
+test('a junk per-layer fx is dropped, the rest of the arrangement survives', () => {
+	const set = readSet({
+		name: 's',
+		grid: 8,
+		sprites: [{ name: 'a', pixels: [...new Uint8Array(64)] }],
+		// rotate 45 is not a 30 step, 'teal' is not a hue
+		animations: [{ name: 'x', frames: [{ sprite: 'a', ms: 10, layers: { w: { rotate: 45, hue: 'teal', dx: 2 } } }] }]
+	});
+	assert.deepEqual(set!.animations[0].frames[0].layers, { w: { dx: 2 } });
+});
