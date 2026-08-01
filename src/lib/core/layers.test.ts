@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BASE, flatten, frameStep, layerOf, loops, newLayer, period, scrollStep } from './layers.ts';
+import { BASE, cycles, flatten, frameStep, layerOf, loops, newLayer, period, poseAt, scrollStep } from './layers.ts';
 import type { Sprite } from './types.ts';
 
 const sprite = (...layers: [string, number[], boolean?][]): Sprite => ({
@@ -215,4 +215,19 @@ test('an out-of-range rotation centre is clamped, never thrown', () => {
 	// this runs inside a render effect: a stored 999 must not take the canvas down on every redraw
 	const s = sprite(['w', [1, 2, 3, 4]]);
 	assert.doesNotThrow(() => flatten(s, 2, { w: { rotate: 90, cx: 999, cy: -5 } }));
+});
+
+test('poseAt walks a ring of poses, holding each for `every` frames', () => {
+	const seq = (n: number, count: number, every?: number) =>
+		Array.from({ length: n }, (_, i) => poseAt(i, count, every));
+	assert.deepEqual(seq(8, 4), [0, 1, 2, 3, 0, 1, 2, 3], 'one per frame, twice round');
+	assert.deepEqual(seq(8, 4, 2), [0, 0, 1, 1, 2, 2, 3, 3], 'held two frames each');
+	assert.deepEqual(seq(3, 8), [0, 1, 2], 'a ring longer than the animation just does not finish');
+});
+
+test('cycles catches a pose ring that would not close', () => {
+	assert.equal(cycles(16, 8), true, '16 frames, 8 poses — two clean revolutions');
+	assert.equal(cycles(16, 8, 2), true, 'held two frames each — one revolution');
+	assert.equal(cycles(16, 6), false, '16 does not divide by 6 — it lands mid-stride');
+	assert.equal(cycles(12, 6), true);
 });

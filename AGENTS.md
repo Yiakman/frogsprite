@@ -570,6 +570,10 @@ Each returns its data (and also downloads a file when passed `{ download: true }
 - `export_ico({ sprite?, sizes = [16, 32, 48], download? })` → Promise of `data:image/x-icon;base64,…`
 - `export_animated_svg({ animation?, scale?, effects?, transitions?, download? })` → one animation
   as a self-contained looping SVG — the active one, or `animation` by name
+- `contact_sheet({ animation?, cols = 4, scale = 2, gap?, effects?, transitions?, download? })` →
+  every frame as one numbered PNG grid. Playback shows one frame at a time and a screenshot catches
+  whichever was up, so a fault in frame 9 stays invisible until it goes past; on a sheet it is
+  obvious at a glance. Reach for it before believing an animation is finished
 - `export_zip({ scale = 8, effects?, transitions?, animations?, download?, base64? })` → **the whole
   set as a .zip**. Async. Contains:
 

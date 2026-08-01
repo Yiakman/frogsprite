@@ -52,6 +52,23 @@
 		render(canvas.getContext('2d')!, pixels, grid, grid, silhouette ?? undefined);
 	});
 
+	/**
+	 * Aim a zoomed canvas. Magnifying without this gives you a canvas bigger than the pane and no way
+	 * to say which part you meant, which is most of why zoom was unusable at 128.
+	 */
+	let stage: HTMLDivElement | undefined = $state();
+	$effect(() => {
+		const at = editor.zoomAt;
+		void editor.zoom; // re-aim after the width changes, not before
+		if (!at || !stage) return;
+		const box = stage.querySelector('.grid') as HTMLElement | null;
+		if (!box) return;
+		const cell = box.clientWidth / grid;
+		stage.scrollLeft = (at.x + 0.5) * cell - stage.clientWidth / 2;
+		stage.scrollTop = (at.y + 0.5) * cell - stage.clientHeight / 2;
+		editor.zoomAt = null; // a one-shot aim, so scrolling by hand afterwards is not fought
+	});
+
 	/** The cell the stroke was last on, or -1 between strokes. */
 	let from = -1;
 
@@ -93,6 +110,7 @@
 <!-- drag-and-drop has no keyboard equivalent by nature; the Import button covers that path -->
 <div
 	class="stage"
+	bind:this={stage}
 	class:dropping
 	role="region"
 	aria-label="Sprite canvas — drop an image here to pixelate it"

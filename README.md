@@ -114,6 +114,8 @@ short `/llms.txt` summary) so an agent that lands on a deployed instance can fin
 | `export_zip` | the whole set: every sprite as PNG and SVG, one SVG per animation, plus `set.json` with raw pixel data — the closest thing to a project file |
 | `export_svg` | one sprite, horizontal runs merged into single rects |
 | `export_animated_svg` | one animation as a self-contained looping SVG |
+| `contact_sheet` | every frame as one numbered PNG grid — a fault in frame 9 is invisible in playback and obvious here |
+| `contact_sheet` | every frame as one numbered PNG grid — a fault in frame 9 is invisible in playback and obvious here |
 | `export_png` | one sprite at any scale |
 | `export_ico` | multi-size icon |
 | `export_json` | the set's raw pixel data on its own — no pictures, no archive |

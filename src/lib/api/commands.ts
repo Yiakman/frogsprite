@@ -1,11 +1,11 @@
 import { PALETTE, ramp as rampOf, toIndex, TRANSPARENT } from '../core/palette.ts';
 import * as ex from '../io/export.ts';
-import { patchEffects, readArrangement, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
+import { compose, patchEffects, readArrangement, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
 import * as history from '../core/history.ts';
 import * as storage from '../io/storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
 import { blank, GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
-import { BASE, flatten, frameStep, layerOf, loops, newLayer, period as periodOf, scrollStep } from '../core/layers.ts';
+import { BASE, cycles, flatten, frameStep, layerOf, loops, newLayer, period as periodOf, poseAt, scrollStep } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
 import type { Point } from '../core/shapes.ts';
@@ -211,6 +211,60 @@ function windowRows(t: { grid: number; pixels: Uint8Array; box: readonly [number
 	const rows: number[][] = [];
 	for (let y = y0; y <= y1; y++) rows.push(Array.from(t.pixels.subarray(y * t.grid + x0, y * t.grid + x1 + 1)));
 	return rows;
+}
+
+/**
+ * Rows of indices as ASCII plus a legend. Glyphs go by ascending palette index rather than by first
+ * appearance, so two dumps of the same colours agree and can be diffed — which is the whole reason
+ * anyone prints the same thing twice. `pin` fixes chosen ones outright, in `paint_map`'s shape.
+ */
+function asciiOf(cells: number[][], pin?: Record<string, Color>) {
+	const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+	const pinned = new Map<number, string>();
+	for (const [ch, c] of Object.entries(pin ?? {})) pinned.set(toIndex(c), ch);
+	const used = [...new Set(cells.flat())].filter((p) => p !== TRANSPARENT).sort((a, b) => a - b);
+	const glyph = new Map<number, string>();
+	let next = 0;
+	for (const i of used) {
+		if (pinned.has(i)) glyph.set(i, pinned.get(i)!);
+		else {
+			while ([...pinned.values()].includes(chars[next % chars.length])) next++;
+			glyph.set(i, chars[next++ % chars.length]);
+		}
+	}
+	return {
+		rows: cells.map((row) => row.map((p) => (p === TRANSPARENT ? '.' : glyph.get(p)!)).join('')),
+		legend: Object.fromEntries([...glyph].map(([i, c]) => [c, `${PALETTE[i]} (${i})`]))
+	};
+}
+
+/**
+ * A *composed frame* — every layer arranged as that frame arranges them, effects and all. Not the
+ * same picture as the sprite: `print_sprite` shows the stack with every pose visible and every
+ * scroll at zero, which is a frame that appears nowhere in the animation. This is what is actually
+ * on screen at frame `i`.
+ */
+function frameAt(i?: number, animation?: string, rect?: [number, number, number, number]) {
+	const set = editor.requireSet();
+	const anim = animOf(animation);
+	if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
+	// default to whatever is held, so `view_frame(3); print_frame()` reads what you are looking at
+	const at = i ?? (editor.frame >= 0 ? editor.frame : 0);
+	if (!Number.isInteger(at) || at < 0 || at >= anim.frames.length)
+		throw new Error(`frame ${at} is outside 0..${anim.frames.length - 1}`);
+	const grid = set.grid;
+	const [x0, y0, x1, y1] = rect ?? [0, 0, grid - 1, grid - 1];
+	for (const [v, n] of [[x0, 'x0'], [y0, 'y0'], [x1, 'x1'], [y1, 'y1']] as [number, string][])
+		if (!Number.isInteger(v) || v < 0 || v >= grid) throw new Error(`rect ${n} is ${v}, outside 0..${grid - 1}`);
+	if (x1 < x0 || y1 < y0) throw new Error(`rect [${x0},${y0},${x1},${y1}] has no area`);
+	// the last sub-step: a frame with a transition reads as finished, matching what a held frame shows
+	return {
+		animation: anim.name,
+		frame: at,
+		grid,
+		pixels: compose(anim.frames, at, set.sprites, grid),
+		box: [x0, y0, x1, y1] as const
+	};
 }
 
 /** An animation in the active set, by name or the selected one. */
@@ -713,6 +767,46 @@ const api = {
 	}),
 
 	/**
+	 * Show one of a ring of layers per frame — a pedal stroke, a walk cycle, a flame. The pose
+	 * counterpart to `scroll_layer`, and the other half of what an animation needs.
+	 *
+	 *   cycle_layers(['pose-0','pose-1','pose-2','pose-3'])          // one per frame, round and round
+	 *   cycle_layers(['step-a','step-b'], { every: 4 })              // held four frames each
+	 *
+	 * Every listed layer is set explicitly per frame — shown when its turn comes, hidden otherwise —
+	 * so running it twice with a different order does not leave a stale pose visible. Layers not
+	 * listed are untouched.
+	 *
+	 * Refuses a ring that would not close, for the same reason `scroll_layer` does: land mid-cycle
+	 * and the loop cuts back with the legs in the wrong place.
+	 */
+	cycle_layers: mut(function (names: string[], { animation, every = 1, sprite, seamless = true }: { animation?: string; every?: number; sprite?: string; seamless?: boolean } = {}) {
+		if (!Array.isArray(names) || names.length < 2)
+			throw new Error('cycle_layers needs at least two layer names to cycle between');
+		const anim = animOf(animation);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames to cycle over`);
+		const t = target(sprite);
+		for (const n of names) layerOf(t.sprite, n); // throws with the stack before anything is written
+		const n = anim.frames.length;
+		const ok = cycles(n, names.length, every);
+		if (!ok && seamless) {
+			const per = names.length * Math.max(1, Math.trunc(every));
+			throw new Error(
+				`${names.length} layers held ${every} frame(s) each is a ${per}-frame cycle, which does not ` +
+					`divide ${n} frames — the loop would cut back mid-cycle. Use a frame count that is a ` +
+					`multiple of ${per} (${[1, 2, 3].map((k) => k * per).join(', ')}…), or { seamless: false }.`
+			);
+		}
+		anim.frames = anim.frames.map((f, i) => {
+			const shown = names[poseAt(i, names.length, every)];
+			const view = Object.fromEntries(names.map((nm) => [nm, { hidden: nm !== shown }]));
+			return patchEffects(f, { layers: view });
+		});
+		editor.stop();
+		return { animation: anim.name, layers: names.length, every, frames: n, seamless: ok };
+	}),
+
+	/**
 	 * Collapse a sprite's layers into one, as they look composited — the way back to simple sprite
 	 * mode, and the escape hatch for anything downstream that would rather not think about layers.
 	 * Hidden layers are dropped, not merged: they are hidden.
@@ -993,6 +1087,24 @@ const api = {
 		return url;
 	}),
 
+	/**
+	 * Every frame of an animation as one numbered PNG grid — the whole loop in a single look.
+	 *
+	 *   contact_sheet({ download: true })        // save it
+	 *   contact_sheet({ cols: 8, scale: 1 })     // a wider, smaller sheet
+	 *
+	 * Playback shows one frame at a time and a screenshot catches whichever was up, so a fault in
+	 * frame 9 stays invisible until it goes past. On a sheet it is obvious at a glance.
+	 */
+	contact_sheet: ro(function ({ animation, cols = 4, scale = 2, gap = 4, effects = true, transitions = true, download = false }: { animation?: string; cols?: number; scale?: number; gap?: number; effects?: boolean; transitions?: boolean; download?: boolean } = {}) {
+		const set = editor.requireSet();
+		const anim = animOf(animation);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
+		const url = ex.toContactSheet(set.sprites, anim.frames, set.grid, { cols, scale, gap, effects, transitions });
+		if (download) ex.download(url, `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}-sheet.png`);
+		return { animation: anim.name, frames: anim.frames.length, cols: Math.min(cols, anim.frames.length), url };
+	}),
+
 	export_ico: ro(async function ({ sprite, sizes = [16, 32, 48], download = false } = {} as any) {
 		const t = target(sprite);
 		const url = await ex.toICO(seen(t), t.grid, sizes); // display, not edit: the whole stack
@@ -1139,14 +1251,14 @@ const api = {
 			],
 			groups: {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select', 'delete_sprite', 'delete_set', 'delete_package'],
-				layers: ['new_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'tile_layer', 'scroll_layer', 'flatten_sprite'],
+				layers: ['new_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'tile_layer', 'scroll_layer', 'cycle_layers', 'flatten_sprite'],
 				copying: ['copy_set', 'copy_sprite', 'copy_animation', 'copy_frames', 'copy_layer'],
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
-				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'ramp', 'background', 'silhouette', 'zoom', 'raw', 'help'],
+				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'contact_sheet', 'palette', 'color', 'ramp', 'background', 'silhouette', 'zoom', 'raw', 'help'],
 				history: ['undo', 'redo', 'history', 'batch'],
 				storage: ['flush', 'reset']
 			},
@@ -1186,11 +1298,16 @@ const api = {
 	 * At 128 the canvas fits a whole sprite into a few hundred CSS pixels, which is fine for judging
 	 * composition and useless for judging two pixels. The stage scrolls when the canvas outgrows it.
 	 */
-	zoom: ro(function (factor: number = 1) {
+	zoom: ro(function (factor: number = 1, { x, y }: { x?: number; y?: number } = {}) {
 		const z = Number(factor);
 		if (!Number.isFinite(z) || z < 1 || z > 8) throw new Error('zoom takes a factor from 1 to 8');
 		editor.zoom = z;
-		return { zoom: editor.zoom };
+		// aim it, or a zoomed canvas is just a bigger picture you cannot steer. Centres on the sprite
+		// unless told otherwise, which is where the subject usually is.
+		const grid = editor.set?.grid ?? 16;
+		const at = (v: number | undefined) => Math.min(grid - 1, Math.max(0, Math.round(Number(v))));
+		editor.zoomAt = z > 1 ? { x: at(x ?? grid / 2), y: at(y ?? grid / 2) } : null;
+		return { zoom: editor.zoom, at: editor.zoomAt };
 	}),
 
 	/** Canvas backdrop for reviewing a sprite; `background()` restores the checkerboard. Paints nothing. */
@@ -1230,31 +1347,30 @@ const api = {
 		return windowRows(reading(sprite, typeof opts === 'string' ? { layer: opts } : opts));
 	}),
 
+	/**
+	 * A **composed frame** as rows of palette indices — every layer where that frame puts it, effects
+	 * applied. This is not the same picture as `read_sprite`, which shows the stack with every pose
+	 * visible and every scroll at zero: a frame that appears nowhere in the animation.
+	 *
+	 *   read_frame(3, { rect: [44, 54, 96, 116] })
+	 *
+	 * `i` defaults to the frame being held, so `view_frame(3); print_frame()` reads what is on screen.
+	 */
+	read_frame: ro(function (i?: number, { rect, animation }: { rect?: [number, number, number, number]; animation?: string } = {}) {
+		return windowRows(frameAt(i, animation, rect));
+	}),
+
+	/** The same frame as ASCII rows plus a legend — see `read_frame`, and `print_sprite` for glyphs. */
+	print_frame: ro(function (i?: number, { rect, animation, legend }: { rect?: [number, number, number, number]; animation?: string; legend?: Record<string, Color> } = {}) {
+		const f = frameAt(i, animation, rect);
+		return { animation: f.animation, frame: f.frame, ...asciiOf(windowRows(f), legend) };
+	}),
+
 	/** Same thing as ASCII: '.' is transparent, other chars are per-colour. Easier to eyeball. */
 	print_sprite: ro(function (sprite?: string, opts: string | (ReadOpts & { legend?: Record<string, Color> }) = {}) {
 		const o = typeof opts === 'string' ? { layer: opts } : opts;
 		const t = reading(sprite, o); // display — see read_sprite
-		const cells = windowRows(t);
-		const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-		// Glyphs are assigned by ascending palette index, not by first appearance, so two dumps of the
-		// same colours agree and can be diffed — "did frame 4 change where I meant it to" is the whole
-		// reason to print twice. `legend` in pins them outright, and takes paint_map's legend shape,
-		// so a dump can be edited and pasted straight back.
-		const pinned = new Map<number, string>();
-		for (const [ch, c] of Object.entries(o.legend ?? {})) pinned.set(toIndex(c), ch);
-		const used = [...new Set(cells.flat())].filter((p) => p !== TRANSPARENT).sort((a, b) => a - b);
-		const glyph = new Map<number, string>();
-		let next = 0;
-		for (const i of used) {
-			if (pinned.has(i)) glyph.set(i, pinned.get(i)!);
-			else {
-				while ([...pinned.values()].includes(chars[next % chars.length])) next++;
-				glyph.set(i, chars[next++ % chars.length]);
-			}
-		}
-		const rows = cells.map((row) => row.map((p) => (p === TRANSPARENT ? '.' : glyph.get(p)!)).join(''));
-		const legend = Object.fromEntries([...glyph].map(([i, c]) => [c, `${PALETTE[i]} (${i})`]));
-		return { rows, legend };
+		return asciiOf(windowRows(t), o.legend);
 	}),
 
 	/**

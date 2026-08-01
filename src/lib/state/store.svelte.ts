@@ -25,6 +25,12 @@ class Editor {
 	 */
 	zoom = $state(1);
 	/**
+	 * Where a zoomed canvas is aimed, in pixel coordinates, or null for "leave the scroll alone".
+	 * Magnification without aim is unusable at 128: you get a canvas larger than the pane and no way
+	 * to say which part of it you meant. The canvas scrolls to centre this and clears it.
+	 */
+	zoomAt = $state<{ x: number; y: number } | null>(null);
+	/**
 	 * Draw the sprite as it is stored, ignoring the frame's effects — the thing an edit would land
 	 * on, rather than what the animation makes of it. A view setting: nothing is painted or saved.
 	 *
@@ -263,6 +269,7 @@ class Editor {
 				showing: this.shown?.name ?? null
 			},
 			view: {
+				zoom: this.zoom,
 				background: this.background ? PALETTE[this.background] : 'checkerboard',
 				silhouette: this.silhouette ? PALETTE[this.silhouette] : 'off',
 				raw: this.raw

@@ -111,6 +111,21 @@ export const frameStep = (period: number, speed: number): number => {
 	return s ? period / gcd(s, period) : 1;
 };
 
+/**
+ * Which of `count` poses frame `i` shows, holding each for `every` frames. The pedal cycle to
+ * `scroll_layer`'s scroll: a walk or a pedal stroke is a short ring of drawings advanced one step at
+ * a time, and writing that by hand is an `i % n` nobody gets wrong twice but everybody writes once.
+ */
+export const poseAt = (i: number, count: number, every = 1): number =>
+	Math.floor(i / Math.max(1, Math.trunc(every))) % count;
+
+/**
+ * Whether a pose ring closes cleanly over `frames`. Same failure as a scroll that does not loop:
+ * land mid-cycle and the last frame cuts back to the first with the legs in the wrong place.
+ */
+export const cycles = (frames: number, count: number, every = 1): boolean =>
+	frames % (count * Math.max(1, Math.trunc(every))) === 0;
+
 /** A layer by name, or the sprite's top one. Throws with the stack, since the name is user input. */
 export function layerOf(sprite: Sprite, name?: string): Layer {
 	if (!name) return sprite.layers[sprite.layers.length - 1];

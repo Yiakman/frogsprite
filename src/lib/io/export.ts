@@ -116,6 +116,48 @@ function draw(pixels: Pixels, grid: number, size: number): HTMLCanvasElement {
 	return c;
 }
 
+/**
+ * Every frame of an animation as one PNG, laid out in a grid and numbered — the whole loop in a
+ * single look.
+ *
+ * Playback shows one frame at a time and a screenshot catches whichever was up, so a fault in
+ * frame 9 is invisible until it goes past. Eight of sixteen frames once rendered a cyclist with no
+ * legs and that survived a screenshot review; on a sheet it would have been obvious at a glance.
+ */
+export function toContactSheet(
+	sprites: Sprite[],
+	frames: Frame[],
+	grid: number,
+	{ cols = 4, scale = 2, gap = 4, effects = true, transitions = true }: BakeOptions & { cols?: number; scale?: number; gap?: number } = {}
+): string {
+	const n = frames.length;
+	const c = Math.max(1, Math.min(Math.trunc(cols), n));
+	const rows = Math.ceil(n / c);
+	const cell = grid * scale;
+	const label = 10; // a strip under each frame, so a fault can be named by number
+	const canvas = document.createElement('canvas');
+	canvas.width = c * cell + (c + 1) * gap;
+	canvas.height = rows * (cell + label) + (rows + 1) * gap;
+	const ctx = canvas.getContext('2d')!;
+	ctx.fillStyle = '#1a1a1a';
+	ctx.fillRect(0, 0, canvas.width, canvas.height);
+	// one scratch canvas reused per frame rather than one per frame allocated
+	const tile = document.createElement('canvas');
+	tile.width = tile.height = cell;
+	const tctx = tile.getContext('2d')!;
+	for (let i = 0; i < n; i++) {
+		const x = gap + (i % c) * (cell + gap);
+		const y = gap + Math.floor(i / c) * (cell + label + gap);
+		// the last sub-step, so a frame with a transition shows finished rather than caught halfway
+		paint(tctx, compose(frames, i, sprites, grid, 1, { effects, transitions }), grid, cell);
+		ctx.drawImage(tile, x, y);
+		ctx.fillStyle = '#888';
+		ctx.font = '9px monospace';
+		ctx.fillText(`${i + 1}`, x, y + cell + label - 2);
+	}
+	return canvas.toDataURL('image/png');
+}
+
 export function toPNG(pixels: Pixels, grid: number, scale = 1): string {
 	return draw(pixels, grid, grid * scale).toDataURL('image/png');
 }
