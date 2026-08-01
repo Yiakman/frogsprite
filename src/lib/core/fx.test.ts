@@ -270,3 +270,27 @@ test('patchEffects normalises through the same validators the format uses', () =
 	assert.deepEqual(patchEffects(frame, { transition: 'vanish' }).transition, { kind: 'vanish' });
 	assert.equal(patchEffects(frame, { transition: 'melt' }).transition, undefined);
 });
+
+test('a layer patch merges key by key, and does not wipe the keys beside it', () => {
+	// the regression: patching `dy` replaced the whole entry and threw away the `hidden: false` in
+	// it, silently un-posing half an animation with nothing on screen to say why
+	const frame = { sprite: 'a', ms: 100, layers: { pose: { hidden: false }, bg: { dx: -4, wrap: true } } };
+	const next = patchEffects(frame as any, { layers: { pose: { dy: -1 } } });
+	assert.deepEqual(next.layers, {
+		pose: { dy: -1, hidden: false },
+		bg: { dx: -4, wrap: true }
+	});
+});
+
+test('a null clears one layer entry, and a null `layers` clears them all', () => {
+	const frame = { sprite: 'a', ms: 100, layers: { a: { dx: 2 }, b: { dx: 4 } } };
+	assert.deepEqual(patchEffects(frame as any, { layers: { a: null } }).layers, { b: { dx: 4 } });
+	assert.equal(patchEffects(frame as any, { layers: null }).layers, undefined);
+});
+
+test('the number shorthand merges as dx, keeping the rest of the entry', () => {
+	const frame = { sprite: 'a', ms: 100, layers: { road: { wrap: true, hidden: false } } };
+	assert.deepEqual(patchEffects(frame as any, { layers: { road: -8 } }).layers, {
+		road: { dx: -8, wrap: true, hidden: false }
+	});
+});

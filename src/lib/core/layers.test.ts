@@ -190,3 +190,29 @@ test('a per-layer rotate leaves the source buffer alone', () => {
 	flatten(s, 2, { a: { rotate: 90 } });
 	assert.deepEqual(Array.from(s.layers[0].pixels), [1, 2, 3, 4], 'applyFx copies, never mutates');
 });
+
+test('a layer rotate turns about cx/cy, not the canvas', () => {
+	// a wheel is never at the grid centre — without a hub it swings across the canvas instead of
+	// spinning in place, which is what the docs promise it does
+	const s = sprite(['w', [0, 0, 0, 0, 9, 0, 0, 0, 0]]); // 3x3, mark at (1,1) — the centre
+	assert.deepEqual(Array.from(flatten(s, 3, { w: { rotate: 90, cx: 1, cy: 1 } })), [0, 0, 0, 0, 9, 0, 0, 0, 0],
+		'a mark on its own hub does not move');
+
+	const off = sprite(['w', [9, 0, 0, 0, 0, 0, 0, 0, 0]]); // mark at (0,0)
+	const aboutSelf = Array.from(flatten(off, 3, { w: { rotate: 90, cx: 0, cy: 0 } }));
+	const aboutCanvas = Array.from(flatten(off, 3, { w: { rotate: 90 } }));
+	assert.equal(aboutSelf[0], 9, 'about its own centre it stays put');
+	assert.notDeepEqual(aboutSelf, aboutCanvas, 'and that differs from the default canvas centre');
+});
+
+test('a layer rotate never mutates the live buffer', () => {
+	const s = sprite(['w', [1, 2, 3, 4]]);
+	flatten(s, 2, { w: { rotate: 90, cx: 0, cy: 0 } });
+	assert.deepEqual(Array.from(s.layers[0].pixels), [1, 2, 3, 4]);
+});
+
+test('an out-of-range rotation centre is clamped, never thrown', () => {
+	// this runs inside a render effect: a stored 999 must not take the canvas down on every redraw
+	const s = sprite(['w', [1, 2, 3, 4]]);
+	assert.doesNotThrow(() => flatten(s, 2, { w: { rotate: 90, cx: 999, cy: -5 } }));
+});

@@ -8,7 +8,7 @@
 // Layers are non-destructive editing *within* one sprite: an outline you can redraw without
 // touching the fill underneath. They are deliberately not per-frame — a `Frame` names a sprite, not
 // a layer set (see types.ts), so "same body, different arm per frame" is still separate sprites.
-import { applyFx, blank, stamp, type GridSize, type Pixels } from './grid.ts';
+import { applyFx, blank, rotate as spin, stamp, type GridSize, type Pixels } from './grid.ts';
 import type { Arrangement, Layer, Sprite } from './types.ts';
 
 /** What a sprite's first layer is called, and what every pre-layers sprite migrates into. */
@@ -39,16 +39,18 @@ export function flatten(sprite: Sprite, grid: number, view?: Arrangement): Uint8
 		// Colour and geometry first, position second. That is fx's own order (invert -> hue -> flip ->
 		// rotate -> displace), with the displace handed to `stamp` instead so it can wrap — which
 		// `shift`, and therefore a whole-frame `fx.dx`, cannot do.
-		const px =
-			v && (v.invert || v.hue || v.rotate || v.flipX || v.flipY)
-				? applyFx(layer.pixels, grid, {
-						invert: v.invert,
-						hue: v.hue,
-						rotate: v.rotate,
-						flipX: v.flipX,
-						flipY: v.flipY
-					})
-				: layer.pixels;
+		let px = layer.pixels;
+		if (v && (v.invert || v.hue || v.flipX || v.flipY))
+			px = applyFx(px, grid, { invert: v.invert, hue: v.hue, flipX: v.flipX, flipY: v.flipY });
+		if (v?.rotate) {
+			// rotated about `cx`/`cy` when given, so a wheel turns on its hub instead of swinging across
+			// the canvas. Clamped rather than validated: this runs inside a render effect, where a throw
+			// would take the canvas down with it.
+			if (px === layer.pixels) px = new Uint8Array(px); // never rotate the live buffer in place
+			const centre = (n: number | undefined) =>
+				Math.min(grid - 1, Math.max(0, Math.round((n ?? (grid - 1) / 2) * 2) / 2));
+			spin(px, grid, v.rotate, centre(v.cx), centre(v.cy));
+		}
 		// same blit as `stamp`, because it is the same operation: paint a buffer into another at an
 		// offset, transparent pixels leaving what is underneath alone
 		stamp(out, px, grid, v?.dx ?? 0, v?.dy ?? 0, v?.wrap ?? false);

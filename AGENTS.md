@@ -176,9 +176,16 @@ An arrangement also takes **the same geometry and colour keys `fx` does** — `i
 layers: { spokes: { rotate: 15 * i }, fg: { dx: -48 * i, wrap: true, hue: 'blue' } }
 ```
 
-A spinning wheel is one layer plus a `rotate` per frame, rather than a drawn pose per frame. Colour
-and geometry are applied first and the position second, which is `fx`'s own order — except that the
-displacement goes through `stamp`, so unlike a whole-frame `fx.dx` it can `wrap`.
+A spinning wheel is one layer plus a `rotate` per frame, rather than a drawn pose per frame — but
+give it `cx`/`cy`, or it turns about the **grid** centre and swings across the canvas instead of
+turning in place:
+
+```js
+layers: { wheel: { rotate: 45 * i, cx: 48, cy: 96 } }   // on its own hub
+```
+
+Colour and geometry are applied first and the position second, which is `fx`'s own order — except
+that the displacement goes through `stamp`, so unlike a whole-frame `fx.dx` it can `wrap`.
 
 Not `trail`: a trail reaches back into *other* frames, so a per-layer one would have to resolve every
 ghost frame's arrangement of that layer too. That is a different feature.
@@ -186,9 +193,13 @@ ghost frame's arrangement of that layer too. That is a different feature.
 `set_effects` patches arrangements too, merged per layer name:
 
 ```js
-frogsprite.set_effects('*', { layers: { road: { wrap: true } } });
-frogsprite.set_effects(3, { layers: null });   // clear them on frame 3
+frogsprite.set_effects('*', { layers: { road: { wrap: true } } });   // merged, key by key
+frogsprite.set_effects(3, { layers: { road: null } });               // clear one layer's entry
+frogsprite.set_effects(3, { layers: null });                         // clear them all
 ```
+
+Merging goes all the way down: patching `{ pose: { dy: -1 } }` keeps the `hidden` already sitting in
+`pose`, and leaves every other layer alone. A number is `dx` shorthand and merges the same way.
 
 The pixels still live on the *sprite* — what a frame carries is only an arrangement of them. So two
 animations over the same sprite can scroll it at different speeds, and neither touches the art.

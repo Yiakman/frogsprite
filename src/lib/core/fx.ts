@@ -222,6 +222,11 @@ export function readArrangement(v: any): Arrangement | undefined {
 		if (fx?.invert) view.invert = true;
 		if (fx?.hue) view.hue = fx.hue;
 		if (fx?.rotate) view.rotate = fx.rotate;
+		// kept as given; flatten clamps, because a stored 999 must not throw on every redraw
+		for (const k of ['cx', 'cy'] as const) {
+			const n = Number(spec[k]);
+			if (Number.isFinite(n) && n >= 0 && Number.isInteger(n * 2)) view[k] = n;
+		}
 		if (fx?.flipX) view.flipX = true;
 		if (fx?.flipY) view.flipY = true;
 		// tri-state on purpose: absent leaves the layer's own `hidden` alone, where `false` overrides
@@ -251,7 +256,8 @@ export type EffectPatch = {
 	fx?: FxPatch | null;
 	trail?: Trail | number | null;
 	transition?: Transition | string | null;
-	layers?: Arrangement | null;
+	/** Per layer: an object merged key-by-key, a number as `dx` shorthand, or null to clear one. */
+	layers?: Record<string, LayerView | number | null> | null;
 };
 
 /**
@@ -282,10 +288,22 @@ export function patchEffects(frame: Frame, patch: EffectPatch): Frame {
 		else delete next.transition;
 	}
 	if (patch.layers !== undefined) {
-		// merged per layer name, like fx is per key: nudging `fuji` leaves the `road` beside it alone
-		const merged = patch.layers === null ? undefined : readArrangement({ ...next.layers, ...patch.layers });
-		if (merged) next.layers = merged;
-		else delete next.layers;
+		if (patch.layers === null) delete next.layers;
+		else {
+			// Merged at *both* levels, and the inner one is the whole point. A single spread merges by
+			// layer name only, so patching `{ pose: { dy: -1 } }` replaced the entry wholesale and threw
+			// away the `hidden: false` sitting in it — one call quietly un-posing half an animation,
+			// with nothing on screen to say why. `fx` merges per key; so does this.
+			const merged: Record<string, any> = { ...next.layers };
+			for (const [name, view] of Object.entries(patch.layers)) {
+				// a null per layer clears that one entry, the way `{ hue: null }` clears one fx key
+				if (view === null) delete merged[name];
+				else merged[name] = { ...merged[name], ...(typeof view === 'number' ? { dx: view } : view) };
+			}
+			const validated = readArrangement(merged);
+			if (validated) next.layers = validated;
+			else delete next.layers;
+		}
 	}
 	return next;
 }

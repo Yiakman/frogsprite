@@ -26,6 +26,14 @@ export type LayerView = {
 	invert?: boolean;
 	hue?: Hue;
 	rotate?: number;
+	/**
+	 * Centre of a layer `rotate`, in pixel coordinates — whole for a pixel, `.5` for the corner
+	 * between two. Defaults to the grid centre, which is right for a whole-scene spin and wrong for
+	 * anything that has its own hub: a wheel at x=48 rotated about the canvas swings across it
+	 * instead of turning in place.
+	 */
+	cx?: number;
+	cy?: number;
 	flipX?: boolean;
 	flipY?: boolean;
 };
