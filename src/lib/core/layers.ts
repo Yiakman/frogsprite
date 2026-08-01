@@ -1,0 +1,150 @@
+// A sprite's layer stack, and the one rule for putting it back together.
+//
+// The rule is paint-over: walk bottom to top, and a non-transparent pixel wins. That is not a
+// simplification of alpha blending — it is the only blend there can be. Pixels are palette
+// *indices* (see palette.ts), so averaging index 3 and index 9 is meaningless, and there is no
+// alpha channel to weigh them with. `compose()` already blends its motion trail exactly this way.
+//
+// Layers are non-destructive editing *within* one sprite: an outline you can redraw without
+// touching the fill underneath. They are deliberately not per-frame — a `Frame` names a sprite, not
+// a layer set (see types.ts), so "same body, different arm per frame" is still separate sprites.
+import { applyFx, blank, rotate as spin, stamp, type GridSize, type Pixels } from './grid.ts';
+import type { Arrangement, Layer, Sprite } from './types.ts';
+
+/** What a sprite's first layer is called, and what every pre-layers sprite migrates into. */
+export const BASE = 'layer-0';
+
+export const newLayer = (name: string, grid: GridSize): Layer => ({ name, pixels: blank(grid) });
+
+/**
+ * The stack flattened to the pixels you actually see: bottom to top, `TRANSPARENT` is the hole,
+ * hidden layers skipped.
+ *
+ * `view` is one frame's per-layer overrides — an offset, a wrap, a visibility flip. Passing it is
+ * how a single sprite becomes a parallax scroll: the layers hold the art once, and each frame only
+ * says where each one sits. A layer the arrangement does not name is drawn exactly as it is.
+ *
+ * Always a fresh buffer, even for the single-layer case where handing back the live one would save
+ * an allocation. That shortcut works right up until someone routes a write through here, at which
+ * point it paints for a one-layer sprite and silently discards for a two-layer one — the worst kind
+ * of bug to find. `applyFx` allocates on every path anyway, so the saving was never real.
+ */
+export function flatten(sprite: Sprite, grid: number, view?: Arrangement): Uint8Array {
+	const out = new Uint8Array(grid * grid);
+	const layers = sprite.layers; // hoisted: the array is a $state proxy, the buffers inside are not
+	for (const layer of layers) {
+		const v = view?.[layer.name];
+		// the frame's word beats the layer's own, so one frame can show a layer the sprite hides
+		if (v?.hidden ?? layer.hidden) continue;
+		// Colour and geometry first, position second. That is fx's own order (invert -> hue -> flip ->
+		// rotate -> displace), with the displace handed to `stamp` instead so it can wrap — which
+		// `shift`, and therefore a whole-frame `fx.dx`, cannot do.
+		let px = layer.pixels;
+		if (v && (v.invert || v.hue || v.flipX || v.flipY))
+			px = applyFx(px, grid, { invert: v.invert, hue: v.hue, flipX: v.flipX, flipY: v.flipY });
+		if (v?.rotate) {
+			// rotated about `cx`/`cy` when given, so a wheel turns on its hub instead of swinging across
+			// the canvas. Clamped rather than validated: this runs inside a render effect, where a throw
+			// would take the canvas down with it.
+			if (px === layer.pixels) px = new Uint8Array(px); // never rotate the live buffer in place
+			const centre = (n: number | undefined) =>
+				Math.min(grid - 1, Math.max(0, Math.round((n ?? (grid - 1) / 2) * 2) / 2));
+			spin(px, grid, v.rotate, centre(v.cx), centre(v.cy));
+		}
+		// same blit as `stamp`, because it is the same operation: paint a buffer into another at an
+		// offset, transparent pixels leaving what is underneath alone
+		stamp(out, px, grid, v?.dx ?? 0, v?.dy ?? 0, v?.wrap ?? false);
+	}
+	return out;
+}
+
+// --- scrolling ---------------------------------------------------------------
+// A layer scrolled `s` px per frame over `n` frames has moved `n·s` px by the time the animation
+// loops. That only looks seamless if it lands on a whole number of the art's own repeats — otherwise
+// the last frame cuts back to the first mid-tile and the whole scene visibly jumps. Getting it wrong
+// is invisible in any single frame and obvious the moment it plays, which is the worst way for a
+// mistake to behave, so the arithmetic lives here rather than in the author's head.
+
+const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+
+/**
+ * The smallest horizontal repeat in a buffer: the least `p` where sliding the whole thing `p` px
+ * round leaves it identical. Art with no repeat comes back as `grid`, which is the honest answer —
+ * it repeats once per screen.
+ *
+ * Only divisors of `grid` can qualify (if a shift of `p` maps the buffer onto itself then so does
+ * `gcd(p, grid)`), so this tries a handful of candidates rather than every offset.
+ */
+export function period(pixels: Pixels, grid: number): number {
+	for (let p = 1; p < grid; p++) {
+		if (grid % p) continue;
+		let same = true;
+		for (let y = 0; y < grid && same; y++)
+			for (let x = 0; x < grid; x++)
+				if (pixels[y * grid + x] !== pixels[y * grid + ((x + p) % grid)]) {
+					same = false;
+					break;
+				}
+		if (same) return p;
+	}
+	return grid;
+}
+
+/** Whether `frames` of scrolling at `speed` lands back on a whole number of repeats. */
+export const loops = (period: number, speed: number, frames: number): boolean =>
+	(frames * Math.abs(Math.round(speed))) % period === 0;
+
+/**
+ * Whether scrolling at `speed` actually *moves* art that repeats every `period`.
+ *
+ * A step that is a whole number of repeats lands every frame on pixels identical to frame 0, so the
+ * layer is perfectly still — and `loops` says yes, because a scroll that never moves trivially ends
+ * where it began. That combination is the one failure `scroll_layer` cannot let through quietly: it
+ * is invisible in a still, invisible in the return value, and reads on playback as a layer someone
+ * forgot to animate.
+ */
+export const moves = (period: number, speed: number): boolean =>
+	Math.abs(Math.round(speed)) % period !== 0;
+
+/**
+ * The smallest speed that loops over `frames`. Every speed that works is a multiple of this, so it
+ * is both the answer to "what should I have used?" and the spacing of every other valid answer.
+ */
+export const scrollStep = (period: number, frames: number): number =>
+	period / gcd(frames % period || period, period);
+
+/**
+ * The other way out of a scroll that will not loop: keep the speed and change the frame count. Every
+ * count that works is a multiple of this. Author-facing, because "slow down" and "add frames" are
+ * genuinely different decisions and only one of them changes how the motion reads.
+ */
+export const frameStep = (period: number, speed: number): number => {
+	const s = Math.abs(Math.round(speed)) % period;
+	return s ? period / gcd(s, period) : 1;
+};
+
+/**
+ * Which of `count` poses frame `i` shows, holding each for `every` frames. The pedal cycle to
+ * `scroll_layer`'s scroll: a walk or a pedal stroke is a short ring of drawings advanced one step at
+ * a time, and writing that by hand is an `i % n` nobody gets wrong twice but everybody writes once.
+ */
+export const poseAt = (i: number, count: number, every = 1): number =>
+	Math.floor(i / Math.max(1, Math.trunc(every))) % count;
+
+/**
+ * Whether a pose ring closes cleanly over `frames`. Same failure as a scroll that does not loop:
+ * land mid-cycle and the last frame cuts back to the first with the legs in the wrong place.
+ */
+export const cycles = (frames: number, count: number, every = 1): boolean =>
+	frames % (count * Math.max(1, Math.trunc(every))) === 0;
+
+/** A layer by name, or the sprite's top one. Throws with the stack, since the name is user input. */
+export function layerOf(sprite: Sprite, name?: string): Layer {
+	if (!name) return sprite.layers[sprite.layers.length - 1];
+	const found = sprite.layers.find((l) => l.name === name);
+	if (!found)
+		throw new Error(
+			`no layer "${name}" in sprite "${sprite.name}" (has ${sprite.layers.map((l) => l.name).join(', ')})`
+		);
+	return found;
+}

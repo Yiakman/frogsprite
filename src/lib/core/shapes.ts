@@ -124,10 +124,63 @@ export function line(
 	y0: number,
 	x1: number,
 	y1: number,
-	color: number
+	color: number,
+	width = 1
 ): number {
+	const w = least(width, 1, 'width');
 	const cells = new Set<number>();
 	lineCells(cells, grid, whole(x0, 'x0'), whole(y0, 'y0'), whole(x1, 'x1'), whole(y1, 'y1'));
+	if (w === 1) return paint(pixels, cells, color);
+	// Thicken by growing every cell into a w×w block. That gives square caps and square joins, which
+	// is what a hand-drawn thick line in pixel art looks like anyway — a round pen would need a
+	// distance test per cell and would only differ at the two ends.
+	const before = Math.floor((w - 1) / 2);
+	const after = w - 1 - before;
+	const thick = new Set<number>();
+	for (const c of cells) {
+		const cx = c % grid;
+		const cy = (c / grid) | 0;
+		for (let dy = -before; dy <= after; dy++)
+			for (let dx = -before; dx <= after; dx++) add(thick, grid, cx + dx, cy + dy);
+	}
+	return paint(pixels, thick, color);
+}
+
+/** Cells of an axis-aligned box between two corners, given in either order. */
+function rectCells(
+	cells: Set<number>,
+	grid: number,
+	x0: number,
+	y0: number,
+	x1: number,
+	y1: number,
+	fill: boolean
+) {
+	const lx = Math.min(x0, x1);
+	const hx = Math.max(x0, x1);
+	const ly = Math.min(y0, y1);
+	const hy = Math.max(y0, y1);
+	for (let py = Math.max(0, ly); py <= Math.min(grid - 1, hy); py++)
+		for (let px = Math.max(0, lx); px <= Math.min(grid - 1, hx); px++)
+			if (fill || px === lx || px === hx || py === ly || py === hy) add(cells, grid, px, py);
+}
+
+/**
+ * Corner to corner, in either order — the rectangle `square` cannot draw. Most things in a scene
+ * are wider than they are tall, or the reverse.
+ */
+export function rect(
+	pixels: Pixels,
+	grid: number,
+	x0: number,
+	y0: number,
+	x1: number,
+	y1: number,
+	color: number,
+	fill = true
+): number {
+	const cells = new Set<number>();
+	rectCells(cells, grid, whole(x0, 'x0'), whole(y0, 'y0'), whole(x1, 'x1'), whole(y1, 'y1'), fill);
 	return paint(pixels, cells, color);
 }
 
@@ -144,12 +197,9 @@ export function square(
 	const x0 = whole(x, 'x');
 	const y0 = whole(y, 'y');
 	const s = least(size, 1, 'size');
-	const x1 = x0 + s - 1;
-	const y1 = y0 + s - 1;
+	// a square is the rectangle whose sides match — one rasteriser, so the two cannot drift
 	const cells = new Set<number>();
-	for (let py = Math.max(0, y0); py <= Math.min(grid - 1, y1); py++)
-		for (let px = Math.max(0, x0); px <= Math.min(grid - 1, x1); px++)
-			if (fill || px === x0 || px === x1 || py === y0 || py === y1) add(cells, grid, px, py);
+	rectCells(cells, grid, x0, y0, x0 + s - 1, y0 + s - 1, fill);
 	return paint(pixels, cells, color);
 }
 

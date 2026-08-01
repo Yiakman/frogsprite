@@ -52,12 +52,31 @@
 		render(canvas.getContext('2d')!, pixels, grid, grid, silhouette ?? undefined);
 	});
 
+	/**
+	 * Aim a zoomed canvas. Magnifying without this gives you a canvas bigger than the pane and no way
+	 * to say which part you meant, which is most of why zoom was unusable at 128.
+	 */
+	let stage: HTMLDivElement | undefined = $state();
+	$effect(() => {
+		const at = editor.zoomAt;
+		void editor.zoom; // re-aim after the width changes, not before
+		if (!at || !stage) return;
+		const box = stage.querySelector('.grid') as HTMLElement | null;
+		if (!box) return;
+		const cell = box.clientWidth / grid;
+		stage.scrollLeft = (at.x + 0.5) * cell - stage.clientWidth / 2;
+		stage.scrollTop = (at.y + 0.5) * cell - stage.clientHeight / 2;
+		editor.zoomAt = null; // a one-shot aim, so scrolling by hand afterwards is not fought
+	});
+
 	/** The cell the stroke was last on, or -1 between strokes. */
 	let from = -1;
 
 	function paint(i: number) {
 		if (!live || i < 0 || i === from) return; // a drag re-enters the same cell constantly
-		const pixels = editor.shown!.pixels;
+		// the active layer, not the flattened sprite the canvas is showing: a stroke on a spot another
+		// layer covers lands underneath it and stays invisible, which is what layers mean
+		const pixels = editor.shownLayer!.pixels;
 		const prev = from;
 		from = i;
 		if (prev < 0) {
@@ -91,6 +110,7 @@
 <!-- drag-and-drop has no keyboard equivalent by nature; the Import button covers that path -->
 <div
 	class="stage"
+	bind:this={stage}
 	class:dropping
 	role="region"
 	aria-label="Sprite canvas — drop an image here to pixelate it"
@@ -109,6 +129,7 @@
 			class:live
 			class:composed={showingComposite}
 			style:--n={grid}
+			style:--zoom={editor.zoom}
 			style:background={backdrop}
 			role="img"
 			aria-label="{grid} by {grid} pixel canvas showing {sprite.name}"
@@ -185,6 +206,8 @@
 		gap: 0.75rem;
 		padding: 1rem;
 		border: 2px dashed transparent;
+		/* a zoomed canvas is meant to outgrow the pane — that is the point of zooming */
+		overflow: auto;
 	}
 	.stage.dropping {
 		border-color: #7cf;
@@ -199,7 +222,8 @@
 			#232323 270deg
 		);
 		position: relative;
-		width: min(64vh, 100%);
+		width: calc(min(64vh, 100%) * var(--zoom, 1));
+		flex: none;
 		aspect-ratio: 1;
 		border: 1px solid #444;
 		background-size: calc(200% / var(--n)) calc(200% / var(--n));

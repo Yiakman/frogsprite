@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { GRIDS, reflect, rotate, SIDES } from './grid.ts';
+import { GRIDS, SIDES, reflect, rotate, shift, stamp, tile, upscale } from './grid.ts';
 
 /** 4x4 grid from rows of digits, for readable expectations. */
 const grid4 = (...rows: string[]) => rows.flatMap((r) => [...r].map(Number));
@@ -172,4 +172,113 @@ test('reflect produces a genuinely symmetric result on every grid', () => {
 				assert.equal(py[y * g + x], py[(g - 1 - y) * g + x], `grid ${g} asymmetric at ${x},${y}`);
 	}
 	assert.deepEqual(SIDES, ['left', 'right', 'up', 'down']);
+});
+
+test('upscale expands each pixel into a whole block', () => {
+	// 2x2 -> 4x4: every source pixel becomes a 2x2 block, in place, nothing resampled
+	const out = upscale([1, 2, 3, 4], 2 as any, 4 as any);
+	assert.deepEqual(Array.from(out), [1, 1, 2, 2, 1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 4, 4]);
+});
+
+test('upscale keeps transparency transparent and invents no colour', () => {
+	const out = upscale([0, 5, 0, 0], 2 as any, 4 as any);
+	assert.deepEqual(Array.from(out.slice(0, 4)), [0, 0, 5, 5]);
+	assert.deepEqual([...new Set(out)].sort(), [0, 5], 'only the colours that were already there');
+});
+
+test('upscale at the same grid is a plain copy, detached from the source', () => {
+	const src = Uint8Array.of(1, 2, 3, 4);
+	const out = upscale(src, 2 as any, 2 as any);
+	assert.deepEqual(Array.from(out), [1, 2, 3, 4]);
+	out[0] = 9;
+	assert.equal(src[0], 1);
+});
+
+test('upscale refuses to go down, and says how to', () => {
+	// downscaling picks one winner per block, which eats every one-pixel highlight — refusing says
+	// so rather than quietly damaging the art
+	assert.throws(() => upscale(new Uint8Array(16), 4 as any, 2 as any), /upscale only.*import_image/s);
+});
+
+test('stamp paints a source into a destination at an offset', () => {
+	const dst = new Uint8Array(16); // 4x4
+	const src = Uint8Array.from([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+	assert.equal(stamp(dst, src, 4, 2, 1), 1, 'one painted cell');
+	assert.equal(dst[1 * 4 + 2], 1, 'moved to (2,1)');
+	assert.equal(dst[0], 0, 'and nothing left behind');
+});
+
+test('stamp leaves what is underneath alone where the source is transparent', () => {
+	const dst = Uint8Array.from([5, 5, 5, 5]);
+	const src = Uint8Array.from([0, 7, 0, 0]);
+	stamp(dst, src, 2, 0, 0);
+	assert.deepEqual(Array.from(dst), [5, 7, 5, 5], 'paint-over, not replace');
+});
+
+test('stamp drops what falls off the edge, or wraps it round', () => {
+	const off = new Uint8Array(4);
+	assert.equal(stamp(off, Uint8Array.from([0, 9, 0, 0]), 2, 1, 0), 0, 'pushed off and dropped');
+	assert.deepEqual(Array.from(off), [0, 0, 0, 0]);
+
+	const round = new Uint8Array(4);
+	assert.equal(stamp(round, Uint8Array.from([0, 9, 0, 0]), 2, 1, 0, true), 1, 'wrapped, so kept');
+	assert.equal(round[0], 9, 're-entered on the opposite side — this is what scrolls a tile');
+});
+
+test('stamp survives a junk offset rather than smearing everything off-canvas', () => {
+	const dst = new Uint8Array(4);
+	stamp(dst, Uint8Array.from([3, 0, 0, 0]), 2, NaN as unknown as number, undefined as unknown as number);
+	assert.equal(dst[0], 3, 'NaN is treated as no offset');
+});
+
+test('shift wraps what falls off the edge when asked', () => {
+	const drop = Uint8Array.of(1, 2, 3, 4);
+	shift(drop, 2, 1, 0);
+	assert.deepEqual(Array.from(drop), [0, 1, 0, 3], 'the right column is lost');
+
+	const round = Uint8Array.of(1, 2, 3, 4);
+	shift(round, 2, 1, 0, true);
+	assert.deepEqual(Array.from(round), [2, 1, 4, 3], 'it comes back on the left instead');
+});
+
+test('a wrapped shift keeps every painted cell, which is what scrolls a tile', () => {
+	const px = Uint8Array.from({ length: 16 }, (_, i) => (i % 3 ? 0 : 9));
+	const before = px.filter((v) => v).length;
+	shift(px, 4, 3, 1, true);
+	assert.equal(px.filter((v) => v).length, before, 'nothing lost going round');
+});
+
+test('tile repeats the leftmost columns across the grid', () => {
+	// 4 wide, period 2: columns [1,2] become [1,2,1,2] on every row
+	const px = Uint8Array.from([1, 2, 9, 9, 3, 4, 9, 9, 5, 6, 9, 9, 7, 8, 9, 9]);
+	assert.equal(tile(px, 4, 2), 2, 'two copies across');
+	assert.deepEqual(Array.from(px), [1, 2, 1, 2, 3, 4, 3, 4, 5, 6, 5, 6, 7, 8, 7, 8]);
+});
+
+test('tile makes the period real, which is what scroll_layer measures', () => {
+	const px = Uint8Array.from({ length: 64 }, (_, i) => (i % 8 < 3 ? 7 : 0));
+	// deliberately break the tiling, then repair it
+	px[5] = 4;
+	tile(px, 8, 4);
+	for (let y = 0; y < 8; y++)
+		for (let x = 0; x < 4; x++)
+			assert.equal(px[y * 8 + x], px[y * 8 + x + 4], `(${x},${y}) must match its repeat`);
+});
+
+test('tile reads the motif before writing, so it cannot copy its own output', () => {
+	const px = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7]);
+	tile(px, 4, 1); // one column, smeared across
+	for (let y = 0; y < 4; y++)
+		for (let x = 0; x < 4; x++) assert.equal(px[y * 4 + x], px[y * 4], 'every column is column 0');
+});
+
+test('tile refuses a period that does not divide the grid', () => {
+	assert.throws(() => tile(new Uint8Array(64), 8, 3), /does not divide.*1, 2, 4, 8/s);
+	assert.throws(() => tile(new Uint8Array(64), 8, 0), /does not divide/);
+});
+
+test('tile from an offset window', () => {
+	const px = Uint8Array.from([9, 1, 2, 9, 9, 3, 4, 9, 9, 5, 6, 9, 9, 7, 8, 9]);
+	tile(px, 4, 2, 1); // take columns 1..2
+	assert.deepEqual(Array.from(px).slice(0, 4), [1, 2, 1, 2]);
 });

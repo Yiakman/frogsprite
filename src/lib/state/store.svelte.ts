@@ -1,21 +1,35 @@
 import { compose, progress, steps } from '../core/fx.ts';
+import { flatten, layerOf } from '../core/layers.ts';
 import { PALETTE } from '../core/palette.ts';
+import { targetLayer } from '../core/selection.ts';
 import * as storage from '../io/storage.ts';
 
 import type { GridSize } from '../core/grid.ts';
-import type { Frame, Package, Sprite } from '../core/types.ts';
+import type { Frame, Layer, Package, Sprite } from '../core/types.ts';
 
 const find = <T extends { name: string }>(list: T[], name: string) =>
 	list.find((x) => x.name === name);
 
 class Editor {
 	packages = $state<Package[]>([]);
-	sel = $state({ pkg: '', set: '', sprite: '', anim: '' });
+	sel = $state({ pkg: '', set: '', sprite: '', anim: '', layer: '' });
 	color = $state(1);
 	/** Canvas backdrop: a palette index, or 0 for the checkerboard. A view setting, not persisted. */
 	background = $state(0);
 	/** Show every painted pixel as this index instead of its own colour. 0 is off. Also a view setting. */
 	silhouette = $state(0);
+	/**
+	 * Canvas magnification, 1 = fit the pane. A view setting like the two above: not persisted, and
+	 * exports never see it. At 128 a fitted canvas is a few hundred CSS pixels, which is fine for
+	 * composition and hopeless for a two-pixel detail.
+	 */
+	zoom = $state(1);
+	/**
+	 * Where a zoomed canvas is aimed, in pixel coordinates, or null for "leave the scroll alone".
+	 * Magnification without aim is unusable at 128: you get a canvas larger than the pane and no way
+	 * to say which part of it you meant. The canvas scrolls to centre this and clears it.
+	 */
+	zoomAt = $state<{ x: number; y: number } | null>(null);
 	/**
 	 * Draw the sprite as it is stored, ignoring the frame's effects — the thing an edit would land
 	 * on, rather than what the animation makes of it. A view setting: nothing is painted or saved.
@@ -78,6 +92,22 @@ class Editor {
 		return this.sprite;
 	}
 
+	/**
+	 * The layer an edit lands on — the canvas paints here, and `commands.target()` resolves the same
+	 * way through the same `targetLayer`, so the API and the pointer can never end up on different
+	 * layers. Follows `shown`, not `sprite`, because a held frame is editable.
+	 */
+	get shownLayer(): Layer | undefined {
+		const sprite = this.shown;
+		if (!sprite) return undefined;
+		const name = targetLayer(
+			sprite.layers.map((l) => [l.name, !!l.hidden] as [string, boolean]),
+			undefined,
+			this.sel.layer
+		);
+		return layerOf(sprite, name);
+	}
+
 	/** True while the canvas is showing something other than the raw sprite, so painting is off. */
 	get transformed() {
 		const f = this.frame >= 0 ? this.frames[this.frame] : undefined;
@@ -92,14 +122,16 @@ class Editor {
 		void this.revision;
 		const set = this.set;
 		const frames = this.frames;
-		// `raw` peeks past the effects at the sprite as it is stored — the thing an edit would land
-		// on. `shown` already resolves to the held frame's sprite, so this is the whole of it.
-		if (this.raw) return this.shown?.pixels;
+		// `raw` peeks past the frame's *effects*, not past the layers — a multi-layer sprite showing
+		// only one layer here would read as a bug rather than as a peek. `shown` already resolves to
+		// the held frame's sprite, so this is the whole of it.
+		const grid = set?.grid ?? 0;
+		if (this.raw) return this.shown && flatten(this.shown, grid);
 		if (set && this.frame >= 0 && frames.length) {
 			const n = steps(frames[this.frame], set.grid);
 			return compose(frames, this.frame, set.sprites, set.grid, progress(this.phase, n));
 		}
-		return this.sprite?.pixels;
+		return this.sprite && flatten(this.sprite, grid);
 	}
 
 	requirePackage() {
@@ -237,6 +269,7 @@ class Editor {
 				showing: this.shown?.name ?? null
 			},
 			view: {
+				zoom: this.zoom,
 				background: this.background ? PALETTE[this.background] : 'checkerboard',
 				silhouette: this.silhouette ? PALETTE[this.silhouette] : 'off',
 				raw: this.raw
@@ -246,7 +279,14 @@ class Editor {
 				sets: p.sets.map((s) => ({
 					name: s.name,
 					grid: s.grid,
-					sprites: s.sprites.map((sp) => sp.name),
+					// objects, not bare names: this is the only place an agent can discover that a
+					// sprite has layers at all, and a one-layer sprite says so plainly
+					// `{ name, hidden }`, not "name (hidden)": this is read by agents, and parsing a flag
+					// out of a display suffix is unpleasant. It is also the shape set_layers accepts.
+					sprites: s.sprites.map((sp) => ({
+						name: sp.name,
+						layers: sp.layers.map((l) => ({ name: l.name, hidden: !!l.hidden }))
+					})),
 					animations: s.animations.map((a) => ({
 						name: a.name,
 						frames: a.frames.map((f) => ({ ...f }))
@@ -283,6 +323,7 @@ class Editor {
 			pkg: pkg.name,
 			set: set?.name ?? '',
 			sprite: set?.sprites[0]?.name ?? '',
+			layer: set?.sprites[0]?.layers[0]?.name ?? '',
 			anim: set?.animations[0]?.name ?? ''
 		};
 	}
@@ -291,12 +332,12 @@ class Editor {
 export const editor = new Editor();
 
 /**
- * Read a sprite's pixels from anywhere reactive — a component, a `$derived`, an `$effect`. Writes
- * to the buffer are invisible to Svelte (see `Sprite`), so anything that reaches for
- * `sprite.pixels` directly renders once and then never updates again. Going through here
- * subscribes to `revision`, which every save() bumps. Writers can use `sprite.pixels` as they are.
+ * Read a layer's pixels from anywhere reactive — a component, a `$derived`, an `$effect`. Writes
+ * to the buffer are invisible to Svelte (see `Layer`), so anything that reaches for
+ * `layer.pixels` directly renders once and then never updates again. Going through here
+ * subscribes to `revision`, which every save() bumps. Writers can use `layer.pixels` as they are.
  */
-export function pixelsOf(sprite: Sprite): Uint8Array {
+export function pixelsOf(layer: Layer): Uint8Array {
 	void editor.revision;
-	return sprite.pixels;
+	return layer.pixels;
 }

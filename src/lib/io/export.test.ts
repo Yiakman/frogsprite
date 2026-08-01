@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { toAnimatedSVG, toSVG } from './export.ts';
 
+/** A one-layer sprite — the simple case, and what these fixtures were before layers. */
+const sp = (name: string, pixels: Uint8Array) => ({ name, layers: [{ name: 'layer-0', pixels }] });
+
 test('toSVG merges horizontal runs and skips transparent pixels', () => {
 	const svg = toSVG(Uint8Array.of(1, 1, 0, 2), 2);
 	assert.equal((svg.match(/<rect/g) ?? []).length, 2); // [1,1] merges; the 0 is skipped
@@ -13,8 +16,8 @@ test('toSVG merges horizontal runs and skips transparent pixels', () => {
 
 test('toAnimatedSVG emits one keyframed group per frame over the total duration', () => {
 	const sprites = [
-		{ name: 'a', pixels: Uint8Array.of(1, 0, 0, 0) },
-		{ name: 'b', pixels: Uint8Array.of(0, 0, 0, 2) }
+		sp('a', Uint8Array.of(1, 0, 0, 0)),
+		sp('b', Uint8Array.of(0, 0, 0, 2))
 	];
 	const svg = toAnimatedSVG(sprites, [
 		{ sprite: 'a', ms: 100 },
@@ -28,7 +31,7 @@ test('toAnimatedSVG emits one keyframed group per frame over the total duration'
 });
 
 test('toAnimatedSVG bakes effects, and splits a transition into sub-step groups', () => {
-	const sprites = [{ name: 'a', pixels: Uint8Array.of(1, 1, 1, 1) }];
+	const sprites = [sp('a', Uint8Array.of(1, 1, 1, 1))];
 	// 2 grid, 100ms → min(grid, 100/16) = 2 sub-steps, each holding half the cycle
 	const frames = [{ sprite: 'a', ms: 100, transition: { kind: 'scan-down' as const } }];
 	const svg = toAnimatedSVG(sprites, frames, 2);

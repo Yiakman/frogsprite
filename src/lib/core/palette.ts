@@ -118,3 +118,25 @@ export function nearestIndex(r: number, g: number, b: number): number {
 	}
 	return best;
 }
+
+/**
+ * `steps` palette indices blending evenly from one colour to another, ends included — the gradient
+ * you would otherwise snap by hand, one hex at a time, against a palette whose channels only take
+ * 00/33/66/99/cc/ff.
+ *
+ * Interpolation happens in RGB and only the *result* is snapped, so a long ramp keeps its shape
+ * instead of quantising twice. Neighbouring steps can still land on the same index — the palette has
+ * 6 levels per channel, so asking for 20 steps between two nearby colours cannot give you 20
+ * distinct ones, and repeating an index is a truer answer than inventing a colour that is not there.
+ */
+export function ramp(from: number, to: number, steps: number): number[] {
+	const n = Math.max(2, Math.trunc(steps));
+	const [ar, ag, ab] = RGB[from] ?? [0, 0, 0];
+	const [br, bg, bb] = RGB[to] ?? [0, 0, 0];
+	const out: number[] = [];
+	for (let i = 0; i < n; i++) {
+		const t = i / (n - 1);
+		out.push(nearestIndex(ar + (br - ar) * t, ag + (bg - ag) * t, ab + (bb - ab) * t));
+	}
+	return out;
+}

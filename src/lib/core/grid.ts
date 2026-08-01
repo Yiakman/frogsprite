@@ -1,7 +1,8 @@
 // Deliberately a plain module, not part of store.svelte.ts: storage.ts needs this list at runtime,
 // and importing a value from a runes module would drag `$state` into plain-JS consumers like
 // `node --test`. Types are erased at compile time, so only real values matter here.
-import { TRANSPARENT } from './palette.ts';
+import { invert, tint, TRANSPARENT } from './palette.ts';
+import type { Fx } from './fx.ts';
 
 export type GridSize = 8 | 16 | 32 | 64 | 128;
 
@@ -16,6 +17,125 @@ export const GRIDS: GridSize[] = [8, 16, 32, 64, 128];
 
 /** A zeroed buffer — zero is TRANSPARENT, so there is nothing to fill. */
 export const blank = (grid: GridSize): Uint8Array => new Uint8Array(grid * grid);
+
+/**
+ * Repeat the columns `[from, from + period)` across the whole width, replacing what is there.
+ *
+ * This is what makes a scrolling layer's repeat a *guarantee* rather than a hope. `scroll_layer`
+ * only accepts speeds that divide into the art's measured repeat, so authoring that repeat exactly
+ * is the critical step — and doing it by hand fails silently, because a motif that overruns its
+ * period by two pixels has no counterpart at the far edge and quietly doubles the true repeat.
+ *
+ * `period` must divide the grid: anything else leaves a partial tile at the right-hand edge, which
+ * is a seam by construction and would make the layer's repeat the whole grid again.
+ */
+export function tile(pixels: Pixels, grid: number, period: number, from = 0): number {
+	const p = Math.trunc(period);
+	if (!(p >= 1) || grid % p)
+		throw new Error(
+			`a period of ${period} does not divide a ${grid}px grid — use one of ` +
+				`${Array.from({ length: grid }, (_, i) => i + 1).filter((n) => grid % n === 0).join(', ')}`
+		);
+	const start = ((Math.trunc(from) % grid) + grid) % grid;
+	// read the motif out first: writing straight across would copy cells this loop has just replaced
+	const motif = new Uint8Array(p * grid);
+	for (let y = 0; y < grid; y++)
+		for (let x = 0; x < p; x++) motif[y * p + x] = pixels[y * grid + ((start + x) % grid)];
+	let copies = 0;
+	for (let ox = 0; ox < grid; ox += p) {
+		for (let y = 0; y < grid; y++)
+			for (let x = 0; x < p; x++) pixels[y * grid + ox + x] = motif[y * p + x];
+		copies++;
+	}
+	return copies;
+}
+
+/**
+ * A copy of `pixels` with `fx` applied, in a fixed order: invert → hue → flip → rotate → displace.
+ * The source buffer is never touched.
+ *
+ * Lives here rather than in fx.ts because it is pure buffer geometry, and because both `compose`
+ * (whole frames) and `flatten` (single layers) need it — routing it through fx.ts would make
+ * layers.ts import a module that already imports layers.ts.
+ */
+export function applyFx(pixels: Pixels, grid: number, fx?: Fx): Uint8Array {
+	const out = new Uint8Array(pixels);
+	if (!fx) return out;
+	if (fx.invert) for (let i = 0; i < out.length; i++) out[i] = invert(out[i]);
+	if (fx.hue) for (let i = 0; i < out.length; i++) out[i] = tint(out[i], fx.hue);
+	if (fx.flipX) flip(out, grid, 'x');
+	if (fx.flipY) flip(out, grid, 'y');
+	if (fx.rotate) rotate(out, grid, fx.rotate);
+	if (fx.dx || fx.dy) shift(out, grid, fx.dx ?? 0, fx.dy ?? 0);
+	return out;
+}
+
+/**
+ * Paint `src` into `dst` at an offset — the missing verb of *same picture, different position*.
+ * Transparent source pixels leave `dst` alone, which is the one blend rule everything here uses.
+ * `wrap` re-enters what falls off an edge on the opposite side, which is what makes a tile scroll
+ * for ever; without it anything past the edge is dropped, exactly as `shift` does.
+ *
+ * Returns how many cells it painted. Both buffers are the same grid — to cross grids, `upscale`
+ * first.
+ */
+export function stamp(
+	dst: Pixels,
+	src: Pixels,
+	grid: number,
+	dx = 0,
+	dy = 0,
+	wrap = false
+): number {
+	dx = Math.round(dx) || 0; // NaN from a junk argument would smear the whole thing off-canvas
+	dy = Math.round(dy) || 0;
+	let painted = 0;
+	for (let y = 0; y < grid; y++) {
+		for (let x = 0; x < grid; x++) {
+			const p = src[y * grid + x];
+			if (p === TRANSPARENT) continue;
+			let nx = x + dx;
+			let ny = y + dy;
+			if (wrap) {
+				nx = ((nx % grid) + grid) % grid;
+				ny = ((ny % grid) + grid) % grid;
+			} else if (nx < 0 || ny < 0 || nx >= grid || ny >= grid) continue;
+			dst[ny * grid + nx] = p;
+			painted++;
+		}
+	}
+	return painted;
+}
+
+/**
+ * A copy of `pixels` blown up from one grid to a larger one — each source pixel becomes an n×n
+ * block. Every supported grid is a power of two, so the factor is always whole: nothing is
+ * resampled, no colour is invented, and the art is pixel-for-pixel the same drawing.
+ *
+ * Upscale only, and that asymmetry is deliberate rather than missing work. Going the other way has
+ * to pick one winner per block, which drops every one-pixel highlight and breaks any outline
+ * thinner than the factor — on palette-indexed art there is no average to fall back on. Refusing
+ * says so; `export_png` then `import_image` is the path when you do want a smaller version, and it
+ * resamples with the whole image in hand.
+ */
+export function upscale(pixels: Pixels, from: GridSize, to: GridSize): Uint8Array {
+	if (to < from)
+		throw new Error(
+			`can't fit a ${from}x${from} sprite into a ${to}x${to} grid — upscale only. ` +
+				`Export it and import_image() it back to go smaller.`
+		);
+	const n = to / from;
+	const out = new Uint8Array(to * to);
+	if (n === 1) return out.set(pixels), out;
+	for (let y = 0; y < from; y++)
+		for (let x = 0; x < from; x++) {
+			const p = pixels[y * from + x];
+			if (p === TRANSPARENT) continue; // out is already zeroed
+			for (let dy = 0; dy < n; dy++)
+				for (let dx = 0; dx < n; dx++) out[(y * n + dy) * to + x * n + dx] = p;
+		}
+	return out;
+}
 
 export type Side = 'left' | 'right' | 'up' | 'down';
 export const SIDES: Side[] = ['left', 'right', 'up', 'down'];
@@ -104,20 +224,18 @@ export function flip(pixels: Pixels, grid: number, axis: 'x' | 'y'): void {
 	}
 }
 
-/** Move every pixel by (dx, dy), in place. Anything pushed past an edge is dropped. */
-export function shift(pixels: Pixels, grid: number, dx: number, dy: number): void {
-	dx = Math.round(dx) || 0; // NaN from a junk argument would smear the whole sprite off-canvas
-	dy = Math.round(dy) || 0;
-	if (!dx && !dy) return;
+/**
+ * Move every pixel by (dx, dy), in place. Anything pushed past an edge is dropped, unless `wrap`
+ * brings it back in on the opposite side — which is what turns a tile into an endless scroll.
+ *
+ * The move itself is `stamp` into a clean buffer, so there is one blit in this file rather than two
+ * that could disagree about wrapping.
+ */
+export function shift(pixels: Pixels, grid: number, dx: number, dy: number, wrap = false): void {
+	if (!(Math.round(dx) || 0) && !(Math.round(dy) || 0)) return;
 	const next = new Uint8Array(grid * grid);
-	for (let y = 0; y < grid; y++) {
-		for (let x = 0; x < grid; x++) {
-			const nx = x + dx;
-			const ny = y + dy;
-			if (nx < 0 || ny < 0 || nx >= grid || ny >= grid) continue;
-			next[ny * grid + nx] = pixels[y * grid + x];
-		}
-	}
+	stamp(next, pixels, grid, dx, dy, wrap);
+	// in place, never reassign: the sprite's buffer is the one the canvas reads from
 	for (let i = 0; i < next.length; i++) pixels[i] = next[i];
 }
 

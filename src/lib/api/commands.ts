@@ -1,14 +1,15 @@
-import { PALETTE, toIndex, TRANSPARENT } from '../core/palette.ts';
+import { PALETTE, ramp as rampOf, toIndex, TRANSPARENT } from '../core/palette.ts';
 import * as ex from '../io/export.ts';
-import { patchEffects, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
+import { compose, patchEffects, readArrangement, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
 import * as history from '../core/history.ts';
 import * as storage from '../io/storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
-import { blank, GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, type GridSize, type Side } from '../core/grid.ts';
+import { GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
+import { BASE, cycles, flatten, frameStep, layerOf, loops, moves, newLayer, period as periodOf, poseAt, scrollStep } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
 import type { Point } from '../core/shapes.ts';
-import type { Frame, Sprite } from '../core/types.ts';
+import type { Animation, Frame, Layer, Sprite, SpriteSet } from '../core/types.ts';
 import { editor } from '../state/store.svelte.ts';
 
 type Color = number | string | null;
@@ -16,6 +17,9 @@ type Color = number | string | null;
 type ShapeOpts = { fill?: boolean; sprite?: string };
 /** Centre of rotation, in pixel coordinates: whole for a pixel, `.5` for the corner between two. */
 type RotateOpts = { cx?: number; cy?: number; sprite?: string };
+
+/** Everything a frame may carry. `set_animation` refuses anything else rather than dropping it. */
+const FRAME_KEYS = new Set(['sprite', 'ms', 'fx', 'trail', 'transition', 'layers']);
 
 const taken = (list: { name: string }[], name: string, what: string) => {
 	if (!name || typeof name !== 'string') throw new Error(`${what} needs a name`);
@@ -89,8 +93,16 @@ export const endStroke = () => {
 // must save once they have actually finished, not when they hand back a promise. `settle` drops
 // the snapshot again when a command turns out to change nothing, so `mut` on a command that only
 // sometimes paints costs nothing — a verb left unwrapped is the only real error.
+/**
+ * True while `batch()` owns the snapshot. Every command inside one skips its own checkpoint and
+ * settle, which is the whole point: those two serialise the entire document, so the cost of a
+ * command grows with everything else you have open, not with what it draws.
+ */
+let batching = false;
+
 const wrap = (mutating: boolean, fn: any) => {
 	const w = (...args: any[]) => {
+		if (batching) return fn(...args); // the batch takes the snapshot and saves, once, around the lot
 		const before = mutating ? checkpoint() : undefined;
 		let out: unknown;
 		try {
@@ -112,17 +124,161 @@ const mut = <T extends (...a: any[]) => any>(fn: T): T => wrap(true, fn) as unkn
 /** Reads, or changes only the view: selection, playback, `background`, exports, `state`. */
 const ro = <T extends (...a: any[]) => any>(fn: T): T => wrap(false, fn) as unknown as T;
 
-function target(name?: string): { sprite: Sprite; grid: GridSize } {
+/**
+ * The funnel for every command that names a sprite. It hands back **both** the sprite and the one
+ * layer an edit lands on, and picking the wrong one is the easiest mistake in this file:
+ *
+ * - painting verbs use `t.layer` — that is what a layer is for
+ * - the five read/export verbs use `t.sprite` and flatten it, because a sprite is what you look at
+ *
+ * Get that backwards on `print_sprite` and an agent draws a body on one layer, an outline on the
+ * next, reads its work back and sees only the outline. Each of the five is commented at the site.
+ */
+function target(name?: string, layer?: string): { sprite: Sprite; layer: Layer; grid: GridSize } {
 	const set = editor.requireSet();
 	const sprite = name ? set.sprites.find((s) => s.name === name) : editor.requireSprite();
 	if (!sprite) throw new Error(`no sprite named "${name}" in set "${set.name}"`);
-	return { sprite, grid: set.grid };
+	// through the same policy the canvas uses, so the API and the pointer never disagree
+	const which = selection.targetLayer(
+		sprite.layers.map((l) => [l.name, !!l.hidden] as [string, boolean]),
+		layer,
+		editor.sel.layer
+	);
+	return { sprite, layer: layerOf(sprite, which), grid: set.grid };
 }
 
-function put(sprite: Sprite, grid: number, x: number, y: number, color: Color) {
+/** The pixels a read or an export shows: the whole stack, composited. */
+const seen = (t: { sprite: Sprite; grid: GridSize }) => flatten(t.sprite, t.grid);
+
+/**
+ * A detached copy of a sprite, layer for layer, optionally into a larger grid. The one place
+ * `clone_sprite` and `copy_sprite` share, so cross-set copying and same-set cloning cannot drift.
+ */
+function copyOfSprite(src: Sprite, to: string, from: GridSize, into: GridSize): Sprite {
+	return {
+		name: to,
+		layers: src.layers.map((l) => ({
+			name: l.name,
+			pixels: from === into ? l.pixels.slice() : upscale(l.pixels, from, into),
+			...(l.hidden && { hidden: true })
+		}))
+	};
+}
+
+/** The set a copy reads from: named, in a named package, else whatever is active. */
+function source(set?: string, pkg?: string): SpriteSet {
+	const owner = pkg ? editor.packages.find((p) => p.name === pkg) : editor.requirePackage();
+	if (!owner) throw new Error(`no package "${pkg}"`);
+	if (!set) return editor.requireSet();
+	const found = owner.sets.find((s) => s.name === set);
+	if (!found) throw new Error(`no set "${set}" in package "${owner.name}"`);
+	return found;
+}
+
+/**
+ * A sprite to *read*, which unlike one to paint may live in another set entirely — reading is safe
+ * across sets in a way painting is not, since nothing has to agree about grids. `layer` picks one
+ * layer; without it you get the whole stack composited, which is what you are looking at.
+ */
+type ReadOpts = { layer?: string; set?: string; pkg?: string; rect?: [number, number, number, number] };
+
+function reading(sprite?: string, { layer, set, pkg, rect }: ReadOpts = {}) {
+	let found: Sprite;
+	let grid: GridSize;
+	let pixels: Uint8Array;
+	if (!set && !pkg) {
+		const t = target(sprite, layer);
+		[found, grid, pixels] = [t.sprite, t.grid, layer ? t.layer.pixels : seen(t)];
+	} else {
+		const from = source(set, pkg);
+		const hit = sprite ? from.sprites.find((s) => s.name === sprite) : from.sprites[0];
+		if (!hit) throw new Error(`no sprite "${sprite}" in set "${from.name}"`);
+		[found, grid, pixels] = [hit, from.grid, layer ? layerOf(hit, layer).pixels : flatten(hit, from.grid)];
+	}
+	// A window, because 128 lines of 128 characters is not something anyone reads — the thing you
+	// are checking is a 40x35 rider, and the rest is noise you have to scroll past to find it.
+	const [x0, y0, x1, y1] = rect ?? [0, 0, grid - 1, grid - 1];
+	for (const [v, n] of [[x0, 'x0'], [y0, 'y0'], [x1, 'x1'], [y1, 'y1']] as [number, string][])
+		if (!Number.isInteger(v) || v < 0 || v >= grid)
+			throw new Error(`rect ${n} is ${v}, outside 0..${grid - 1}`);
+	if (x1 < x0 || y1 < y0) throw new Error(`rect [${x0},${y0},${x1},${y1}] has no area`);
+	return { sprite: found, grid, pixels, box: [x0, y0, x1, y1] as const };
+}
+
+/** Rows of one window of a buffer, as plain arrays — what an agent reads back and JSON-prints. */
+function windowRows(t: { grid: number; pixels: Uint8Array; box: readonly [number, number, number, number] }) {
+	const [x0, y0, x1, y1] = t.box;
+	const rows: number[][] = [];
+	for (let y = y0; y <= y1; y++) rows.push(Array.from(t.pixels.subarray(y * t.grid + x0, y * t.grid + x1 + 1)));
+	return rows;
+}
+
+/**
+ * Rows of indices as ASCII plus a legend. Glyphs go by ascending palette index rather than by first
+ * appearance, so two dumps of the same colours agree and can be diffed — which is the whole reason
+ * anyone prints the same thing twice. `pin` fixes chosen ones outright, in `paint_map`'s shape.
+ */
+function asciiOf(cells: number[][], pin?: Record<string, Color>) {
+	const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+	const pinned = new Map<number, string>();
+	for (const [ch, c] of Object.entries(pin ?? {})) pinned.set(toIndex(c), ch);
+	const used = [...new Set(cells.flat())].filter((p) => p !== TRANSPARENT).sort((a, b) => a - b);
+	const glyph = new Map<number, string>();
+	let next = 0;
+	for (const i of used) {
+		if (pinned.has(i)) glyph.set(i, pinned.get(i)!);
+		else {
+			while ([...pinned.values()].includes(chars[next % chars.length])) next++;
+			glyph.set(i, chars[next++ % chars.length]);
+		}
+	}
+	return {
+		rows: cells.map((row) => row.map((p) => (p === TRANSPARENT ? '.' : glyph.get(p)!)).join('')),
+		legend: Object.fromEntries([...glyph].map(([i, c]) => [c, `${PALETTE[i]} (${i})`]))
+	};
+}
+
+/**
+ * A *composed frame* — every layer arranged as that frame arranges them, effects and all. Not the
+ * same picture as the sprite: `print_sprite` shows the stack with every pose visible and every
+ * scroll at zero, which is a frame that appears nowhere in the animation. This is what is actually
+ * on screen at frame `i`.
+ */
+function frameAt(i?: number, animation?: string, rect?: [number, number, number, number]) {
+	const set = editor.requireSet();
+	const anim = animOf(animation);
+	if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
+	// default to whatever is held, so `view_frame(3); print_frame()` reads what you are looking at
+	const at = i ?? (editor.frame >= 0 ? editor.frame : 0);
+	if (!Number.isInteger(at) || at < 0 || at >= anim.frames.length)
+		throw new Error(`frame ${at} is outside 0..${anim.frames.length - 1}`);
+	const grid = set.grid;
+	const [x0, y0, x1, y1] = rect ?? [0, 0, grid - 1, grid - 1];
+	for (const [v, n] of [[x0, 'x0'], [y0, 'y0'], [x1, 'x1'], [y1, 'y1']] as [number, string][])
+		if (!Number.isInteger(v) || v < 0 || v >= grid) throw new Error(`rect ${n} is ${v}, outside 0..${grid - 1}`);
+	if (x1 < x0 || y1 < y0) throw new Error(`rect [${x0},${y0},${x1},${y1}] has no area`);
+	// the last sub-step: a frame with a transition reads as finished, matching what a held frame shows
+	return {
+		animation: anim.name,
+		frame: at,
+		grid,
+		pixels: compose(anim.frames, at, set.sprites, grid),
+		box: [x0, y0, x1, y1] as const
+	};
+}
+
+/** An animation in the active set, by name or the selected one. */
+function animOf(name?: string): Animation {
+	const set = editor.requireSet();
+	const anim = name ? set.animations.find((a) => a.name === name) : editor.requireAnimation();
+	if (!anim) throw new Error(`no animation "${name}" in set "${set.name}"`);
+	return anim;
+}
+
+function put(layer: Layer, grid: number, x: number, y: number, color: Color) {
 	if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= grid || y >= grid)
 		throw new Error(`(${x},${y}) is outside the ${grid}x${grid} grid`);
-	sprite.pixels[y * grid + x] = toIndex(color);
+	layer.pixels[y * grid + x] = toIndex(color);
 }
 
 const api = {
@@ -130,7 +286,7 @@ const api = {
 	new_package: mut(function (name: string) {
 		taken(editor.packages, name, 'package');
 		editor.packages.push({ name, sets: [] });
-		editor.sel = { pkg: name, set: '', sprite: '', anim: '' };
+		editor.sel = { pkg: name, set: '', sprite: '', anim: '', layer: '' };
 		return name;
 	}),
 
@@ -140,22 +296,22 @@ const api = {
 		if (!GRIDS.includes(grid))
 			throw new Error(`grid must be one of ${GRIDS.join(', ')} (got ${grid})`);
 		pkg.sets.push({ name, grid, sprites: [], animations: [] });
-		editor.sel = { ...editor.sel, set: name, sprite: '', anim: '' };
+		editor.sel = { ...editor.sel, set: name, sprite: '', anim: '', layer: '' };
 		return name;
 	}),
 
 	new_sprite: mut(function (name: string) {
 		const set = editor.requireSet();
 		taken(set.sprites, name, 'sprite');
-		set.sprites.push({ name, pixels: blank(set.grid) });
-		editor.sel = { ...editor.sel, sprite: name };
+		set.sprites.push({ name, layers: [newLayer(BASE, set.grid)] });
+		editor.sel = { ...editor.sel, sprite: name, layer: BASE };
 		return name;
 	}),
 
 	select: ro(function (pkg?: string, set?: string, sprite?: string) {
 		if (pkg !== undefined) {
 			if (!editor.packages.some((p) => p.name === pkg)) throw new Error(`no package "${pkg}"`);
-			editor.sel = { pkg, set: '', sprite: '', anim: '' };
+			editor.sel = { pkg, set: '', sprite: '', anim: '', layer: '' };
 		}
 		if (set !== undefined) {
 			const found = editor.requirePackage().sets.find((s) => s.name === set);
@@ -176,7 +332,9 @@ const api = {
 			// highlighted row: that is the sidebar's way back to the pure sprite (same as Escape
 			// and the tray's sprite link).
 			editor.stop();
-			editor.sel = { ...editor.sel, sprite };
+			// clear the layer too: the name almost certainly means nothing in the sprite we just
+			// moved to, and targetLayer would land on the top one anyway
+			editor.sel = { ...editor.sel, sprite, layer: '' };
 		}
 		return { ...editor.sel };
 	}),
@@ -184,7 +342,7 @@ const api = {
 	// ---- painting --------------------------------------------------------
 	paint_pixel: mut(function (x: number, y: number, color: Color, sprite?: string) {
 		const t = target(sprite);
-		put(t.sprite, t.grid, x, y, color);
+		put(t.layer, t.grid, x, y, color);
 	}),
 
 	/** `color` is one colour for the whole row, or an array of `grid` colours (null = leave as-is). */
@@ -193,7 +351,7 @@ const api = {
 		for (let x = 0; x < t.grid; x++) {
 			const c = Array.isArray(color) ? color[x] : color;
 			if (Array.isArray(color) && c === null) continue;
-			put(t.sprite, t.grid, x, y, c);
+			put(t.layer, t.grid, x, y, c);
 		}
 	}),
 
@@ -203,7 +361,7 @@ const api = {
 		for (let y = 0; y < t.grid; y++) {
 			const c = Array.isArray(color) ? color[y] : color;
 			if (Array.isArray(color) && c === null) continue;
-			put(t.sprite, t.grid, x, y, c);
+			put(t.layer, t.grid, x, y, c);
 		}
 	}),
 
@@ -222,14 +380,14 @@ const api = {
 			[...row].forEach((ch, x) => {
 				if (ch === '.' || ch === ' ') return;
 				if (!(ch in resolved)) throw new Error(`char "${ch}" at (${x},${y}) is not in the legend`);
-				t.sprite.pixels[y * t.grid + x] = resolved[ch];
+				t.layer.pixels[y * t.grid + x] = resolved[ch];
 			});
 		});
 	}),
 
 	clear: mut(function (color: Color = null, sprite?: string) {
 		const t = target(sprite);
-		t.sprite.pixels.fill(toIndex(color));
+		t.layer.pixels.fill(toIndex(color));
 	}),
 
 	/**
@@ -242,37 +400,88 @@ const api = {
 	 * file picker should pass a data URL. Options: `fit` ('contain' default, 'cover', 'stretch'),
 	 * `alpha` (0-255 cutoff for a cell counting as transparent, default 128), `trim` (crop a
 	 * transparent or uniform border first, default true), `contrast` (default 0.15),
-	 * `saturation` (default 1.2), plus `sprite` to target one by name or `newSprite` to create one.
+	 * `saturation` (default 1.2), plus `sprite` to target one by name or `newSprite` to create one,
+	 * and `layer` to land on one by name. Like every painting verb this replaces the *active layer*,
+	 * not the whole sprite.
 	 */
-	import_image: mut(async function (source: ImageSource, opts: ImportOptions & { sprite?: string; newSprite?: string } = {}) {
+	import_image: mut(async function (source: ImageSource, opts: ImportOptions & { sprite?: string; newSprite?: string; layer?: string } = {}) {
 		const set = editor.requireSet();
-		const { sprite: into, newSprite, ...rest } = opts;
-		let dest: Sprite;
+		const { sprite: into, newSprite, layer, ...rest } = opts;
+		let name: string;
+		let dest: Layer;
 		if (newSprite) {
 			taken(set.sprites, newSprite, 'sprite');
-			set.sprites.push({ name: newSprite, pixels: blank(set.grid) });
+			set.sprites.push({ name: newSprite, layers: [newLayer(BASE, set.grid)] });
 			// read it back: push stores the raw object, but only the $state proxy handed back on
-			// read is the one the UI observes — mutating the raw object writes into a void
-			dest = set.sprites[set.sprites.length - 1];
+			// read is the one the UI observes — mutating the raw object writes into a void. That
+			// applies to the layer inside it too, so reach for it through the proxied sprite.
+			const sprite = set.sprites[set.sprites.length - 1];
+			name = sprite.name;
+			dest = sprite.layers[0];
 			editor.stop(); // otherwise a running animation hides the sprite we just made
-			editor.sel = { ...editor.sel, sprite: newSprite };
+			editor.sel = { ...editor.sel, sprite: newSprite, layer: BASE };
 		} else {
-			dest = target(into).sprite;
+			const t = target(into, layer);
+			name = t.sprite.name;
+			dest = t.layer;
 		}
 		const pixels = await imageToPixels(source, set.grid, rest);
 		dest.pixels.set(pixels);
-		return { sprite: dest.name, grid: set.grid, colours: new Set(pixels.filter((p) => p)).size };
+		return { sprite: name, layer: dest.name, grid: set.grid, colours: new Set(pixels.filter((p) => p)).size };
 	}),
 
-	/** Copy an existing sprite into a new one — the usual way to start an animation frame. */
+	/**
+	 * Copy an existing sprite into a new one, layers and all — the usual way to start an animation
+	 * frame. Same set only; `copy_sprite` is the one that reaches across sets.
+	 */
 	clone_sprite: mut(function (from: string, to: string) {
 		const set = editor.requireSet();
 		const src = set.sprites.find((s) => s.name === from);
 		if (!src) throw new Error(`no sprite "${from}"`);
 		taken(set.sprites, to, 'sprite');
-		set.sprites.push({ name: to, pixels: src.pixels.slice() });
-		editor.sel = { ...editor.sel, sprite: to };
+		set.sprites.push(copyOfSprite(src, to, set.grid, set.grid));
+		editor.sel = { ...editor.sel, sprite: to, layer: '' };
 		return to;
+	}),
+
+	/**
+	 * Paint another sprite into this one at an offset — *same picture, different position*, which
+	 * nothing else in the API does. The source is composited first, so it arrives as you see it.
+	 *
+	 *   stamp('tree', { dx: 40 })                       // the tree, 40px right, on the active layer
+	 *   stamp('hills', { dx: -12, wrap: true })         // scrolled, re-entering from the right
+	 *   stamp('rider', { dx: 8, dy: 4, layer: 'fg' })   // into a layer by name
+	 *
+	 * Transparent source pixels leave what is underneath alone, so stamping builds a scene up in
+	 * pieces. `wrap` re-enters what falls off an edge on the opposite side — that is what makes a
+	 * tile scroll for ever; without it anything past the edge is dropped.
+	 *
+	 * **This bakes.** The pixels are copied once and the link is gone: repaint `from` afterwards and
+	 * what you stamped does not change. For art you are still tweaking, put it on a layer and move it
+	 * per frame with `set_animation`'s `layers` instead — that stays live, because the layer holds the
+	 * art and the frame only says where it sits.
+	 *
+	 * Both sprites live in the active set, so they share a grid. Reach for `copy_sprite` to bring art
+	 * in from a smaller set first.
+	 *
+	 * ponytail: a one-time blit, so a scene assembled by stamping is a dead end — change the tree and
+	 * you re-stamp all forty of them. The upgrade is a *linked* stamp, and the cheap way in is the
+	 * layer stack we already have: let a layer be `{ name, from: 'tree', dx, dy, wrap }` instead of
+	 * `{ name, pixels }`, and have `flatten` resolve `from` against the set's sprites. Arrangements
+	 * then work on it unchanged. Needs `flatten` to take the sprite list (it takes one sprite today),
+	 * a cycle guard for A→B→A, and a decision on what `paint_pixel` into a linked layer means —
+	 * probably refuse, the way a held frame with effects refuses. Do it when someone actually builds a
+	 * scene big enough to hurt; until then `stamp` plus arrangements covers both jobs.
+	 */
+	stamp: mut(function (from: string, { dx = 0, dy = 0, wrap = false, sprite, layer }: { dx?: number; dy?: number; wrap?: boolean; sprite?: string; layer?: string } = {}) {
+		const set = editor.requireSet();
+		const src = set.sprites.find((s) => s.name === from);
+		if (!src) throw new Error(`no sprite "${from}" in set "${set.name}"`);
+		const t = target(sprite, layer);
+		if (src.name === t.sprite.name)
+			throw new Error(`stamp("${from}") would read and write the same sprite — clone_sprite it first`);
+		const painted = blit(t.layer.pixels, flatten(src, set.grid), set.grid, dx, dy, wrap);
+		return { sprite: t.sprite.name, layer: t.layer.name, from, painted };
 	}),
 
 	/**
@@ -284,27 +493,452 @@ const api = {
 		if (!SIDES.includes(from))
 			throw new Error(`reflect needs one of ${SIDES.join(', ')} (got ${JSON.stringify(from)})`);
 		const t = target(sprite);
-		reflectHalf(t.sprite.pixels, t.grid, from);
+		reflectHalf(t.layer.pixels, t.grid, from);
 	}),
 
 	/** Turn a sprite in steps of 30°, positive clockwise. See AGENTS.md §Painting. */
 	rotate: mut(function (angle: number, { cx, cy, sprite }: RotateOpts = {}) {
 		const t = target(sprite);
-		const lost = spin(t.sprite.pixels, t.grid, angle, cx, cy);
+		const lost = spin(t.layer.pixels, t.grid, angle, cx, cy);
 		const mid = (t.grid - 1) / 2;
 		return {
 			sprite: t.sprite.name,
 			angle,
 			center: [cx ?? mid, cy ?? mid],
-			solid: t.sprite.pixels.reduce((n, p) => n + (p === TRANSPARENT ? 0 : 1), 0),
+			solid: t.layer.pixels.reduce((n, p) => n + (p === TRANSPARENT ? 0 : 1), 0),
 			lost
 		};
 	}),
 
 	/** Shift a sprite's pixels; anything pushed off the edge is dropped. */
-	shift: mut(function (dx: number, dy: number, sprite?: string) {
+	/**
+	 * Shift a sprite's pixels. Anything pushed off the edge is dropped, unless `wrap` brings it back
+	 * in on the opposite side — which is what scrolls a tile endlessly in place.
+	 *
+	 *   shift(4, 0)                       // 4px right, losing the right-hand column
+	 *   shift(-2, 0, { wrap: true })      // scrolled, nothing lost
+	 *   shift(0, 1, 'clouds')             // a named sprite, as before
+	 */
+	shift: mut(function (dx: number, dy: number, opts: string | { wrap?: boolean; sprite?: string; layer?: string } = {}) {
+		// a bare string is the sprite, which is how every other painting verb spells it
+		const o = typeof opts === 'string' ? { sprite: opts } : opts;
+		const t = target(o.sprite, o.layer);
+		slide(t.layer.pixels, t.grid, dx, dy, o.wrap ?? false);
+	}),
+
+	// ---- deleting --------------------------------------------------------
+	// Iterative work needs a bin. Each of these reports what is left rather than nothing, so a script
+	// can check its own tidying, and each moves the selection off whatever it just removed.
+
+	/**
+	 * Remove a sprite and its layers. Refuses while an animation still shows it, naming them, because
+	 * a frame pointing at a sprite that is gone is dropped silently on the next load — you would lose
+	 * the frame and never be told. `{ force: true }` removes those frames too, and says how many.
+	 */
+	delete_sprite: mut(function (name: string, { force = false } = {}) {
+		const set = editor.requireSet();
+		const i = set.sprites.findIndex((s) => s.name === name);
+		if (i < 0) throw new Error(`no sprite "${name}" in set "${set.name}"`);
+		const used = set.animations.filter((a) => a.frames.some((f) => f.sprite === name));
+		if (used.length && !force)
+			throw new Error(
+				`"${name}" is still used by ${used.map((a) => `"${a.name}"`).join(', ')} — ` +
+					`delete_sprite("${name}", { force: true }) to drop those frames too`
+			);
+		let dropped = 0;
+		for (const a of used) {
+			const keep = a.frames.filter((f) => f.sprite !== name);
+			dropped += a.frames.length - keep.length;
+			a.frames = keep;
+		}
+		set.sprites.splice(i, 1);
+		editor.stop(); // playback may have been sitting on a frame that no longer exists
+		if (editor.sel.sprite === name)
+			editor.sel = { ...editor.sel, sprite: set.sprites[0]?.name ?? '', layer: '' };
+		return { deleted: name, framesDropped: dropped, sprites: set.sprites.map((s) => s.name) };
+	}),
+
+	/** Remove a set, with every sprite and animation in it. */
+	delete_set: mut(function (name: string) {
+		const pkg = editor.requirePackage();
+		const i = pkg.sets.findIndex((s) => s.name === name);
+		if (i < 0) throw new Error(`no set "${name}" in package "${pkg.name}"`);
+		const [gone] = pkg.sets.splice(i, 1);
+		editor.stop();
+		if (editor.sel.set === name) {
+			const next = pkg.sets[0];
+			editor.sel = {
+				...editor.sel,
+				set: next?.name ?? '',
+				sprite: next?.sprites[0]?.name ?? '',
+				layer: '',
+				anim: next?.animations[0]?.name ?? ''
+			};
+		}
+		return { deleted: name, sprites: gone.sprites.length, sets: pkg.sets.map((s) => s.name) };
+	}),
+
+	/** Remove a package and everything under it. `reset()` is still the way to empty the lot. */
+	delete_package: mut(function (name: string) {
+		const i = editor.packages.findIndex((p) => p.name === name);
+		if (i < 0) throw new Error(`no package "${name}"`);
+		const [gone] = editor.packages.splice(i, 1);
+		editor.stop();
+		// selectFirst lands on whatever is left, or clears the selection when nothing is
+		if (editor.sel.pkg === name) {
+			editor.sel = { pkg: '', set: '', sprite: '', anim: '', layer: '' };
+			editor.selectFirst();
+		}
+		return { deleted: name, sets: gone.sets.length, packages: editor.packages.map((p) => p.name) };
+	}),
+
+	// ---- layers ----------------------------------------------------------
+	// A sprite is a stack of layers composited bottom-to-top, and one layer is the ordinary case —
+	// every sprite starts with a single `layer-0` and behaves exactly as it did before layers
+	// existed. Painting always lands on the *active* layer; reading and exporting always show the
+	// whole stack. There is no opacity and no blend mode: pixels are palette indices, so the only
+	// blend there can be is paint-over, where index 0 is the hole.
+
+	/** Add a layer above the active one and select it. Names itself `layer-1`, `layer-2`… if asked. */
+	new_layer: mut(function (name?: string, { at, above, below }: { at?: 'top' | 'bottom'; above?: string; below?: string } = {}) {
+		const t = target();
+		const sprite = t.sprite;
+		const named = name ?? freeName(sprite.layers, `layer-${sprite.layers.length}`);
+		taken(sprite.layers, named, 'layer');
+		// Placement is explicit or it is relative to the active layer — and the active layer is a
+		// cursor some earlier select_layer moved, which is exactly how a stack ends up in the wrong
+		// order with nothing on screen to explain it.
+		const index = (): number => {
+			if (at === 'top') return sprite.layers.length;
+			if (at === 'bottom') return 0;
+			if (above) return sprite.layers.findIndex((l) => l.name === layerOf(sprite, above).name) + 1;
+			if (below) return sprite.layers.findIndex((l) => l.name === layerOf(sprite, below).name);
+			return sprite.layers.findIndex((l) => l.name === t.layer.name) + 1;
+		};
+		sprite.layers.splice(index(), 0, newLayer(named, t.grid));
+		editor.sel = { ...editor.sel, layer: named };
+		return { sprite: sprite.name, layer: named, layers: sprite.layers.map((l) => l.name) };
+	}),
+
+	/** Which layer painting lands on. Reading and exporting are unaffected — they show every layer. */
+	select_layer: ro(function (name: string) {
+		const t = target();
+		layerOf(t.sprite, name); // throws with the stack when the name is wrong
+		editor.sel = { ...editor.sel, layer: name };
+		return name;
+	}),
+
+	/**
+	 * Remove a layer and the pixels on it. Kept as its own verb rather than folded into `set_layers`
+	 * because omitting a layer there destroys artwork, where omitting a frame from `set_animation`
+	 * destroys nothing — that asymmetry is worth spelling out.
+	 */
+	delete_layer: mut(function (name: string) {
+		const t = target();
+		const sprite = t.sprite;
+		if (sprite.layers.length === 1)
+			throw new Error(`"${sprite.name}" is down to one layer — a sprite must keep at least one`);
+		const i = sprite.layers.findIndex((l) => l.name === name);
+		if (i < 0) throw new Error(`no layer "${name}" in sprite "${sprite.name}"`);
+		sprite.layers.splice(i, 1);
+		if (editor.sel.layer === name) editor.sel = { ...editor.sel, layer: '' };
+		return { deleted: name, layers: sprite.layers.map((l) => l.name) };
+	}),
+
+	/**
+	 * Hide a layer, or show it again with `hide_layer(name, false)`. Defaults to the active layer.
+	 *
+	 * A hidden layer keeps its pixels — it is skipped when the sprite is composited, not erased, and
+	 * `flatten_sprite` is the only thing that discards one. Painting into a layer you hid still lands
+	 * on it; you just cannot see it.
+	 */
+	hide_layer: mut(function (name?: string, on: boolean = true) {
+		const t = target(undefined, name);
+		// an ordinary property on a $state-proxied object, so this is tracked — unlike a pixel write.
+		// Deleted rather than set false, so showing an already-visible layer serialises identically
+		// and settle() charges no undo step for it. `hidden: false` would read as a change every time.
+		if (on) t.layer.hidden = true;
+		else delete t.layer.hidden;
+		return { sprite: t.sprite.name, layer: t.layer.name, hidden: !!t.layer.hidden };
+	}),
+
+	/**
+	 * Reorder, and show/hide several at once, in one call — the same replace-the-whole-list idiom as
+	 * `set_animation`, so a reorder plus a hide is one undo step rather than three. For hiding a
+	 * single layer, `hide_layer` is the short way round.
+	 *
+	 *   set_layers(['shadow', 'body', 'outline'])          // bottom to top
+	 *   set_layers([{ name: 'sketch', hidden: true }, …])  // reorder and hide together
+	 *
+	 * Every existing layer must appear exactly once: this rearranges a stack, it never destroys one.
+	 * Use `new_layer` / `delete_layer` to change what is in it.
+	 */
+	set_layers: mut(function (layers: (string | { name: string; hidden?: boolean })[]) {
+		const t = target();
+		const sprite = t.sprite;
+		if (!Array.isArray(layers) || !layers.length) throw new Error('layers must be a non-empty array');
+		const wanted = layers.map((l) => (typeof l === 'string' ? { name: l } : l));
+		const names = wanted.map((l) => l.name);
+		if (new Set(names).size !== names.length) throw new Error('a layer is listed twice');
+		const have = sprite.layers.map((l) => l.name);
+		const missing = have.filter((n) => !names.includes(n));
+		if (missing.length)
+			throw new Error(
+				`set_layers must list every layer — "${missing.join('", "')}" left out. Use delete_layer to remove one.`
+			);
+		// resolve against the live layers before reassigning, so an unknown name throws with nothing
+		// half-applied
+		const next = wanted.map((l) => {
+			const found = layerOf(sprite, l.name);
+			// rebuild rather than mutate `hidden` in place: it has to land in the serialised document
+			// either way, and this keeps the buffer identity (the canvas reads it) while dropping the
+			// key entirely when false, so a no-op reorder serialises unchanged and costs no undo step
+			return { name: found.name, pixels: found.pixels, ...(l.hidden && { hidden: true as const }) };
+		});
+		sprite.layers = next;
+		return { sprite: sprite.name, layers: next.map((l) => (l.hidden ? `${l.name} (hidden)` : l.name)) };
+	}),
+
+	/**
+	 * Repeat a layer's leftmost `period` columns across the whole grid, replacing what is there.
+	 *
+	 *   tile_layer('trees', { period: 32 })    // draw one tree, get four
+	 *
+	 * Draw one motif inside `[0, period)` and this makes the rest. It also makes the layer's repeat a
+	 * *guarantee*, which is what `scroll_layer` needs: authoring a period by hand fails silently,
+	 * because a motif overrunning its period by two pixels has no counterpart at the far edge and
+	 * quietly doubles the true repeat — turning a legal speed into a refused one for reasons nothing
+	 * on screen explains.
+	 *
+	 * `period` must divide the grid; `from` picks a different source window.
+	 */
+	tile_layer: mut(function (layer?: string, { period, from = 0, sprite }: { period: number; from?: number; sprite?: string } = {} as any) {
+		const t = target(sprite, layer);
+		const copies = tileAcross(t.layer.pixels, t.grid, period, from);
+		// read the repeat back rather than trusting the argument — this is the number scroll_layer
+		// will measure, so returning it closes the loop between the two commands
+		return { sprite: t.sprite.name, layer: t.layer.name, period, copies, repeatsEvery: periodOf(t.layer.pixels, t.grid) };
+	}),
+
+	/**
+	 * Scroll one layer across an animation — parallax without doing the modular arithmetic yourself.
+	 *
+	 *   scroll_layer('fuji', { speed: -2 })     // far away, drifts
+	 *   scroll_layer('road', { speed: -16 })    // underfoot, races
+	 *
+	 * Writes `dx: speed * i` into every frame, leaving other layers' arrangements alone. `speed` is
+	 * px per frame and signed: negative scrolls left, which is what a rider moving right sees.
+	 *
+	 * **It refuses a scroll that would not loop.** A layer moving `s` px over `n` frames travels
+	 * `n·s`, and unless that is a whole number of the art's own repeats the last frame cuts back to
+	 * the first mid-tile and the scene visibly jumps. That is invisible in any one frame and glaring
+	 * the moment it plays, so it is an error with the speeds that *do* work, rather than a surprise.
+	 * `{ seamless: false }` allows it anyway.
+	 *
+	 * The repeat is measured from the pixels, so it costs nothing to be right: art that tiles every
+	 * 32px is detected as 32, and art with no repeat counts as one repeat per screen.
+	 */
+	scroll_layer: mut(function (layer: string, { speed, animation, sprite, wrap = true, seamless = true }: { speed: number; animation?: string; sprite?: string; wrap?: boolean; seamless?: boolean }) {
+		if (!Number.isFinite(speed)) throw new Error('scroll_layer needs a numeric speed in px per frame');
+		const anim = animOf(animation);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames to scroll`);
 		const t = target(sprite);
-		slide(t.sprite.pixels, t.grid, dx, dy);
+		const l = layerOf(t.sprite, layer);
+		const n = anim.frames.length;
+		const p = periodOf(l.pixels, t.grid);
+		// a step that is a whole number of repeats lands on identical pixels every frame, and `loops`
+		// waves it through because a layer that never moves trivially ends where it started. Caught
+		// first, since the seamless check below can only ever say yes to it
+		if (!moves(p, speed) && seamless)
+			throw new Error(
+				`"${layer}" repeats every ${p}px, so scrolling it ${Math.abs(Math.round(speed))}px per frame ` +
+					`moves it exactly ${Math.abs(Math.round(speed)) / p} whole repeat(s) each frame and every frame ` +
+					`lands on identical pixels — the layer would sit perfectly still. Use a speed that is not a ` +
+					`multiple of ${p}, or tile the layer with a larger { period } so a step is a fraction of the ` +
+					`repeat. { seamless: false } allows it.`
+			);
+		const ok = loops(p, speed, n);
+		if (!ok && seamless) {
+			const step = scrollStep(p, n);
+			const atThisSpeed = frameStep(p, speed);
+			throw new Error(
+				`"${layer}" repeats every ${p}px and would travel ${n * Math.abs(speed)}px over ${n} frames, ` +
+					`which is not a whole number of repeats — the loop would jump. Either ` +
+					`change speed to a multiple of ${step} (${[1, 2, 3].map((k) => (speed < 0 ? -k * step : k * step)).join(', ')}…), ` +
+					`or keep ${speed} and use a frame count that is a multiple of ${atThisSpeed} ` +
+					`(${[1, 2, 3].map((k) => k * atThisSpeed).join(', ')}…). ` +
+					`{ seamless: false } allows the jump.`
+			);
+		}
+		anim.frames = anim.frames.map((f, i) =>
+			patchEffects(f, { layers: { [layer]: { dx: Math.round(speed) * i, wrap } } })
+		);
+		editor.stop();
+		return { animation: anim.name, layer, speed, frames: n, repeatsEvery: p, seamless: ok };
+	}),
+
+	/**
+	 * Show one of a ring of layers per frame — a pedal stroke, a walk cycle, a flame. The pose
+	 * counterpart to `scroll_layer`, and the other half of what an animation needs.
+	 *
+	 *   cycle_layers(['pose-0','pose-1','pose-2','pose-3'])          // one per frame, round and round
+	 *   cycle_layers(['step-a','step-b'], { every: 4 })              // held four frames each
+	 *
+	 * Every listed layer is set explicitly per frame — shown when its turn comes, hidden otherwise —
+	 * so running it twice with a different order does not leave a stale pose visible. Layers not
+	 * listed are untouched.
+	 *
+	 * Refuses a ring that would not close, for the same reason `scroll_layer` does: land mid-cycle
+	 * and the loop cuts back with the legs in the wrong place.
+	 */
+	cycle_layers: mut(function (names: string[], { animation, every = 1, sprite, seamless = true }: { animation?: string; every?: number; sprite?: string; seamless?: boolean } = {}) {
+		if (!Array.isArray(names) || names.length < 2)
+			throw new Error('cycle_layers needs at least two layer names to cycle between');
+		const anim = animOf(animation);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames to cycle over`);
+		const t = target(sprite);
+		for (const n of names) layerOf(t.sprite, n); // throws with the stack before anything is written
+		const n = anim.frames.length;
+		const ok = cycles(n, names.length, every);
+		if (!ok && seamless) {
+			const per = names.length * Math.max(1, Math.trunc(every));
+			throw new Error(
+				`${names.length} layers held ${every} frame(s) each is a ${per}-frame cycle, which does not ` +
+					`divide ${n} frames — the loop would cut back mid-cycle. Use a frame count that is a ` +
+					`multiple of ${per} (${[1, 2, 3].map((k) => k * per).join(', ')}…), or { seamless: false }.`
+			);
+		}
+		anim.frames = anim.frames.map((f, i) => {
+			const shown = names[poseAt(i, names.length, every)];
+			const view = Object.fromEntries(names.map((nm) => [nm, { hidden: nm !== shown }]));
+			return patchEffects(f, { layers: view });
+		});
+		editor.stop();
+		return { animation: anim.name, layers: names.length, every, frames: n, seamless: ok };
+	}),
+
+	/**
+	 * Collapse a sprite's layers into one, as they look composited — the way back to simple sprite
+	 * mode, and the escape hatch for anything downstream that would rather not think about layers.
+	 * Hidden layers are dropped, not merged: they are hidden.
+	 */
+	flatten_sprite: mut(function (sprite?: string) {
+		const t = target(sprite);
+		const was = t.sprite.layers.length;
+		t.sprite.layers = [{ name: BASE, pixels: seen(t) }];
+		editor.sel = { ...editor.sel, layer: BASE };
+		return { sprite: t.sprite.name, was, layers: [BASE] };
+	}),
+
+	// ---- copying ---------------------------------------------------------
+	// All of these read from a named source and land in whatever is selected, with an optional `to`
+	// name, and select what they made.
+
+	/**
+	 * Duplicate a whole set into the active package, sprites and animations and all.
+	 *
+	 *   copy_set('hero')                            // hero-2, animations included
+	 *   copy_set('hero', { animations: false })     // the sprites on their own
+	 *   copy_set('hero', { from: { pkg: 'old' }, to: 'villain' })
+	 */
+	copy_set: mut(function (name: string, { from = {}, to, animations = true }: { from?: { pkg?: string }; to?: string; animations?: boolean } = {}) {
+		const pkg = editor.requirePackage();
+		const src = source(name, from.pkg);
+		// readSet(setPayload(x)) is the deep copy: setPayload builds fresh layer objects and plain
+		// pixel arrays, and readSet rebuilds every fx/trail/transition through its validators. Neither
+		// half alone is enough — setPayload's frames still point at the live effect objects.
+		const copy = storage.readSet(storage.setPayload(src))!;
+		if (!animations) copy.animations = [];
+		// renamed after readSet, which validates the name it was given
+		copy.name = to ? (taken(pkg.sets, to, 'set'), to) : freeName(pkg.sets, src.name);
+		editor.stop();
+		pkg.sets.push(copy);
+		editor.sel = { pkg: pkg.name, set: copy.name, sprite: copy.sprites[0]?.name ?? '', layer: '', anim: copy.animations[0]?.name ?? '' };
+		return { set: copy.name, grid: copy.grid, sprites: copy.sprites.length, animations: copy.animations.map((a) => a.name) };
+	}),
+
+	/**
+	 * Copy a sprite into the active set, layers and all.
+	 *
+	 *   copy_sprite('idle', { to: 'crouch' })                    // within the set
+	 *   copy_sprite('hero', { from: { set: 'icons16' } })        // from a 16 set into a 32 one
+	 *
+	 * Across sets the grids have to be compatible, and that means **larger only**: a 16x16 goes into
+	 * a 32x32 as an exact 2x2 block per pixel, with nothing resampled and no colour invented. The
+	 * other direction has to pick one winner per block, which eats every one-pixel highlight, so it
+	 * throws instead. `export_png` then `import_image` is the way down, and it resamples properly.
+	 */
+	copy_sprite: mut(function (name: string, { from = {}, to }: { from?: { set?: string; pkg?: string }; to?: string } = {}) {
+		const set = editor.requireSet();
+		const src = source(from.set, from.pkg);
+		const sprite = src.sprites.find((s) => s.name === name);
+		if (!sprite) throw new Error(`no sprite "${name}" in set "${src.name}"`);
+		if (src.grid > set.grid)
+			throw new Error(
+				`can't copy a ${src.grid}x${src.grid} sprite into a ${set.grid}x${set.grid} set — upscale only. ` +
+					`export_png() it and import_image() it back to go smaller.`
+			);
+		const named = to ? (taken(set.sprites, to, 'sprite'), to) : freeName(set.sprites, name);
+		set.sprites.push(copyOfSprite(sprite, named, src.grid, set.grid));
+		editor.stop();
+		editor.sel = { ...editor.sel, sprite: named, layer: '' };
+		return { sprite: named, from: src.grid, to: set.grid, layers: sprite.layers.length };
+	}),
+
+	/**
+	 * Duplicate an animation inside its set. Same set only, and that restriction is load-bearing: a
+	 * frame names a sprite, and `readFrames` *silently drops* a frame whose sprite it cannot find, so
+	 * a cross-set version would hand back a quietly shorter animation rather than an error.
+	 */
+	copy_animation: mut(function (name: string, { to }: { to?: string } = {}) {
+		const set = editor.requireSet();
+		const src = animOf(name);
+		const named = to ? (taken(set.animations, to, 'animation'), to) : freeName(set.animations, name);
+		// through readFrames for a real deep copy: a spread would share the fx objects
+		const frames = storage.readFrames(src.frames, new Set(set.sprites.map((s) => s.name)));
+		set.animations.push({ name: named, frames });
+		editor.stop();
+		editor.sel = { ...editor.sel, anim: named };
+		return { animation: named, frames: frames.length };
+	}),
+
+	/**
+	 * Copy frames from one animation into another in the same set, effects and all.
+	 *
+	 *   copy_frames('walk')                              // all of them, onto the active animation
+	 *   copy_frames('walk', { which: [0, 1], at: 0 })    // two frames, spliced in at the front
+	 *   copy_frames('walk', { to: 'walk', which: 2 })    // same list — how you duplicate one frame
+	 *
+	 * `which` is an index, a list of them, or `'*'`; `at` is where they land, appending by default.
+	 */
+	copy_frames: mut(function (name: string, { which = '*', to, at }: { which?: number | number[] | '*'; to?: string; at?: number } = {}) {
+		const src = animOf(name);
+		const dest = animOf(to);
+		if (!src.frames.length) throw new Error(`animation "${src.name}" has no frames`);
+		const picked = selection.targetFrames(src.frames.length, which).map((i) => src.frames[i]);
+		const known = new Set(editor.requireSet().sprites.map((s) => s.name));
+		const frames = storage.readFrames(picked, known); // deep copy, same as copy_animation
+		const index = at === undefined ? dest.frames.length : at;
+		if (!Number.isInteger(index) || index < 0 || index > dest.frames.length)
+			throw new Error(`at ${at} is outside 0..${dest.frames.length}`);
+		dest.frames.splice(index, 0, ...frames);
+		editor.stop();
+		editor.sel = { ...editor.sel, anim: dest.name };
+		return { animation: dest.name, copied: frames.length, frames: dest.frames.length };
+	}),
+
+	/**
+	 * Copy a layer into the active sprite. Within the set, so the grids already match — to move
+	 * artwork between sets, copy the sprite.
+	 */
+	copy_layer: mut(function (name: string, { from, to }: { from?: string; to?: string } = {}) {
+		const dest = target().sprite;
+		const src = from ? target(from).sprite : dest;
+		const layer = layerOf(src, name);
+		const named = to ? (taken(dest.layers, to, 'layer'), to) : freeName(dest.layers, name);
+		dest.layers.push({ name: named, pixels: layer.pixels.slice(), ...(layer.hidden && { hidden: true }) });
+		editor.sel = { ...editor.sel, layer: named };
+		return { sprite: dest.name, layer: named, layers: dest.layers.map((l) => l.name) };
 	}),
 
 	// ---- animation -------------------------------------------------------
@@ -379,6 +1013,18 @@ const api = {
 				throw new Error(
 					`frame "${f.sprite}" has a bad trail — use a frame count, or { frames, fade } with 0 < fade < 1`
 				);
+			if (f.layers !== undefined && !readArrangement(f.layers))
+				throw new Error(
+					`frame "${f.sprite}" has a bad layers arrangement — use { layerName: { dx, dy, wrap, hidden } }, or { layerName: dx }`
+				);
+			// A key we do not know is nearly always a near-miss for one we do — `layer` for `layers`
+			// being the obvious one. Dropping it silently taught nothing at precisely the moment
+			// something needed teaching, so it is an error now.
+			const stray = Object.keys(f).filter((k) => !FRAME_KEYS.has(k));
+			if (stray.length)
+				throw new Error(
+					`frame "${f.sprite}" has unknown key${stray.length > 1 ? 's' : ''} ${stray.map((k) => `"${k}"`).join(', ')} — a frame takes ${[...FRAME_KEYS].join(', ')}`
+				);
 		}
 		const into = selection.targetAnimation(
 			set.animations.map((a) => a.name),
@@ -440,21 +1086,39 @@ const api = {
 	// ---- export ----------------------------------------------------------
 	export_svg: ro(function ({ sprite, scale = 1, download = false } = {} as any) {
 		const t = target(sprite);
-		const svg = ex.toSVG(t.sprite.pixels, t.grid, scale);
+		const svg = ex.toSVG(seen(t), t.grid, scale); // display, not edit: the whole stack
 		if (download) ex.download(svg, `${t.sprite.name}.svg`);
 		return svg;
 	}),
 
 	export_png: ro(function ({ sprite, scale = 8, download = false } = {} as any) {
 		const t = target(sprite);
-		const url = ex.toPNG(t.sprite.pixels, t.grid, scale);
+		const url = ex.toPNG(seen(t), t.grid, scale); // display, not edit: the whole stack
 		if (download) ex.download(url, `${t.sprite.name}.png`);
 		return url;
 	}),
 
+	/**
+	 * Every frame of an animation as one numbered PNG grid — the whole loop in a single look.
+	 *
+	 *   contact_sheet({ download: true })        // save it
+	 *   contact_sheet({ cols: 8, scale: 1 })     // a wider, smaller sheet
+	 *
+	 * Playback shows one frame at a time and a screenshot catches whichever was up, so a fault in
+	 * frame 9 stays invisible until it goes past. On a sheet it is obvious at a glance.
+	 */
+	contact_sheet: ro(function ({ animation, cols = 4, scale = 2, gap = 4, effects = true, transitions = true, download = false }: { animation?: string; cols?: number; scale?: number; gap?: number; effects?: boolean; transitions?: boolean; download?: boolean } = {}) {
+		const set = editor.requireSet();
+		const anim = animOf(animation);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
+		const url = ex.toContactSheet(set.sprites, anim.frames, set.grid, { cols, scale, gap, effects, transitions });
+		if (download) ex.download(url, `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}-sheet.png`);
+		return { animation: anim.name, frames: anim.frames.length, cols: Math.min(cols, anim.frames.length), url };
+	}),
+
 	export_ico: ro(async function ({ sprite, sizes = [16, 32, 48], download = false } = {} as any) {
 		const t = target(sprite);
-		const url = await ex.toICO(t.sprite.pixels, t.grid, sizes);
+		const url = await ex.toICO(seen(t), t.grid, sizes); // display, not edit: the whole stack
 		if (download) ex.download(url, `${t.sprite.name}.ico`);
 		return url;
 	}),
@@ -496,8 +1160,8 @@ const api = {
 
 	// ---- interchange -----------------------------------------------------
 	/** The active set as plain JSON — the ZIP's `set.json`, without the pictures. */
-	export_json: ro(function ({ download = false } = {} as any) {
-		const set = editor.requireSet();
+	export_json: ro(function ({ download = false, set: which, pkg }: { download?: boolean; set?: string; pkg?: string } = {}) {
+		const set = which || pkg ? source(which, pkg) : editor.requireSet();
 		const data = storage.setPayload(set);
 		if (download) ex.downloadJSON(data, `${ex.safeFile(set.name)}.json`);
 		return data;
@@ -597,14 +1261,16 @@ const api = {
 				'await frogsprite.export_zip({ download: true })'
 			],
 			groups: {
-				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select'],
-				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'reflect', 'rotate', 'shift', 'clear', 'import_image'],
+				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select', 'delete_sprite', 'delete_set', 'delete_package'],
+				layers: ['new_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'tile_layer', 'scroll_layer', 'cycle_layers', 'flatten_sprite'],
+				copying: ['copy_set', 'copy_sprite', 'copy_animation', 'copy_frames', 'copy_layer'],
+				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'ramp', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
-				inspecting: ['state', 'print_sprite', 'read_sprite', 'palette', 'color', 'background', 'silhouette', 'raw', 'help'],
-				history: ['undo', 'redo', 'history'],
+				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'contact_sheet', 'palette', 'color', 'background', 'silhouette', 'zoom', 'raw', 'help'],
+				history: ['undo', 'redo', 'history', 'batch'],
 				storage: ['flush', 'reset']
 			},
 			// derived, so this stays true even if the curated groups above fall behind
@@ -617,6 +1283,8 @@ const api = {
 				"set_animation() frames carry `fx`, `trail` and `transition`, all applied when the frame is drawn — so one sprite can look different in every animation it appears in. A motion trail is `trail: 5`, not 5 hand-painted ghosts.",
 				"set_effects('*', { trail: 5 }) puts the same effect on every frame in one undo step — effects are usually uniform across an animation, so reach for '*' before a per-frame loop.",
 				'Rotating pixels resamples them, and a filled shape smears after a few turns. For a spinning object, compute the rotated points yourself and redraw it with shapes.* per frame — that stays crisp and is not limited to 30° steps.',
+				'Sprites are layered, but one layer is the normal case — a fresh sprite has just `layer-0` and behaves exactly as it always did. Reach for new_layer() when you want an outline you can redraw without touching the fill under it. Painting hits the active layer; read_sprite/print_sprite and every export show the whole stack.',
+				'copy_sprite() crosses sets and grids, but only upwards: a 16 goes into a 32 as an exact 2x2 block per pixel. copy_animation and copy_frames stay inside one set, because a frame names a sprite.',
 				'Async commands (import_image, export_zip, export_ico) must be awaited.',
 				'To import an image you have no file picker for, pass a data: URL.'
 			]
@@ -632,6 +1300,25 @@ const api = {
 	raw: ro(function (on: boolean = !editor.raw) {
 		editor.peekApi = !!on;
 		return { raw: editor.raw };
+	}),
+
+	/**
+	 * Scale the canvas for a closer look — `zoom()` goes back to fitting the pane. A view setting:
+	 * nothing is painted, nothing is saved, and exports are unaffected.
+	 *
+	 * At 128 the canvas fits a whole sprite into a few hundred CSS pixels, which is fine for judging
+	 * composition and useless for judging two pixels. The stage scrolls when the canvas outgrows it.
+	 */
+	zoom: ro(function (factor: number = 1, { x, y }: { x?: number; y?: number } = {}) {
+		const z = Number(factor);
+		if (!Number.isFinite(z) || z < 1 || z > 8) throw new Error('zoom takes a factor from 1 to 8');
+		editor.zoom = z;
+		// aim it, or a zoomed canvas is just a bigger picture you cannot steer. Centres on the sprite
+		// unless told otherwise, which is where the subject usually is.
+		const grid = editor.set?.grid ?? 16;
+		const at = (v: number | undefined) => Math.min(grid - 1, Math.max(0, Math.round(Number(v))));
+		editor.zoomAt = z > 1 ? { x: at(x ?? grid / 2), y: at(y ?? grid / 2) } : null;
+		return { zoom: editor.zoom, at: editor.zoomAt };
 	}),
 
 	/** Canvas backdrop for reviewing a sprite; `background()` restores the checkerboard. Paints nothing. */
@@ -651,9 +1338,9 @@ const api = {
 			throw new Error('a permanent silhouette needs a colour — null would erase the sprite');
 		const t = target(sprite);
 		let painted = 0;
-		for (let i = 0; i < t.sprite.pixels.length; i++) {
-			if (t.sprite.pixels[i] === TRANSPARENT) continue;
-			t.sprite.pixels[i] = index;
+		for (let i = 0; i < t.layer.pixels.length; i++) {
+			if (t.layer.pixels[i] === TRANSPARENT) continue;
+			t.layer.pixels[i] = index;
 			painted++;
 		}
 		return { sprite: t.sprite.name, painted, color: PALETTE[index], permanent: true };
@@ -661,37 +1348,40 @@ const api = {
 
 	state: ro(() => editor.snapshot()),
 
-	/** The active sprite as rows of palette indices — read this back to verify a drawing. */
-	read_sprite: ro(function (sprite?: string) {
-		const t = target(sprite);
-		const rows: number[][] = [];
-		// plain arrays, not the Uint8Array slice: this is what an agent reads back and JSON-prints
-		for (let y = 0; y < t.grid; y++)
-			rows.push(Array.from(t.sprite.pixels.subarray(y * t.grid, (y + 1) * t.grid)));
-		return rows;
+	/**
+	 * The active sprite as rows of palette indices — read this back to verify a drawing. Shows the
+	 * whole stack composited, which is what you are looking at; pass `layer` to read just one.
+	 */
+	read_sprite: ro(function (sprite?: string, opts: string | ReadOpts = {}) {
+		// display, not edit: without `layer` this is every layer, or an agent that drew a body on one
+		// and an outline on the next would read its work back and see only the outline
+		return windowRows(reading(sprite, typeof opts === 'string' ? { layer: opts } : opts));
+	}),
+
+	/**
+	 * A **composed frame** as rows of palette indices — every layer where that frame puts it, effects
+	 * applied. This is not the same picture as `read_sprite`, which shows the stack with every pose
+	 * visible and every scroll at zero: a frame that appears nowhere in the animation.
+	 *
+	 *   read_frame(3, { rect: [44, 54, 96, 116] })
+	 *
+	 * `i` defaults to the frame being held, so `view_frame(3); print_frame()` reads what is on screen.
+	 */
+	read_frame: ro(function (i?: number, { rect, animation }: { rect?: [number, number, number, number]; animation?: string } = {}) {
+		return windowRows(frameAt(i, animation, rect));
+	}),
+
+	/** The same frame as ASCII rows plus a legend — see `read_frame`, and `print_sprite` for glyphs. */
+	print_frame: ro(function (i?: number, { rect, animation, legend }: { rect?: [number, number, number, number]; animation?: string; legend?: Record<string, Color> } = {}) {
+		const f = frameAt(i, animation, rect);
+		return { animation: f.animation, frame: f.frame, ...asciiOf(windowRows(f), legend) };
 	}),
 
 	/** Same thing as ASCII: '.' is transparent, other chars are per-colour. Easier to eyeball. */
-	print_sprite: ro(function (sprite?: string) {
-		const t = target(sprite);
-		const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-		const seen = new Map<number, string>();
-		const rows: string[] = [];
-		for (let y = 0; y < t.grid; y++) {
-			let row = '';
-			for (let x = 0; x < t.grid; x++) {
-				const p = t.sprite.pixels[y * t.grid + x];
-				if (p === 0) {
-					row += '.';
-					continue;
-				}
-				if (!seen.has(p)) seen.set(p, chars[seen.size % chars.length]);
-				row += seen.get(p);
-			}
-			rows.push(row);
-		}
-		const legend = Object.fromEntries([...seen].map(([i, c]) => [c, `${PALETTE[i]} (${i})`]));
-		return { rows, legend };
+	print_sprite: ro(function (sprite?: string, opts: string | (ReadOpts & { legend?: Record<string, Color> }) = {}) {
+		const o = typeof opts === 'string' ? { layer: opts } : opts;
+		const t = reading(sprite, o); // display — see read_sprite
+		return asciiOf(windowRows(t), o.legend);
 	}),
 
 	/**
@@ -702,12 +1392,25 @@ const api = {
 
 	/** Palette index for a colour — color('#22aa33') → nearest index. */
 	color: ro((c: Color) => toIndex(c)),
+
+	/**
+	 * `steps` palette indices blending evenly between two colours, ends included — a sky gradient or
+	 * a shading ramp without snapping hexes by hand against a palette whose channels only take
+	 * 00/33/66/99/cc/ff.
+	 *
+	 *   ramp('#000033', '#ffcc99', 10).forEach((c, y) => paint_row(y, c))
+	 *
+	 * Neighbouring steps can repeat an index: six levels per channel means 20 steps between two close
+	 * colours cannot give 20 distinct ones, and repeating is truer than inventing a colour that the
+	 * palette does not have.
+	 */
+	ramp: ro((from: Color, to: Color, steps = 8) => rampOf(toIndex(from), toIndex(to), steps)),
 	palette: ro(() => PALETTE.slice()),
 
 	reset: mut(function () {
 		editor.stop();
 		editor.packages = [];
-		editor.sel = { pkg: '', set: '', sprite: '', anim: '' };
+		editor.sel = { pkg: '', set: '', sprite: '', anim: '', layer: '' };
 	})
 };
 
@@ -718,43 +1421,53 @@ const api = {
  * Every shape paints, so every one is `mut`: one call, one undo step, however many cells it covers.
  */
 const shapes = {
-	/** Straight line between two points, endpoints included. No fill — a line has no inside. */
-	line: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { sprite }: ShapeOpts = {}) {
+	/**
+	 * Straight line between two points, endpoints included. No fill — a line has no inside. `width`
+	 * thickens it, with square caps and joins.
+	 */
+	line: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { width = 1, sprite }: ShapeOpts & { width?: number } = {}) {
 		const t = target(sprite);
-		const painted = shape.line(t.sprite.pixels, t.grid, x0, y0, x1, y1, toIndex(color));
+		const painted = shape.line(t.layer.pixels, t.grid, x0, y0, x1, y1, toIndex(color), width);
 		return { sprite: t.sprite.name, shape: 'line', painted };
+	}),
+
+	/** Rectangle between two opposite corners, given in either order — the non-square one. */
+	rect: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.rect(t.layer.pixels, t.grid, x0, y0, x1, y1, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'rect', painted };
 	}),
 
 	/** Axis-aligned square from its top-left corner. */
 	square: mut(function (x: number, y: number, size: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.square(t.sprite.pixels, t.grid, x, y, size, toIndex(color), fill);
+		const painted = shape.square(t.layer.pixels, t.grid, x, y, size, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'square', painted };
 	}),
 
 	circle: mut(function (cx: number, cy: number, r: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.circle(t.sprite.pixels, t.grid, cx, cy, r, toIndex(color), fill);
+		const painted = shape.circle(t.layer.pixels, t.grid, cx, cy, r, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'circle', painted };
 	}),
 
 	/** Circle with separate radii — the way to draw a body, a head or an eye that isn't round. */
 	ellipse: mut(function (cx: number, cy: number, rx: number, ry: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.ellipse(t.sprite.pixels, t.grid, cx, cy, rx, ry, toIndex(color), fill);
+		const painted = shape.ellipse(t.layer.pixels, t.grid, cx, cy, rx, ry, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'ellipse', painted };
 	}),
 
 	triangle: mut(function (x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.triangle(t.sprite.pixels, t.grid, x0, y0, x1, y1, x2, y2, toIndex(color), fill);
+		const painted = shape.triangle(t.layer.pixels, t.grid, x0, y0, x1, y1, x2, y2, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'triangle', painted };
 	}),
 
 	/** Any closed shape: `polygon([[2, 1], [13, 6], [7, 14]], '#22aa33')`. Three points or more. */
 	polygon: mut(function (points: Point[], color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.polygon(t.sprite.pixels, t.grid, points, toIndex(color), fill);
+		const painted = shape.polygon(t.layer.pixels, t.grid, points, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'polygon', painted };
 	})
 };
@@ -768,6 +1481,35 @@ for (const [k, fn] of [...Object.entries(api), ...Object.entries(shapes)])
 // push the state they are undoing straight back onto the stack.
 export const frogsprite = Object.assign(api, {
 	shapes,
+	/**
+	 * Run many commands as one change: one undo step, one save, one snapshot for the lot.
+	 *
+	 *   frogsprite.batch(() => { for (let i = 0; i < 200; i++) frogsprite.paint_pixel(i % 16, (i / 16) | 0, '#ff0000'); });
+	 *
+	 * Every mutating command serialises the whole document twice — once to snapshot for undo, once to
+	 * check whether anything actually moved. That is fine for one call and ruinous for hundreds,
+	 * because the cost scales with *every package you have open*, not with the sprite you are
+	 * drawing. Inside a batch those two happen once, at the ends.
+	 *
+	 * Synchronous only: an `await` inside would let the batch close while the rest is still queued.
+	 * Await async commands (`import_image`, `export_zip`) outside it. If `fn` throws the work done so
+	 * far stands and is undoable in one step — the same deal as a command that throws halfway.
+	 *
+	 * ponytail: a flag, not a queue. Nesting is a no-op rather than an error, which is what you want
+	 * when a helper that batches is called from inside another batch.
+	 */
+	batch: (fn: () => unknown) => {
+		if (typeof fn !== 'function') throw new Error('batch needs a function');
+		if (batching) return fn(); // already inside one — the outer batch owns the snapshot
+		const before = checkpoint();
+		batching = true;
+		try {
+			return fn();
+		} finally {
+			batching = false;
+			settle(before);
+		}
+	},
 	/** Step back one change. Selection and playback follow the document; view settings don't. */
 	undo: () => ({ ok: restore(history.undo(snap())), ...history.depth() }),
 	redo: () => ({ ok: restore(history.redo(snap())), ...history.depth() }),

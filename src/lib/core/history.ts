@@ -6,7 +6,11 @@
 // This module is the stacks and nothing else: no store, no localStorage. commands.ts takes the
 // snapshots and applies them back.
 
-export type Entry = { raw: string; sel: { pkg: string; set: string; sprite: string; anim: string } };
+import type { Selection } from './selection.ts';
+
+// One definition of the selection shape, not two: this used to re-declare it inline, which meant a
+// new field had to be remembered here or undo would quietly drop it on every step.
+export type Entry = { raw: string; sel: Selection };
 
 const past: Entry[] = [];
 const future: Entry[] = [];

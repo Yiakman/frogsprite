@@ -2,13 +2,16 @@
 // validation of what comes back, and write scheduling. The rest of the app only calls
 // load() / save() / flush() / clear() and never touches localStorage.
 import { GRIDS, type GridSize } from '../core/grid.ts';
-import { readFx, readTrail, readTransition } from '../core/fx.ts';
+import { readArrangement, readFx, readTrail, readTransition } from '../core/fx.ts';
+import { BASE } from '../core/layers.ts';
 import { unzip } from './zip.ts';
-import type { Animation, Frame, Package, Sprite, SpriteSet } from '../core/types.ts';
+import type { Animation, Frame, Layer, Package, Sprite, SpriteSet } from '../core/types.ts';
 
 const KEY = 'frogsprite';
-// v2 replaced a set's single `frames` with named `animations`; readSet still reads v1.
-const VERSION = 2;
+// v2 replaced a set's single `frames` with named `animations`; v3 replaced a sprite's single
+// `pixels` with a `layers` stack. Both older shapes still load — and note parse() never reads this
+// number, so it records what we write and gates nothing: the readers sniff the shape instead.
+const VERSION = 3;
 /** Painting fires a save per pixel; coalesce them into one write. */
 const WRITE_DELAY = 250;
 
@@ -44,16 +47,46 @@ function uniq<T extends { name: string }>(items: (T | null)[]): T[] {
 	return out;
 }
 
-function readSprite(v: any, cells: number): Sprite | null {
-	const n = name(v?.name);
-	if (!n || !Array.isArray(v.pixels)) return null;
-	// Repair rather than reject: wrong-length or junk pixels become transparent.
+/** Repair rather than reject: wrong-length or junk pixels become transparent. */
+function readPixels(v: unknown, cells: number): Uint8Array {
+	const src = asArray(v);
 	const pixels = new Uint8Array(cells);
 	for (let i = 0; i < cells; i++) {
-		const p = v.pixels[i];
-		pixels[i] = Number.isInteger(p) && p >= 0 && p < 256 ? p : 0;
+		const p = src[i];
+		pixels[i] = Number.isInteger(p) && (p as number) >= 0 && (p as number) < 256 ? (p as number) : 0;
 	}
-	return { name: n, pixels };
+	return pixels;
+}
+
+function readLayer(v: any, cells: number): Layer | null {
+	const n = name(v?.name);
+	if (!n || !Array.isArray(v.pixels)) return null;
+	const layer: Layer = { name: n, pixels: readPixels(v.pixels, cells) };
+	// written and read back deliberately: `settle()` drops an undo step when the serialised document
+	// is unchanged, so a `hidden` that didn't persist would make hide_layer un-undoable *and* let the
+	// next undo bring the layer back visible
+	if (v.hidden === true) layer.hidden = true;
+	return layer;
+}
+
+/**
+ * Sniffs the shape rather than trusting `version` — `parse()` below never reads that number, so it
+ * documents what we write and gates nothing. A sprite from before layers is `{ name, pixels }` and
+ * becomes a single layer, which is what every stored project and the shipped examples.json are.
+ */
+function readSprite(v: any, cells: number): Sprite | null {
+	const n = name(v?.name);
+	if (!n) return null;
+	const layered = Array.isArray(v.layers);
+	if (!layered && !Array.isArray(v.pixels)) return null;
+	// uniq for the same reason sprites get it: two layers with one name make select_layer ambiguous
+	// and would lose one of them on the next round-trip
+	const layers = layered
+		? uniq(asArray(v.layers).map((l) => readLayer(l, cells)))
+		: [{ name: BASE, pixels: readPixels(v.pixels, cells) }];
+	// the "at least one layer" invariant is enforced here or nowhere: an empty stack would leave
+	// layerOf() with nothing to hand back on a sprite that visibly exists
+	return { name: n, layers: layers.length ? layers : [{ name: BASE, pixels: new Uint8Array(cells) }] };
 }
 
 /** `known` is the sprite names a frame is allowed to reference. Also what `set_animation` validates through. */
@@ -68,9 +101,11 @@ export function readFrames(v: unknown, known: Set<string>): Frame[] {
 		const fx = readFx(f.fx);
 		const trail = readTrail(f.trail);
 		const transition = readTransition(f.transition);
+		const layers = readArrangement(f.layers);
 		if (fx) frame.fx = fx;
 		if (trail) frame.trail = trail;
 		if (transition) frame.transition = transition;
+		if (layers) frame.layers = layers;
 		frames.push(frame);
 	}
 	return frames;
@@ -100,7 +135,12 @@ export function readSet(v: any): SpriteSet | null {
 export const setPayload = (set: SpriteSet) => ({
 	name: set.name,
 	grid: set.grid,
-	sprites: set.sprites.map((s) => ({ name: s.name, pixels: [...s.pixels] })),
+	// fresh objects per layer, not `s.layers`: readSet(setPayload(set)) is how a set is deep-copied,
+	// and sharing the layer objects would leave the copy painting into the original
+	sprites: set.sprites.map((s) => ({
+		name: s.name,
+		layers: s.layers.map((l) => ({ name: l.name, pixels: [...l.pixels], ...(l.hidden && { hidden: true }) }))
+	})),
 	animations: set.animations.map((a) => ({ name: a.name, frames: a.frames.map((f) => ({ ...f })) }))
 });
 

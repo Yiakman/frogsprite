@@ -5,9 +5,13 @@
 // whole reason a set can hold more than one animation. Everything here is therefore applied on the
 // way out: to the canvas, to the timeline thumbnails, and to an exported SVG, all through the same
 // `compose()`.
-import { flip, rotate, shift, STEP, type Pixels } from './grid.ts';
+import { applyFx, STEP } from './grid.ts';
+// re-exported: applyFx moved to grid.ts so layers.ts can reach it without importing this module,
+// which already imports layers.ts. Every existing caller keeps working.
+export { applyFx };
+import { flatten } from './layers.ts';
 import { darken, invert, tint, TRANSPARENT, HUES, type Hue } from './palette.ts';
-import type { Frame, Sprite } from './types.ts';
+import type { Arrangement, Frame, LayerView, Sprite } from './types.ts';
 
 /** Applied in a fixed order: invert → hue → flip → rotate → displace. */
 export type Fx = {
@@ -64,18 +68,6 @@ export const progress = (i: number, n: number): number => (i + 1) / n;
 /** Deterministic dissolve order — the same on screen and in an export, with no RNG state to carry. */
 const hash = (i: number): number => ((i * 2654435761) >>> 0) / 4294967296;
 
-/** A copy of `pixels` with `fx` applied. The source buffer is never touched. */
-export function applyFx(pixels: Pixels, grid: number, fx?: Fx): Uint8Array {
-	const out = new Uint8Array(pixels);
-	if (!fx) return out;
-	if (fx.invert) for (let i = 0; i < out.length; i++) out[i] = invert(out[i]);
-	if (fx.hue) for (let i = 0; i < out.length; i++) out[i] = tint(out[i], fx.hue);
-	if (fx.flipX) flip(out, grid, 'x');
-	if (fx.flipY) flip(out, grid, 'y');
-	if (fx.rotate) rotate(out, grid, fx.rotate);
-	if (fx.dx || fx.dy) shift(out, grid, fx.dx ?? 0, fx.dy ?? 0);
-	return out;
-}
 
 /**
  * Frame `i` of an animation, `t` of the way through it — the one renderer. `t` only matters to a
@@ -108,8 +100,10 @@ export function compose(
 	 */
 	const pixelsFor = (f: Frame) => {
 		const sprite = byName.get(f.sprite);
+		// flattened here rather than when `byName` is built: that map covers every sprite in the set
+		// and a frame reaches for two or three of them
 		return sprite
-			? applyFx(sprite.pixels, grid, effects ? f.fx : undefined)
+			? applyFx(flatten(sprite, grid, effects ? f.layers : undefined), grid, effects ? f.fx : undefined)
 			: new Uint8Array(cells);
 	};
 
@@ -201,6 +195,48 @@ export function readTrail(v: any): Trail | undefined {
 	return trail;
 }
 
+/**
+ * A frame's per-layer overrides. Also the normaliser for the shorthand: `{ fuji: -4 }` means
+ * `{ fuji: { dx: -4 } }`, because sliding a layer sideways is what this is nearly always for.
+ *
+ * Layers are named, not indexed, so an entry naming a layer the sprite does not have is kept rather
+ * than dropped — the same arrangement is meant to be reused across sprites whose stacks differ, and
+ * `flatten` simply ignores a name it cannot find.
+ */
+export function readArrangement(v: any): Arrangement | undefined {
+	if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+	const out: Arrangement = {};
+	for (const [name, raw] of Object.entries(v)) {
+		if (!name) continue;
+		const spec: any = typeof raw === 'number' ? { dx: raw } : raw;
+		if (!spec || typeof spec !== 'object') continue;
+		const view: LayerView = {};
+		const dx = Math.round(Number(spec.dx));
+		const dy = Math.round(Number(spec.dy));
+		if (dx) view.dx = dx;
+		if (dy) view.dy = dy;
+		if (spec.wrap === true) view.wrap = true;
+		// the fx keys go through readFx, so a layer effect survives a reload on exactly the same terms
+		// a frame effect does — and a bad rotate is dropped here rather than at every redraw
+		const fx = readFx(spec);
+		if (fx?.invert) view.invert = true;
+		if (fx?.hue) view.hue = fx.hue;
+		if (fx?.rotate) view.rotate = fx.rotate;
+		// kept as given; flatten clamps, because a stored 999 must not throw on every redraw
+		for (const k of ['cx', 'cy'] as const) {
+			const n = Number(spec[k]);
+			if (Number.isFinite(n) && n >= 0 && Number.isInteger(n * 2)) view[k] = n;
+		}
+		if (fx?.flipX) view.flipX = true;
+		if (fx?.flipY) view.flipY = true;
+		// tri-state on purpose: absent leaves the layer's own `hidden` alone, where `false` overrides
+		// it to show a layer the sprite hides. `!!spec.hidden` would collapse those two.
+		if (typeof spec.hidden === 'boolean') view.hidden = spec.hidden;
+		if (Object.keys(view).length) out[name] = view;
+	}
+	return Object.keys(out).length ? out : undefined;
+}
+
 /** Also the normaliser for the shorthand: `transition: 'vanish'` means `{ kind: 'vanish' }`. */
 export function readTransition(v: any): Transition | undefined {
 	const kind = typeof v === 'string' ? v : v?.kind;
@@ -220,6 +256,8 @@ export type EffectPatch = {
 	fx?: FxPatch | null;
 	trail?: Trail | number | null;
 	transition?: Transition | string | null;
+	/** Per layer: an object merged key-by-key, a number as `dx` shorthand, or null to clear one. */
+	layers?: Record<string, LayerView | number | null> | null;
 };
 
 /**
@@ -248,6 +286,24 @@ export function patchEffects(frame: Frame, patch: EffectPatch): Frame {
 		const transition = patch.transition === null ? undefined : readTransition(patch.transition);
 		if (transition) next.transition = transition;
 		else delete next.transition;
+	}
+	if (patch.layers !== undefined) {
+		if (patch.layers === null) delete next.layers;
+		else {
+			// Merged at *both* levels, and the inner one is the whole point. A single spread merges by
+			// layer name only, so patching `{ pose: { dy: -1 } }` replaced the entry wholesale and threw
+			// away the `hidden: false` sitting in it — one call quietly un-posing half an animation,
+			// with nothing on screen to say why. `fx` merges per key; so does this.
+			const merged: Record<string, any> = { ...next.layers };
+			for (const [name, view] of Object.entries(patch.layers)) {
+				// a null per layer clears that one entry, the way `{ hue: null }` clears one fx key
+				if (view === null) delete merged[name];
+				else merged[name] = { ...merged[name], ...(typeof view === 'number' ? { dx: view } : view) };
+			}
+			const validated = readArrangement(merged);
+			if (validated) next.layers = validated;
+			else delete next.layers;
+		}
 	}
 	return next;
 }

@@ -5,7 +5,7 @@
 // to test it — it reaches store.svelte.ts, and `$state` needs the Svelte compiler. Pulling the two
 // decisions out is the cheapest way to put them under `npm test`.
 
-export type Selection = { pkg: string; set: string; sprite: string; anim: string };
+export type Selection = { pkg: string; set: string; sprite: string; anim: string; layer: string };
 
 /**
  * Selecting a set. Re-selecting the one already active is a no-op and must leave the sprite and the
@@ -24,10 +24,37 @@ export function onSet(
 			...sel,
 			set,
 			sprite: moved ? '' : sel.sprite,
+			layer: moved ? '' : sel.layer,
 			anim: moved ? (animations[0] ?? '') : sel.anim
 		},
 		moved
 	};
+}
+
+/**
+ * Which layer an edit lands on. Resolved by *name* with a fallback rather than by index, so a layer
+ * deleted or reordered underneath a stale selection degrades to a sensible target instead of
+ * throwing or painting into whatever slid into that slot.
+ *
+ * A layer you chose is honoured even when hidden — the stroke lands where you asked and simply is
+ * not visible, which is what every pixel editor does and is less surprising than quietly
+ * redirecting it. Only the *fallback* skips hidden layers: with no choice made, painting somewhere
+ * you cannot see would be nothing but a bug. Each entry is [name, hidden], bottom-first.
+ */
+export function targetLayer(
+	layers: [name: string, hidden: boolean][],
+	requested?: string,
+	selected?: string
+): string {
+	if (requested) {
+		if (!layers.some(([n]) => n === requested))
+			throw new Error(`no layer "${requested}" (has ${layers.map(([n]) => n).join(', ')})`);
+		return requested;
+	}
+	if (selected && layers.some(([n]) => n === selected)) return selected;
+	// nothing chosen: the topmost visible one, so what you see is what you paint into
+	for (let i = layers.length - 1; i >= 0; i--) if (!layers[i][1]) return layers[i][0];
+	return layers[layers.length - 1]?.[0] ?? '';
 }
 
 /**
