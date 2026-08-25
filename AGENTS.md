@@ -4,17 +4,55 @@ A pixel-sprite editor whose entire feature set is reachable from JavaScript. Run
 the page, and drive it from the browser console (or an agent's JS-execution tool) via the global
 `frogsprite` object.
 
+The page opens on example frogs. Call `new_package` then `new_set` before painting, or you will draw
+on them.
+
 ```
 package  →  set (fixed grid size)  →  sprites
                                  →  animations  →  frames
 ```
 
-A **package** groups **sets**. A **set** is one character or object: every sprite in it shares the
-same grid (8, 16, 32, 64 or 128) — those are the sprites for its different actions or positions. A
-set also owns any number of named **animations**, each an ordered list of `{ sprite, ms }` frames.
-They all draw on the same sprites, so one body frame can appear in `walk`, `idle` and `hurt` at
-once — and a frame can carry effects that change how it is *drawn* without touching the sprite
-everyone else is sharing.
+A **set** is one character or object: every sprite in it shares the same grid (8, 16, 32, 64 or 128).
+Prefer 8–32 for hand-drawn work; 64/128 is for importing an image. A set owns named **animations**,
+each an ordered list of `{ sprite, ms }` frames over those sprites, so one pose can appear in `walk`,
+`idle` and `hurt` at once. A **package** is just a folder of sets.
+
+## Happy path
+
+```js
+frogsprite.new_package('critters');
+frogsprite.new_set('frog', 16);
+frogsprite.new_sprite('idle');
+frogsprite.paint_map(rows, { g: '#22aa33', d: '#116611', e: '#000000' });
+// or: frogsprite.shapes.circle(8, 8, 5, '#22aa33');
+frogsprite.print_sprite();                // check the art
+frogsprite.clone_sprite('idle', 'crouch');
+frogsprite.shift(0, 1);
+frogsprite.set_animation([
+  { sprite: 'idle', ms: 300 },
+  { sprite: 'crouch', ms: 120 }
+]);
+frogsprite.print_frame(0);                // check a clip — not print_sprite
+frogsprite.contact_sheet({ download: true });
+await frogsprite.export_zip({ download: true });
+```
+
+`new_*` selects what it created. `print_sprite` reads art; `print_frame` / `contact_sheet` read a
+clip (`fx` and layer arrangements are invisible to `print_sprite`).
+
+| I want | Use | Do not use |
+| --- | --- | --- |
+| Draw a character | `paint_map` / `shapes.*` / `reflect` | `paint_pixel` loops, `new_layer` |
+| Next animation pose | `clone_sprite` / `copy_sprite` | `new_layer`, `cycle_layers` |
+| Face the other way | `fx: { flipX: true }` | clone + `reflect` (unless the art is asymmetric on purpose) |
+| Hurt / team colour | `fx: { hue: 'red' }` | recolour the shared sprite |
+| Put a tree in a scene once | `stamp` | a layer (unless you will still edit the tree) |
+| Scrolling background | layers + `scroll_layer` | one sprite per frame, or `fx.dx` |
+| Check art | `print_sprite` | — |
+| Check a clip | `print_frame` / `contact_sheet` | `print_sprite` |
+
+Layers, motion trails, transitions and parallax are recipes, not the default. See [Recipes](#recipes).
+`frogsprite.help()` lists every command. The rest of this file is the reference.
 
 ## Colours
 
@@ -73,7 +111,10 @@ one. New packages/sets/sprites become the current selection automatically.
 
 All three move the selection off whatever they removed, and each is one undo step.
 
-### Layers
+A fresh sprite has one `layer-0`. You can ignore layers until you need a stack you will keep editing,
+or a parallax scene — commands and recipes are in [Recipes](#recipes).
+
+### Layers — moved
 
 A sprite is a stack of layers composited bottom to top, and **one layer is the ordinary case**. A
 fresh sprite has a single `layer-0` and behaves exactly as sprites did before layers existed, so you
