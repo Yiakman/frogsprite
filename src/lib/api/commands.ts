@@ -400,8 +400,9 @@ const api = {
 	 * file picker should pass a data URL. Options: `fit` ('contain' default, 'cover', 'stretch'),
 	 * `alpha` (0-255 cutoff for a cell counting as transparent, default 128), `trim` (crop a
 	 * transparent or uniform border first, default true), `contrast` (default 0.15),
-	 * `saturation` (default 1.2), plus `sprite` to target one by name or `newSprite` to create one,
-	 * and `layer` to land on one by name. Like every painting verb this replaces the *active layer*,
+	 * `saturation` (default 1.2), `pixel` (the source is already pixel art — turns the three photo
+	 * treatments off, which is what you want re-importing an `export_png`), plus `sprite` to target
+	 * one by name or `newSprite` to create one, and `layer` to land on one by name. Like every painting verb this replaces the *active layer*,
 	 * not the whole sprite.
 	 */
 	import_image: mut(async function (source: ImageSource, opts: ImportOptions & { sprite?: string; newSprite?: string; layer?: string } = {}) {
@@ -869,7 +870,8 @@ const api = {
 	 * Across sets the grids have to be compatible, and that means **larger only**: a 16x16 goes into
 	 * a 32x32 as an exact 2x2 block per pixel, with nothing resampled and no colour invented. The
 	 * other direction has to pick one winner per block, which eats every one-pixel highlight, so it
-	 * throws instead. `export_png` then `import_image` is the way down, and it resamples properly.
+	 * throws instead. `export_png` then `import_image(png, { pixel: true })` is the way down, and it
+ * resamples properly.
 	 */
 	copy_sprite: mut(function (name: string, { from = {}, to }: { from?: { set?: string; pkg?: string }; to?: string } = {}) {
 		const set = editor.requireSet();
@@ -879,7 +881,7 @@ const api = {
 		if (src.grid > set.grid)
 			throw new Error(
 				`can't copy a ${src.grid}x${src.grid} sprite into a ${set.grid}x${set.grid} set — upscale only. ` +
-					`export_png() it and import_image() it back to go smaller.`
+					`export_png() it and import_image(png, { pixel: true }) it back to go smaller.`
 			);
 		const named = to ? (taken(set.sprites, to, 'sprite'), to) : freeName(set.sprites, name);
 		set.sprites.push(copyOfSprite(sprite, named, src.grid, set.grid));

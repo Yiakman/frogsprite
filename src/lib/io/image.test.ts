@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { PALETTE } from '../core/palette.ts';
+import { nearestIndex, PALETTE } from '../core/palette.ts';
 import { adjust, contentBounds, layout, normalise, sampleInto } from './image.ts';
 
 /** Build RGBA data from rows of [r,g,b,a] tuples. */
@@ -100,4 +100,37 @@ test('normalise falls back past undefined and refuses values that would quantise
 	assert.throws(() => normalise({ contrast: NaN }), /contrast must be a number/);
 	assert.throws(() => normalise({ saturation: '1.2' as any }), /saturation must be a number/);
 	assert.throws(() => normalise({ alpha: 300 }), /alpha must be a number between 0 and 255/);
+});
+
+test('pixel turns the three photo treatments off together, and stays overridable', () => {
+	// re-importing an export_png must give back the art as drawn, not a punched-up crop of it
+	const p = normalise({ pixel: true });
+	assert.equal(p.contrast, 0);
+	assert.equal(p.saturation, 1);
+	assert.equal(p.trim, false);
+	assert.equal(p.fit, 'contain', 'the rest of the defaults still stand');
+	assert.ok(!('pixel' in p), 'spent during normalise, not passed on to the sampler');
+
+	// a preset is a starting point, not a lock
+	assert.equal(normalise({ pixel: true, trim: true }).trim, true);
+	assert.equal(normalise({ pixel: false }).contrast, 0.15);
+});
+
+test('the palette survives a pixel round-trip that the photo defaults would shift', () => {
+	// Every palette entry, back through the adjustment the defaults would apply. Compared by
+	// colour, not by index: four gray-ramp entries repeat a colour the RGB cube already holds, so
+	// they always resolve to the cube's lower index. The art is identical; the index is not.
+	const drift = (contrast: number, saturation: number) => {
+		let n = 0;
+		for (let i = 1; i < 256; i++) {
+			const c = PALETTE[i];
+			const [r, g, b] = [1, 3, 5].map((o) => parseInt(c.slice(o, o + 2), 16));
+			if (PALETTE[nearestIndex(...adjust(r, g, b, contrast, saturation))] !== c) n++;
+		}
+		return n;
+	};
+	const photo = normalise({});
+	const pixel = normalise({ pixel: true });
+	assert.ok(drift(photo.contrast, photo.saturation) > 100, 'the photo defaults do move colours');
+	assert.equal(drift(pixel.contrast, pixel.saturation), 0, 'pixel: true moves none of them');
 });

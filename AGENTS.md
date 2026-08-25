@@ -350,7 +350,8 @@ optional `to` name, and selects what it made. Left unnamed, the copy gets `name-
 which means **larger only**. A 16x16 goes into a 32x32 as an exact 2x2 block per pixel, with nothing
 resampled and no colour invented. The other direction has to pick one winner per block, which eats
 every one-pixel highlight, so it throws rather than quietly damaging the art; `export_png()` then
-`import_image()` is the way down and resamples properly.
+`import_image(png, { pixel: true })` is the way down and resamples properly — `pixel` matters, since
+the photo defaults would punch up the contrast and crop the margins of art that is already right.
 
 Animations and frames stay inside one set because a frame names a *sprite*: carried across, it would
 point at nothing.
@@ -485,7 +486,9 @@ await frogsprite.import_image(source, { fit: 'cover', newSprite: 'logo' });
 Each grid cell becomes the alpha-weighted average of the source pixels under it, snapped to the
 palette. **Async — always `await` it.**
 
-`source` is a `File`/`Blob`, a `data:` / `blob:` / `http(s)` URL, or an `ImageBitmap`.
+`source` is a `File`/`Blob`, a `data:` / `blob:` / `http(s)` URL, or an `ImageBitmap`. PNG, JPEG,
+GIF, WebP and SVG all work; an SVG needs `width` and `height` on its `<svg>` tag, since a lone
+`viewBox` gives nothing to size the import from.
 
 #### Getting an image in when you have no file picker
 
@@ -531,11 +534,22 @@ an image"*; and a random image URL off the web, which needs CORS headers and usu
 | `alpha` | `128` | cells averaging below this alpha become transparent |
 | `contrast` | `0.15` | pre-quantize boost; `0` disables |
 | `saturation` | `1.2` | `1` disables, `0` is greyscale |
+| `pixel` | `false` | the source is already pixel art — turns `trim`, `contrast` and `saturation` off together |
 | `newSprite` | — | create a sprite of this name and import into it |
 | `sprite` | — | import into an existing sprite by name (default: the active one) |
 
 Returns `{ sprite, grid, colours }`. In the UI: the **Import image…** button, or drop/paste an image
 onto the canvas — those create a new sprite named after the file.
+
+Coming back from `export_png` — the supported way to move a sprite into a **smaller** grid — pass
+`{ pixel: true }`. Without it the photo treatment applies to art that is already palette-exact:
+contrast and saturation move 125 of the 255 palette entries onto a neighbour, and `trim` crops and
+re-centres anything whose transparent margin was part of the composition.
+
+```js
+const png = frogsprite.export_png({ scale: 1 });   // a data URL
+await frogsprite.import_image(png, { pixel: true, newSprite: 'small' });
+```
 
 Expect a *starting point*, not a finished sprite. At 8×8 and 16×16 a photograph becomes mush; this
 works best on high-contrast, simple, centred subjects. The palette is a 6×6×6 cube plus greys, so
