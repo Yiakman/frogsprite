@@ -111,10 +111,10 @@ short `/llms.txt` summary) so an agent that lands on a deployed instance can fin
 
 | | |
 | --- | --- |
-| `export_zip` | the whole set: every sprite as PNG and SVG, one SVG per animation, plus `set.json` with raw pixel data — the closest thing to a project file |
+| `export_zip` | the whole set: every sprite as PNG and SVG, one SVG per animation, a `sheet/` strip and frame map per animation, plus `set.json` with raw pixel data — the closest thing to a project file |
+| `export_spritesheet` | one animation as a packed strip PNG plus a frame map — uniform gapless cells, which is what a game engine loads |
 | `export_svg` | one sprite, horizontal runs merged into single rects |
 | `export_animated_svg` | one animation as a self-contained looping SVG |
-| `contact_sheet` | every frame as one numbered PNG grid — a fault in frame 9 is invisible in playback and obvious here |
 | `contact_sheet` | every frame as one numbered PNG grid — a fault in frame 9 is invisible in playback and obvious here |
 | `export_png` | one sprite at any scale |
 | `export_ico` | multi-size icon |
@@ -209,4 +209,3 @@ sharing between devices. That is the one feature that would genuinely require a 
   source afterwards changes nothing already stamped. Layers arranged per frame are the live
   alternative. A *linked* stamp (a layer that references another sprite instead of holding pixels,
   resolved at composite time) is the noted upgrade path, marked `ponytail:` in `api/commands.ts`.
-- **No spritesheet export** — the ZIP contains individual PNGs, not a packed strip.

@@ -94,6 +94,12 @@
 				onclick={() => run(() => fs.export_animated_svg({ download: true }))}>Animated SVG</button
 			>
 			<button
+				disabled={!editor.frames.length}
+				title="The animation as one packed strip PNG plus its frame map — what a game engine loads"
+				onclick={() => run(() => fs.export_spritesheet({ download: true }))}
+				data-testid="export-spritesheet">Spritesheet</button
+			>
+			<button
 				disabled={!editor.set?.sprites.length}
 				title="Every sprite as PNG and SVG, one SVG per animation, and the raw pixel data"
 				onclick={() => run(() => fs.export_zip({ download: true }))}

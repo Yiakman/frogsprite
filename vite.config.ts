@@ -13,7 +13,8 @@ Open the page and call commands on the global \`window.frogsprite\`. There is no
 and no build step — the editor runs entirely in the page and saves to localStorage.
 
 - [AGENTS.md](/AGENTS.md): the full command reference — packages, sets, sprites, painting, shapes,
-  grids, the 256-colour palette, animation, undo, image import, and the SVG/PNG/ICO/ZIP exports.
+  grids, the 256-colour palette, animation, undo, image import, and the SVG/PNG/ICO/ZIP/
+  spritesheet exports.
 
 Quick start, pasted into the browser console:
 

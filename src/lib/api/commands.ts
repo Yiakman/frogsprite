@@ -1116,6 +1116,29 @@ const api = {
 		return { animation: anim.name, frames: anim.frames.length, cols: Math.min(cols, anim.frames.length), url };
 	}),
 
+	/**
+	 * One animation as a packed strip PNG plus its frame map — what a game engine loads.
+	 *
+	 *   export_spritesheet({ download: true })      // walk-sheet.png and walk-sheet.json
+	 *   export_spritesheet({ cols: 4 })             // folded into rows instead of one long strip
+	 *
+	 * Cells are uniform and gapless, so an engine that only asks for a frame size (Phaser, Godot,
+	 * a CSS `steps()` background) needs nothing but the PNG. The JSON carries what the strip
+	 * cannot: which sprite each cell came from, and how long it is held.
+	 */
+	export_spritesheet: ro(function ({ animation, cols, scale = 8, effects = true, transitions = true, download = false }: { animation?: string; cols?: number; scale?: number; effects?: boolean; transitions?: boolean; download?: boolean } = {}) {
+		const set = editor.requireSet();
+		const anim = animOf(animation);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
+		const base = `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}-sheet`;
+		const { url, meta } = ex.toSpritesheet(set.sprites, anim.frames, set.grid, { cols, scale, effects, transitions, image: `${base}.png` });
+		if (download) {
+			ex.download(url, `${base}.png`);
+			ex.downloadJSON(meta, `${base}.json`);
+		}
+		return { animation: anim.name, ...meta, url };
+	}),
+
 	export_ico: ro(async function ({ sprite, sizes = [16, 32, 48], download = false } = {} as any) {
 		const t = target(sprite);
 		const url = await ex.toICO(seen(t), t.grid, sizes); // display, not edit: the whole stack
@@ -1267,7 +1290,7 @@ const api = {
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'ramp', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
-				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
+				exporting: ['export_zip', 'export_spritesheet', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
 				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'contact_sheet', 'palette', 'color', 'background', 'silhouette', 'zoom', 'raw', 'help'],
 				history: ['undo', 'redo', 'history', 'batch'],

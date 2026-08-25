@@ -647,6 +647,29 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   every frame as one numbered PNG grid. Playback shows one frame at a time and a screenshot catches
   whichever was up, so a fault in frame 9 stays invisible until it goes past; on a sheet it is
   obvious at a glance. Reach for it before believing an animation is finished
+- `export_spritesheet({ animation?, cols?, scale = 8, effects?, transitions?, download? })` → **one
+  animation as a packed strip PNG plus its frame map** — the hand-off to a game engine, which wants
+  one image with uniform cells rather than the ZIP's one file per sprite. Cells are the same size,
+  in reading order, gapless, on a transparent background, so anything that asks only for a frame
+  size (Phaser, Godot, LÖVE, a CSS `steps()` background) needs nothing but the PNG. Returns
+  `{ animation, image, grid, scale, frameWidth, frameHeight, cols, rows, width, height, duration,
+  frames: [{ index, sprite, x, y, w, h, ms }], url }`, and `download` saves the `.png` and the
+  `.json` frame map together.
+
+  Without `cols` the frames go in one row. Pass it to fold them into a squarer sheet — and note the
+  layout folds itself anyway rather than crossing the 16384px a canvas will actually draw, because
+  past that Safari hands back a blank bitmap instead of an error.
+
+  The frame map is what the strip cannot carry: **which sprite each cell came from, and how long it
+  is held**. A frog that holds frame 1 for 420ms and frame 3 for 90ms is a uniform strip either way
+  — the timing only survives in the JSON.
+
+  ```js
+  frogsprite.export_spritesheet({ download: true });     // walk-sheet.png + walk-sheet.json
+  frogsprite.export_spritesheet({ cols: 4 });            // 4 across, folded into rows
+  frogsprite.export_spritesheet({ scale: 1 });           // one cell per grid pixel
+  ```
+
 - `export_zip({ scale = 8, effects?, transitions?, animations?, download?, base64? })` → **the whole
   set as a .zip**. Async. Contains:
 
@@ -655,6 +678,8 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   png/<sprite>.png         one per sprite, at `scale`
   svg/<sprite>.svg         one per sprite
   <set>-<animation>.svg    one per animation that has frames
+  sheet/<animation>.png    the same animation as a packed strip, with
+  sheet/<animation>.json   its frame map alongside
   ```
 
   Both exports bake frame effects and transitions in, so what you see playing is what you get.
