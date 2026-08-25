@@ -162,9 +162,40 @@ export function compose(
 // which is the usual io -> core direction. They run through the same checks the stored format uses,
 // so whatever survives here survives a reload.
 
-/** Drop what we don't recognise rather than guessing at it — an unreadable effect is no effect. */
-export function readFx(v: any): Fx | undefined {
+const FX_KEYS = ['invert', 'hue', 'rotate', 'dx', 'dy', 'flipX', 'flipY'] as const;
+const VIEW_KEYS = [...FX_KEYS, 'wrap', 'hidden', 'cx', 'cy'] as const;
+
+const strayKeys = (v: object, allowed: readonly string[]) =>
+	Object.keys(v).filter((k) => !allowed.includes(k));
+
+const unknownMsg = (what: string, stray: string[], takes: string) =>
+	`${what} has unknown key${stray.length > 1 ? 's' : ''} ${stray.map((k) => `"${k}"`).join(', ')} — ${takes}`;
+
+/**
+ * Load path drops what it does not recognise (damaged localStorage must not take the editor down).
+ * `{ strict: true }` is the write path: unknown or illegal keys throw, so a `rotate: 45` fails in
+ * the same call that set it rather than producing a wheel that never turns.
+ */
+export function readFx(v: any, { strict = false }: { strict?: boolean } = {}): Fx | undefined {
 	if (!v || typeof v !== 'object') return undefined;
+	if (strict) {
+		const stray = strayKeys(v, FX_KEYS);
+		if (stray.length) throw new Error(unknownMsg('fx', stray, `fx takes ${FX_KEYS.join(', ')}`));
+		if ('hue' in v && v.hue != null && !HUES.includes(v.hue))
+			throw new Error(`fx.hue "${v.hue}" is not a hue — use ${HUES.join(', ')}`);
+		if ('rotate' in v && v.rotate != null) {
+			const angle = Number(v.rotate);
+			// 0 and ±360 are no-ops, dropped below — the UI clears a turn by wrapping onto 0
+			if (!Number.isFinite(angle) || (angle % 360 !== 0 && angle % STEP !== 0))
+				throw new Error(`fx.rotate ${v.rotate} is not a multiple of ${STEP} — use ${STEP}, ${STEP * 2}, ${STEP * 3}…`);
+		}
+		for (const k of ['invert', 'flipX', 'flipY'] as const)
+			if (k in v && v[k] != null && typeof v[k] !== 'boolean')
+				throw new Error(`fx.${k} must be true or false`);
+		for (const k of ['dx', 'dy'] as const)
+			if (k in v && v[k] != null && !Number.isFinite(Number(v[k])))
+				throw new Error(`fx.${k} must be a number`);
+	}
 	const fx: Fx = {};
 	if (v.invert === true) fx.invert = true;
 	if (HUES.includes(v.hue)) fx.hue = v.hue;
@@ -202,23 +233,45 @@ export function readTrail(v: any): Trail | undefined {
  * Layers are named, not indexed, so an entry naming a layer the sprite does not have is kept rather
  * than dropped — the same arrangement is meant to be reused across sprites whose stacks differ, and
  * `flatten` simply ignores a name it cannot find.
+ *
+ * `{ strict: true }` is the write path, same as `readFx`: a bad rotate throws rather than leaving a
+ * wheel that never turns. Load stays lenient.
  */
-export function readArrangement(v: any): Arrangement | undefined {
+export function readArrangement(v: any, { strict = false }: { strict?: boolean } = {}): Arrangement | undefined {
 	if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
 	const out: Arrangement = {};
 	for (const [name, raw] of Object.entries(v)) {
 		if (!name) continue;
 		const spec: any = typeof raw === 'number' ? { dx: raw } : raw;
-		if (!spec || typeof spec !== 'object') continue;
+		if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
+			if (strict)
+				throw new Error(`layer "${name}" must be { ${VIEW_KEYS.join(', ')} } or a number (dx)`);
+			continue;
+		}
+		if (strict) {
+			const stray = strayKeys(spec, VIEW_KEYS);
+			if (stray.length)
+				throw new Error(unknownMsg(`layer "${name}"`, stray, `a layer view takes ${VIEW_KEYS.join(', ')}`));
+			for (const k of ['cx', 'cy'] as const) {
+				if (!(k in spec) || spec[k] == null) continue;
+				const n = Number(spec[k]);
+				if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n * 2))
+					throw new Error(`layer "${name}" ${k} must be a pixel coordinate (whole or .5)`);
+			}
+		}
 		const view: LayerView = {};
 		const dx = Math.round(Number(spec.dx));
 		const dy = Math.round(Number(spec.dy));
 		if (dx) view.dx = dx;
 		if (dy) view.dy = dy;
 		if (spec.wrap === true) view.wrap = true;
-		// the fx keys go through readFx, so a layer effect survives a reload on exactly the same terms
-		// a frame effect does — and a bad rotate is dropped here rather than at every redraw
-		const fx = readFx(spec);
+		// pick the fx keys so wrap/hidden/cx/cy are not unknown keys under strict readFx
+		const fx = readFx(
+			strict
+				? Object.fromEntries(FX_KEYS.filter((k) => k in spec).map((k) => [k, spec[k]]))
+				: spec,
+			{ strict }
+		);
 		if (fx?.invert) view.invert = true;
 		if (fx?.hue) view.hue = fx.hue;
 		if (fx?.rotate) view.rotate = fx.rotate;
@@ -273,7 +326,7 @@ export function patchEffects(frame: Frame, patch: EffectPatch): Frame {
 	const next: Frame = { ...frame };
 
 	if (patch.fx !== undefined) {
-		const merged = patch.fx === null ? undefined : readFx({ ...next.fx, ...patch.fx });
+		const merged = patch.fx === null ? undefined : readFx({ ...next.fx, ...patch.fx }, { strict: true });
 		if (merged) next.fx = merged;
 		else delete next.fx;
 	}
@@ -300,7 +353,7 @@ export function patchEffects(frame: Frame, patch: EffectPatch): Frame {
 				if (view === null) delete merged[name];
 				else merged[name] = { ...merged[name], ...(typeof view === 'number' ? { dx: view } : view) };
 			}
-			const validated = readArrangement(merged);
+			const validated = readArrangement(merged, { strict: true });
 			if (validated) next.layers = validated;
 			else delete next.layers;
 		}

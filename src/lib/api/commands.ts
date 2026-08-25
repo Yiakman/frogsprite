@@ -1,6 +1,6 @@
 import { PALETTE, ramp as rampOf, toIndex, TRANSPARENT } from '../core/palette.ts';
 import * as ex from '../io/export.ts';
-import { compose, patchEffects, readArrangement, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
+import { compose, patchEffects, readArrangement, readFx, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
 import * as history from '../core/history.ts';
 import * as storage from '../io/storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
@@ -1013,10 +1013,15 @@ const api = {
 				throw new Error(
 					`frame "${f.sprite}" has a bad trail — use a frame count, or { frames, fade } with 0 < fade < 1`
 				);
-			if (f.layers !== undefined && !readArrangement(f.layers))
-				throw new Error(
-					`frame "${f.sprite}" has a bad layers arrangement — use { layerName: { dx, dy, wrap, hidden } }, or { layerName: dx }`
-				);
+			try {
+				if (f.fx != null) readFx(f.fx, { strict: true });
+				if (f.layers !== undefined && !readArrangement(f.layers, { strict: true }))
+					throw new Error(
+						`bad layers arrangement — use { layerName: { dx, dy, wrap, hidden } }, or { layerName: dx }`
+					);
+			} catch (e) {
+				throw new Error(`frame "${f.sprite}": ${e instanceof Error ? e.message : e}`);
+			}
 			// A key we do not know is nearly always a near-miss for one we do — `layer` for `layers`
 			// being the obvious one. Dropping it silently taught nothing at precisely the moment
 			// something needed teaching, so it is an error now.
@@ -1114,6 +1119,29 @@ const api = {
 		const url = ex.toContactSheet(set.sprites, anim.frames, set.grid, { cols, scale, gap, effects, transitions });
 		if (download) ex.download(url, `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}-sheet.png`);
 		return { animation: anim.name, frames: anim.frames.length, cols: Math.min(cols, anim.frames.length), url };
+	}),
+
+	/**
+	 * One animation as a packed strip PNG plus its frame map — what a game engine loads.
+	 *
+	 *   export_spritesheet({ download: true })      // walk-sheet.png and walk-sheet.json
+	 *   export_spritesheet({ cols: 4 })             // folded into rows instead of one long strip
+	 *
+	 * Cells are uniform and gapless, so an engine that only asks for a frame size (Phaser, Godot,
+	 * a CSS `steps()` background) needs nothing but the PNG. The JSON carries what the strip
+	 * cannot: which sprite each cell came from, and how long it is held.
+	 */
+	export_spritesheet: ro(function ({ animation, cols, scale = 8, effects = true, transitions = true, download = false }: { animation?: string; cols?: number; scale?: number; effects?: boolean; transitions?: boolean; download?: boolean } = {}) {
+		const set = editor.requireSet();
+		const anim = animOf(animation);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
+		const base = `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}-sheet`;
+		const { url, meta } = ex.toSpritesheet(set.sprites, anim.frames, set.grid, { cols, scale, effects, transitions, image: `${base}.png` });
+		if (download) {
+			ex.download(url, `${base}.png`);
+			ex.downloadJSON(meta, `${base}.json`);
+		}
+		return { animation: anim.name, ...meta, url };
 	}),
 
 	export_ico: ro(async function ({ sprite, sizes = [16, 32, 48], download = false } = {} as any) {
@@ -1267,7 +1295,7 @@ const api = {
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'ramp', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
-				exporting: ['export_zip', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
+				exporting: ['export_zip', 'export_spritesheet', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
 				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'contact_sheet', 'palette', 'color', 'background', 'silhouette', 'zoom', 'raw', 'help'],
 				history: ['undo', 'redo', 'history', 'batch'],

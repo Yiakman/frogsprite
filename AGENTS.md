@@ -4,17 +4,55 @@ A pixel-sprite editor whose entire feature set is reachable from JavaScript. Run
 the page, and drive it from the browser console (or an agent's JS-execution tool) via the global
 `frogsprite` object.
 
+The page opens on example frogs. Call `new_package` then `new_set` before painting, or you will draw
+on them.
+
 ```
 package  →  set (fixed grid size)  →  sprites
                                  →  animations  →  frames
 ```
 
-A **package** groups **sets**. A **set** is one character or object: every sprite in it shares the
-same grid (8, 16, 32, 64 or 128) — those are the sprites for its different actions or positions. A
-set also owns any number of named **animations**, each an ordered list of `{ sprite, ms }` frames.
-They all draw on the same sprites, so one body frame can appear in `walk`, `idle` and `hurt` at
-once — and a frame can carry effects that change how it is *drawn* without touching the sprite
-everyone else is sharing.
+A **set** is one character or object: every sprite in it shares the same grid (8, 16, 32, 64 or 128).
+Prefer 8–32 for hand-drawn work; 64/128 is for importing an image. A set owns named **animations**,
+each an ordered list of `{ sprite, ms }` frames over those sprites, so one pose can appear in `walk`,
+`idle` and `hurt` at once. A **package** is just a folder of sets.
+
+## Happy path
+
+```js
+frogsprite.new_package('critters');
+frogsprite.new_set('frog', 16);
+frogsprite.new_sprite('idle');
+frogsprite.paint_map(rows, { g: '#22aa33', d: '#116611', e: '#000000' });
+// or: frogsprite.shapes.circle(8, 8, 5, '#22aa33');
+frogsprite.print_sprite();                // check the art
+frogsprite.clone_sprite('idle', 'crouch');
+frogsprite.shift(0, 1);
+frogsprite.set_animation([
+  { sprite: 'idle', ms: 300 },
+  { sprite: 'crouch', ms: 120 }
+]);
+frogsprite.print_frame(0);                // check a clip — not print_sprite
+frogsprite.contact_sheet({ download: true });
+await frogsprite.export_zip({ download: true });
+```
+
+`new_*` selects what it created. `print_sprite` reads art; `print_frame` / `contact_sheet` read a
+clip (`fx` and layer arrangements are invisible to `print_sprite`).
+
+| I want | Use | Do not use |
+| --- | --- | --- |
+| Draw a character | `paint_map` / `shapes.*` / `reflect` | `paint_pixel` loops, `new_layer` |
+| Next animation pose | `clone_sprite` / `copy_sprite` | `new_layer`, `cycle_layers` |
+| Face the other way | `fx: { flipX: true }` | clone + `reflect` (unless the art is asymmetric on purpose) |
+| Hurt / team colour | `fx: { hue: 'red' }` | recolour the shared sprite |
+| Put a tree in a scene once | `stamp` | a layer (unless you will still edit the tree) |
+| Scrolling background | layers + `scroll_layer` | one sprite per frame, or `fx.dx` |
+| Check art | `print_sprite` | — |
+| Check a clip | `print_frame` / `contact_sheet` | `print_sprite` |
+
+Layers, motion trails, transitions and parallax are recipes, not the default. See [Recipes](#recipes).
+`frogsprite.help()` lists every command. The rest of this file is the reference.
 
 ## Colours
 
@@ -73,7 +111,10 @@ one. New packages/sets/sprites become the current selection automatically.
 
 All three move the selection off whatever they removed, and each is one undo step.
 
-### Layers
+A fresh sprite has one `layer-0`. You can ignore layers until you need a stack you will keep editing,
+or a parallax scene — commands and recipes are in [Recipes](#recipes).
+
+### Layers — moved
 
 A sprite is a stack of layers composited bottom to top, and **one layer is the ordinary case**. A
 fresh sprite has a single `layer-0` and behaves exactly as sprites did before layers existed, so you
@@ -235,9 +276,8 @@ layers: { wheel: { rotate: 30 * i, cx: 48, cy: 96 } }   // on its own hub
 ```
 
 Two things this shares with `rotate()` itself, and one it does not. It takes **multiples of 30 only**
-— an arrangement is validated exactly as `fx` is, so a `rotate: 45` is *dropped on the way in* and you
-get a wheel that never turns rather than an error. And `cx`/`cy` are one centre, so a bicycle needs
-one layer per hub.
+— an arrangement is validated exactly as `fx` is, so a `rotate: 45` **throws** rather than giving you
+a wheel that never turns. And `cx`/`cy` are one centre, so a bicycle needs one layer per hub.
 
 What it does **not** share is a guard. `scroll_layer` and `cycle_layers` both refuse a loop that would
 not close; a per-frame `rotate` has the identical failure — land mid-turn and the last frame snaps
@@ -556,9 +596,10 @@ rotate → displace.
 | `dx`, `dy` | displace; anything pushed off the edge is dropped |
 | `flipX`, `flipY` | mirror left↔right / top↔bottom |
 
-Anything unrecognised is dropped on the way in — `rotate: 45` and `hue: 'teal'` simply do not
-survive, rather than failing the whole frame. `rotate: 0` is dropped too, being a no-op, so don't
-expect it back from `state()`.
+Anything unrecognised **throws** at `set_animation` / `set_effects` — `rotate: 45` and `hue: 'teal'`
+fail in that call, naming what is legal, rather than producing a wheel that never turns. A load of
+damaged data still strips them. `rotate: 0` is dropped as a no-op, so don't expect it back from
+`state()`.
 
 #### Motion trails
 
@@ -647,6 +688,29 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   every frame as one numbered PNG grid. Playback shows one frame at a time and a screenshot catches
   whichever was up, so a fault in frame 9 stays invisible until it goes past; on a sheet it is
   obvious at a glance. Reach for it before believing an animation is finished
+- `export_spritesheet({ animation?, cols?, scale = 8, effects?, transitions?, download? })` → **one
+  animation as a packed strip PNG plus its frame map** — the hand-off to a game engine, which wants
+  one image with uniform cells rather than the ZIP's one file per sprite. Cells are the same size,
+  in reading order, gapless, on a transparent background, so anything that asks only for a frame
+  size (Phaser, Godot, LÖVE, a CSS `steps()` background) needs nothing but the PNG. Returns
+  `{ animation, image, grid, scale, frameWidth, frameHeight, cols, rows, width, height, duration,
+  frames: [{ index, sprite, x, y, w, h, ms }], url }`, and `download` saves the `.png` and the
+  `.json` frame map together.
+
+  Without `cols` the frames go in one row. Pass it to fold them into a squarer sheet — and note the
+  layout folds itself anyway rather than crossing the 16384px a canvas will actually draw, because
+  past that Safari hands back a blank bitmap instead of an error.
+
+  The frame map is what the strip cannot carry: **which sprite each cell came from, and how long it
+  is held**. A frog that holds frame 1 for 420ms and frame 3 for 90ms is a uniform strip either way
+  — the timing only survives in the JSON.
+
+  ```js
+  frogsprite.export_spritesheet({ download: true });     // walk-sheet.png + walk-sheet.json
+  frogsprite.export_spritesheet({ cols: 4 });            // 4 across, folded into rows
+  frogsprite.export_spritesheet({ scale: 1 });           // one cell per grid pixel
+  ```
+
 - `export_zip({ scale = 8, effects?, transitions?, animations?, download?, base64? })` → **the whole
   set as a .zip**. Async. Contains:
 
@@ -655,6 +719,8 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   png/<sprite>.png         one per sprite, at `scale`
   svg/<sprite>.svg         one per sprite
   <set>-<animation>.svg    one per animation that has frames
+  sheet/<animation>.png    the same animation as a packed strip, with
+  sheet/<animation>.json   its frame map alongside
   ```
 
   Both exports bake frame effects and transitions in, so what you see playing is what you get.

@@ -158,6 +158,98 @@ export function toContactSheet(
 	return canvas.toDataURL('image/png');
 }
 
+/**
+ * The widest or tallest a canvas will actually draw. Past this Safari hands back a blank bitmap
+ * rather than an error, so a sheet that crosses it is caught here instead of exported empty.
+ */
+const MAX_CANVAS = 16384;
+
+/**
+ * Where each frame lands on a spritesheet: uniform cells, in reading order, no gaps and no labels.
+ * That is the layout every engine assumes, so a strip loads from nothing but a frame size.
+ *
+ * Pure, so the arithmetic an engine depends on is checkable without a canvas. Without `cols` the
+ * frames go in one row, folded into more only when a single row would cross what a canvas draws.
+ */
+export function sheetLayout(
+	n: number,
+	grid: number,
+	{ cols, scale = 1 }: { cols?: number; scale?: number } = {}
+) {
+	if (n < 1) throw new Error('no frames');
+	const cell = grid * scale;
+	const fits = Math.max(1, Math.floor(MAX_CANVAS / cell));
+	const c = Math.max(1, Math.min(Math.trunc(cols ?? Math.min(n, fits)), n));
+	const rows = Math.ceil(n / c);
+	const width = c * cell;
+	const height = rows * cell;
+	if (Math.max(width, height) > MAX_CANVAS)
+		throw new Error(
+			`a ${width}x${height} sheet is past the ${MAX_CANVAS}px a canvas will draw — lower scale, or pass cols to fold it into more rows`
+		);
+	return {
+		cols: c,
+		rows,
+		cell,
+		width,
+		height,
+		at: (i: number) => ({ x: (i % c) * cell, y: Math.floor(i / c) * cell })
+	};
+}
+
+/**
+ * One animation as a packed strip — every frame the same size, in reading order, on a transparent
+ * background. This is the hand-off to a game engine: individual PNGs make someone pack them first.
+ *
+ * The frame map comes with it because the strip alone loses the names and the per-frame timing,
+ * which is most of what the animation was.
+ */
+export function toSpritesheet(
+	sprites: Sprite[],
+	frames: Frame[],
+	grid: number,
+	{
+		cols,
+		scale = 8,
+		effects = true,
+		transitions = true,
+		image = 'spritesheet.png'
+	}: BakeOptions & { cols?: number; scale?: number; image?: string } = {}
+) {
+	const l = sheetLayout(frames.length, grid, { cols, scale });
+	const canvas = document.createElement('canvas');
+	canvas.width = l.width;
+	canvas.height = l.height;
+	const ctx = canvas.getContext('2d')!;
+	// one scratch canvas reused per frame rather than one per frame allocated
+	const tile = document.createElement('canvas');
+	tile.width = tile.height = l.cell;
+	const tctx = tile.getContext('2d')!;
+	const map = frames.map((f, i) => {
+		const { x, y } = l.at(i);
+		// the last sub-step, so a frame with a transition lands finished rather than caught halfway
+		paint(tctx, compose(frames, i, sprites, grid, 1, { effects, transitions }), grid, l.cell);
+		ctx.drawImage(tile, x, y);
+		return { index: i, sprite: f.sprite, x, y, w: l.cell, h: l.cell, ms: f.ms };
+	});
+	return {
+		url: canvas.toDataURL('image/png'),
+		meta: {
+			image,
+			grid,
+			scale,
+			frameWidth: l.cell,
+			frameHeight: l.cell,
+			cols: l.cols,
+			rows: l.rows,
+			width: l.width,
+			height: l.height,
+			duration: map.reduce((a, f) => a + f.ms, 0),
+			frames: map
+		}
+	};
+}
+
 export function toPNG(pixels: Pixels, grid: number, scale = 1): string {
 	return draw(pixels, grid, grid * scale).toDataURL('image/png');
 }
@@ -208,6 +300,9 @@ export async function toICO(pixels: Pixels, grid: number, sizes = [16, 32, 48]):
 	return 'data:image/x-icon;base64,' + btoa(bin);
 }
 
+const dataURLBytes = (url: string) =>
+	Uint8Array.from(atob(url.slice(url.indexOf(',') + 1)), (c) => c.charCodeAt(0));
+
 export const safeFile = (s: string) => s.replace(/[^\w.-]+/g, '_') || 'unnamed';
 
 /**
@@ -249,11 +344,24 @@ export async function setArchive(
 			: [];
 	for (const anim of wanted) {
 		if (!anim.frames.length) continue;
+		const file = safeFile(anim.name);
 		entries.push({
-			name: `${safeFile(set.name)}-${safeFile(anim.name)}.svg`,
+			name: `${safeFile(set.name)}-${file}.svg`,
 			data: text.encode(
 				toAnimatedSVG(set.sprites, anim.frames, set.grid, { effects, transitions })
 			)
+		});
+		// the packed strip an engine loads, and the map that carries the names and timing with it
+		const sheet = toSpritesheet(set.sprites, anim.frames, set.grid, {
+			scale,
+			effects,
+			transitions,
+			image: `${file}.png`
+		});
+		entries.push({ name: `sheet/${file}.png`, data: dataURLBytes(sheet.url) });
+		entries.push({
+			name: `sheet/${file}.json`,
+			data: text.encode(JSON.stringify(sheet.meta, null, 2))
 		});
 	}
 
