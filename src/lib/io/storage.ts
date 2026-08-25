@@ -3,9 +3,9 @@
 // load() / save() / flush() / clear() and never touches localStorage.
 import { GRIDS, type GridSize } from '../core/grid.ts';
 import { readArrangement, readFx, readTrail, readTransition } from '../core/fx.ts';
-import { BASE } from '../core/layers.ts';
+import { BASE, isLinked } from '../core/layers.ts';
 import { unzip } from './zip.ts';
-import type { Animation, Frame, Layer, Package, Sprite, SpriteSet } from '../core/types.ts';
+import type { Animation, Frame, Layer, Linked, Package, Sprite, SpriteSet } from '../core/types.ts';
 
 const KEY = 'frogsprite';
 // v2 replaced a set's single `frames` with named `animations`; v3 replaced a sprite's single
@@ -58,10 +58,32 @@ function readPixels(v: unknown, cells: number): Uint8Array {
 	return pixels;
 }
 
+/** A whole number within reach of any grid, or nothing. Placement is in pixels, so nothing else. */
+function readOffset(v: unknown): number | undefined {
+	const n = Math.round(Number(v));
+	// zero is deliberately *not* kept: setPayload omits it, so keeping it here would make
+	// parse(serialise(x)) differ from x and charge a phantom undo step on every command after
+	return Number.isFinite(n) && n !== 0 ? n : undefined;
+}
+
 function readLayer(v: any, cells: number): Layer | null {
 	const n = name(v?.name);
-	if (!n || !Array.isArray(v.pixels)) return null;
-	const layer: Layer = { name: n, pixels: readPixels(v.pixels, cells) };
+	if (!n) return null;
+	// `from` decides the shape, and it wins over any `pixels` sitting beside it: a file written
+	// before links existed never carries one, so the only way to see both is a hand-edit, where the
+	// stale buffer would resurrect art that does not match what the link shows.
+	const from = name(v.from);
+	let layer: Layer;
+	if (from) {
+		const link: Linked = { name: n, from };
+		const [dx, dy] = [readOffset(v.dx), readOffset(v.dy)];
+		if (dx !== undefined) link.dx = dx;
+		if (dy !== undefined) link.dy = dy;
+		if (v.wrap === true) link.wrap = true;
+		layer = link;
+	} else if (Array.isArray(v.pixels)) {
+		layer = { name: n, pixels: readPixels(v.pixels, cells) };
+	} else return null;
 	// written and read back deliberately: `settle()` drops an undo step when the serialised document
 	// is unchanged, so a `hidden` that didn't persist would make hide_layer un-undoable *and* let the
 	// next undo bring the layer back visible
@@ -139,7 +161,15 @@ export const setPayload = (set: SpriteSet) => ({
 	// and sharing the layer objects would leave the copy painting into the original
 	sprites: set.sprites.map((s) => ({
 		name: s.name,
-		layers: s.layers.map((l) => ({ name: l.name, pixels: [...l.pixels], ...(l.hidden && { hidden: true }) }))
+		layers: s.layers.map((l) => ({
+			name: l.name,
+			// falsy keys are omitted on both sides of the round-trip — see readOffset. A link carries no
+			// pixels at all: they live in the sprite it names, and writing a copy would go stale.
+			...(isLinked(l)
+				? { from: l.from, ...(l.dx && { dx: l.dx }), ...(l.dy && { dy: l.dy }), ...(l.wrap && { wrap: true }) }
+				: { pixels: [...l.pixels] }),
+			...(l.hidden && { hidden: true })
+		}))
 	})),
 	animations: set.animations.map((a) => ({ name: a.name, frames: a.frames.map((f) => ({ ...f })) }))
 });

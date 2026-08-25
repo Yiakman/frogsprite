@@ -47,11 +47,12 @@ clip (`fx` and layer arrangements are invisible to `print_sprite`).
 | Face the other way | `fx: { flipX: true }` | clone + `reflect` (unless the art is asymmetric on purpose) |
 | Hurt / team colour | `fx: { hue: 'red' }` | recolour the shared sprite |
 | Put a tree in a scene once | `stamp` | a layer (unless you will still edit the tree) |
+| The same tree four times | `link_layer` | four `stamp`s — you would redraw all four by hand |
 | Scrolling background | layers + `scroll_layer` | one sprite per frame, or `fx.dx` |
 | Check art | `print_sprite` | — |
 | Check a clip | `print_frame` / `contact_sheet` | `print_sprite` |
 
-Layers, motion trails, transitions and parallax are recipes, not the default. See [Recipes](#recipes).
+Layers, motion trails, transitions and parallax are not the default — see [Layers](#layers) and [Animation](#animation).
 `frogsprite.help()` lists every command. The rest of this file is the reference.
 
 ## Colours
@@ -112,9 +113,9 @@ one. New packages/sets/sprites become the current selection automatically.
 All three move the selection off whatever they removed, and each is one undo step.
 
 A fresh sprite has one `layer-0`. You can ignore layers until you need a stack you will keep editing,
-or a parallax scene — commands and recipes are in [Recipes](#recipes).
+a repeated object, or a parallax scene — the commands are in [Layers](#layers).
 
-### Layers — moved
+### Layers
 
 A sprite is a stack of layers composited bottom to top, and **one layer is the ordinary case**. A
 fresh sprite has a single `layer-0` and behaves exactly as sprites did before layers existed, so you
@@ -160,8 +161,15 @@ palette *indices*, so there is nothing meaningful to average between index 3 and
   frogsprite.cycle_layers(['pose-0', 'pose-1', 'pose-2', 'pose-3']);   // one per frame, round and round
   frogsprite.cycle_layers(['step-a', 'step-b'], { every: 4 });         // held four frames each
   ```
+- `link_layer(from, { name, dx, dy, wrap, at, above, below, sprite })` — show another sprite as a
+  layer of this one, **live**. Repaint that sprite and every layer linked to it changes with it, which
+  is the whole difference from `stamp`. `dx`/`dy` place it, so the same drawing appears as many times
+  as you like at different offsets
+- `unlink_layer(name?, { sprite })` — turn one link back into ordinary pixels: the picture it is
+  showing, at the offset it is showing it, copied in and disconnected. The escape hatch for editing
+  one instance without touching the others
 - `flatten_sprite(sprite?)` — collapse the stack into a single `layer-0`, as it looks composited.
-  Hidden layers are dropped rather than merged. This is the way back to a plain sprite
+  Hidden layers are dropped rather than merged, and links bake. This is the way back to a plain sprite
 
 ```js
 frogsprite.new_sprite('knight');
@@ -174,6 +182,43 @@ frogsprite.hide_layer('outline');                   // out of sight, pixels kept
 frogsprite.print_sprite();                          // always the composited stack…
 frogsprite.print_sprite(undefined, 'outline');      // …unless you name a layer
 ```
+
+#### Linked layers — one drawing, many places
+
+A layer normally holds pixels. A **linked** layer holds a sprite *name* instead, and draws whatever
+that sprite currently looks like. Change the original and every layer linked to it changes too —
+which is what makes a scene out of repeated objects something you can still edit.
+
+```js
+frogsprite.new_sprite('tree');
+frogsprite.shapes.rect(6, 20, 8, 27, '#8b5a2b', true);          // draw it once
+frogsprite.shapes.triangle(2, 20, 12, 20, 7, 6, '#22aa33', true);
+
+frogsprite.new_sprite('scene');
+for (const dx of [0, 8, 16, 24]) frogsprite.link_layer('tree', { dx });   // four trees, one drawing
+```
+
+Repaint `tree` afterwards and all four follow. Nothing was copied, so there is nothing to keep in
+step by hand.
+
+The rules worth knowing:
+
+- **Same set only.** `from` names a sprite in this set, so both share the grid. Use `copy_sprite` to
+  bring art in from another set first, then link to the copy.
+- **A link has no pixels**, so `paint_*`, `shapes.*`, `shift`, `rotate`, `clear` and `tile_layer`
+  refuse on one and tell you the two ways forward: paint the source, or `unlink_layer` this instance.
+  Reading is never refused — `print_sprite(undefined, 'tree-2')` shows you the tree.
+- **A frame's `dx` adds to the link's own.** The link says where the object lives, the frame says how
+  far it has moved — so `scroll_layer` drives a linked layer like any other. (`wrap` is the exception:
+  a frame's value replaces the link's rather than adding to it.)
+- **Links can nest** — a wheel linked into a cart, the cart linked into a scene. A loop is refused
+  when you make it, and drawn as nothing if one ever reaches the canvas.
+- **`delete_sprite` refuses** while a link still shows it, naming them. `{ force: true }` bakes those
+  layers rather than deleting them, so the picture survives.
+
+Reach for `stamp` instead when you want a one-off you will then paint over: it copies pixels once and
+the connection is gone. `link_layer` is for anything you will still edit, or repeat.
+
 
 #### Moving layers per frame — parallax
 

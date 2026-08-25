@@ -1,15 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BASE, cycles, flatten, frameStep, layerOf, loops, moves, newLayer, period, poseAt, scrollStep } from './layers.ts';
-import type { Sprite } from './types.ts';
+import { BASE, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, period, poseAt, scrollStep } from './layers.ts';
+import type { Linked, Painted, Sprite } from './types.ts';
 
-const sprite = (...layers: [string, number[], boolean?][]): Sprite => ({
+// typed as Painted rather than Layer so tests can reach `.pixels` — this factory only ever builds
+// painted layers, and `linked()` below is how a test gets the other kind
+const sprite = (...layers: [string, number[], boolean?][]): Sprite & { layers: Painted[] } => ({
 	name: 's',
 	layers: layers.map(([name, pixels, hidden]) => ({
 		name,
 		pixels: Uint8Array.from(pixels),
 		...(hidden && { hidden: true })
 	}))
+});
+
+/** A sprite of linked layers, for the tests below. `named` since links resolve by sprite name. */
+const linked = (named: string, ...layers: (Omit<Linked, 'name'> & { name?: string })[]): Sprite => ({
+	name: named,
+	layers: layers.map((l, i) => ({ ...l, name: l.name ?? `link-${i}` }))
 });
 
 test('a single layer flattens to exactly its own pixels', () => {
@@ -242,4 +250,165 @@ test('cycles catches a pose ring that would not close', () => {
 	assert.equal(cycles(16, 8, 2), true, 'held two frames each — one revolution');
 	assert.equal(cycles(16, 6), false, '16 does not divide by 6 — it lands mid-stride');
 	assert.equal(cycles(12, 6), true);
+});
+
+// --- linked layers -----------------------------------------------------------
+// A linked layer holds a sprite *name*, not pixels, so the source stays the one copy of that art.
+// Everything below is either "does it draw what the source draws" or "does a bad graph stay quiet",
+// because flatten runs inside a render effect and must never be the thing that throws.
+
+test('a linked layer draws the sprite it names', () => {
+	const tree = sprite(['t', [1, 2, 3, 4]]);
+	tree.name = 'tree';
+	const scene = linked('scene', { from: 'tree' });
+	assert.deepEqual(Array.from(flatten(scene, 2, undefined, [tree, scene])), [1, 2, 3, 4]);
+});
+
+test('a link draws the source composited, not just its top layer', () => {
+	const tree = sprite(['back', [1, 1, 1, 1]], ['front', [0, 7, 0, 0]]);
+	tree.name = 'tree';
+	const scene = linked('scene', { from: 'tree' });
+	assert.deepEqual(Array.from(flatten(scene, 2, undefined, [tree, scene])), [1, 7, 1, 1]);
+});
+
+test('repainting the source changes every layer linked to it — the whole point', () => {
+	const tree = sprite(['t', [1, 0, 0, 0]]);
+	tree.name = 'tree';
+	const scene = linked('scene', { from: 'tree' }, { from: 'tree', dx: 1 });
+	assert.deepEqual(Array.from(flatten(scene, 2, undefined, [tree, scene])), [1, 1, 0, 0]);
+	tree.layers[0].pixels[0] = 9; // paint the source, copy nothing
+	assert.deepEqual(
+		Array.from(flatten(scene, 2, undefined, [tree, scene])),
+		[9, 9, 0, 0],
+		'both instances follow'
+	);
+});
+
+test("a link's dx/dy place it, and wrap re-enters from the far edge", () => {
+	const t = sprite(['t', [5, 0, 0, 0]]);
+	t.name = 'tree';
+	const at = (l: Omit<Linked, 'name'>) => {
+		const s = linked('scene', l);
+		return Array.from(flatten(s, 2, undefined, [t, s]));
+	};
+	assert.deepEqual(at({ from: 'tree', dx: 1 }), [0, 5, 0, 0], 'moved right');
+	assert.deepEqual(at({ from: 'tree', dy: 1 }), [0, 0, 5, 0], 'moved down');
+	assert.deepEqual(at({ from: 'tree', dx: -1 }), [0, 0, 0, 0], 'off the edge, dropped');
+	assert.deepEqual(at({ from: 'tree', dx: -1, wrap: true }), [0, 5, 0, 0], 'off the edge, kept');
+});
+
+test("a frame's dx ADDS to the link's own rather than replacing it", () => {
+	// the rule that makes scroll_layer work on a linked layer with no special case: the link says
+	// where the object lives, the frame says how far it has moved this frame
+	const t = sprite(['t', [5, 0, 0, 0, 0, 0, 0, 0, 0]]);
+	t.name = 'tree';
+	const s = linked('scene', { name: 'a', from: 'tree', dx: 1 });
+	assert.deepEqual(
+		Array.from(flatten(s, 3, { a: { dx: 1 } }, [t, s])).indexOf(5),
+		2,
+		'1 from the link + 1 from the frame'
+	);
+	assert.deepEqual(Array.from(flatten(s, 3, undefined, [t, s])).indexOf(5), 1, 'link alone');
+});
+
+test('a hidden link draws nothing, and a frame can override either way', () => {
+	const t = sprite(['t', [5, 5, 5, 5]]);
+	t.name = 'tree';
+	const s = linked('scene', { name: 'a', from: 'tree', hidden: true });
+	assert.deepEqual(Array.from(flatten(s, 2, undefined, [t, s])), [0, 0, 0, 0], 'hidden');
+	assert.deepEqual(
+		Array.from(flatten(s, 2, { a: { hidden: false } }, [t, s])),
+		[5, 5, 5, 5],
+		'shown for one frame'
+	);
+});
+
+test("the source's own hidden layers stay hidden through a link", () => {
+	const t = sprite(['back', [1, 1, 1, 1]], ['sketch', [8, 8, 8, 8], true]);
+	t.name = 'tree';
+	const s = linked('scene', { from: 'tree' });
+	assert.deepEqual(Array.from(flatten(s, 2, undefined, [t, s])), [1, 1, 1, 1]);
+});
+
+test("a link's transparent pixels let the layer underneath show through", () => {
+	const t = sprite(['t', [0, 7, 0, 0]]);
+	t.name = 'tree';
+	const s: Sprite = {
+		name: 'scene',
+		layers: [{ name: 'sky', pixels: Uint8Array.from([1, 1, 1, 1]) }, { name: 'a', from: 'tree' }]
+	};
+	assert.deepEqual(Array.from(flatten(s, 2, undefined, [t, s])), [1, 7, 1, 1], 'paint-over holds');
+});
+
+test('a rotate on a linked layer never touches the source buffer', () => {
+	const t = sprite(['t', [1, 2, 3, 4]]);
+	t.name = 'tree';
+	const s = linked('scene', { name: 'a', from: 'tree' });
+	flatten(s, 2, { a: { rotate: 90 } }, [t, s]);
+	assert.deepEqual(Array.from(t.layers[0].pixels), [1, 2, 3, 4], 'the source is left alone');
+});
+
+test('a link to a name that is not there draws nothing rather than throwing', () => {
+	// the reason storage does not prune dangling links: undo a delete_sprite and this comes back live
+	const s = linked('scene', { from: 'gone' });
+	assert.doesNotThrow(() => flatten(s, 2, undefined, [s]));
+	assert.deepEqual(Array.from(flatten(s, 2, undefined, [s])), [0, 0, 0, 0]);
+});
+
+test('flatten with no sprite list draws links blank instead of throwing', () => {
+	// what makes the fourth-positional default safe: a call site that forgets the list degrades to a
+	// hole, not an exception inside a render effect
+	const s = linked('scene', { from: 'tree' });
+	assert.doesNotThrow(() => flatten(s, 2));
+	assert.deepEqual(Array.from(flatten(s, 2)), [0, 0, 0, 0]);
+});
+
+test('a sprite that links to itself draws nothing and does not hang', () => {
+	const s = linked('scene', { from: 'scene' });
+	assert.doesNotThrow(() => flatten(s, 2, undefined, [s]));
+	assert.deepEqual(Array.from(flatten(s, 2, undefined, [s])), [0, 0, 0, 0]);
+});
+
+test('a two-step loop A -> B -> A draws blank and does not hang', () => {
+	const a = linked('a', { from: 'b' });
+	const b = linked('b', { from: 'a' });
+	assert.doesNotThrow(() => flatten(a, 2, undefined, [a, b]));
+	assert.deepEqual(Array.from(flatten(a, 2, undefined, [a, b])), [0, 0, 0, 0]);
+});
+
+test('a diamond draws the shared sprite twice — the guard tracks the path, not visits', () => {
+	// A shows B and C, both of which show D. A visited-set guard would silently drop the second D.
+	const d = sprite(['t', [5, 0, 0, 0]]);
+	d.name = 'd';
+	const b = linked('b', { from: 'd' });
+	const c = linked('c', { from: 'd', dx: 1 });
+	const a = linked('a', { name: 'x', from: 'b' }, { name: 'y', from: 'c' });
+	assert.deepEqual(Array.from(flatten(a, 2, undefined, [a, b, c, d])), [5, 5, 0, 0]);
+});
+
+test('links reports every sprite shown, through as many hops as it takes', () => {
+	const wheel = sprite(['t', [1, 0, 0, 0]]);
+	wheel.name = 'wheel';
+	const cart = linked('cart', { from: 'wheel' });
+	const scene = linked('scene', { from: 'cart' });
+	assert.deepEqual([...links(scene, [scene, cart, wheel])].sort(), ['cart', 'wheel']);
+	assert.deepEqual([...links(cart, [scene, cart, wheel])], ['wheel']);
+});
+
+test('links on a cyclic graph returns a finite set instead of overflowing the stack', () => {
+	// an imported A -> B -> A reaches link_layer before it ever reaches a redraw, so this is the
+	// call that would blow up first if it recursed naively
+	const a = linked('a', { from: 'b' });
+	const b = linked('b', { from: 'a' });
+	assert.doesNotThrow(() => links(a, [a, b]));
+	assert.deepEqual([...links(a, [a, b])].sort(), ['a', 'b']);
+});
+
+test('isLinked narrows a layer to the one that has pixels', () => {
+	const s: Sprite = {
+		name: 's',
+		layers: [{ name: 'p', pixels: Uint8Array.from([1]) }, { name: 'l', from: 'other' }]
+	};
+	assert.equal(isLinked(s.layers[0]), false);
+	assert.equal(isLinked(s.layers[1]), true);
 });

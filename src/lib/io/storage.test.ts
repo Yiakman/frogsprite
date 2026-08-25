@@ -152,7 +152,8 @@ test('setPayload is readSet inverse, and copies rather than aliasing', () => {
 	const payload = setPayload(set);
 	assert.deepEqual(readSet(payload), set);
 
-	payload.sprites[0].layers[0].pixels[0] = 99;
+	// a painted layer by construction; the union means saying so
+	(payload.sprites[0].layers[0] as { pixels: number[] }).pixels[0] = 99;
 	assert.equal(set.sprites[0].layers[0].pixels[0], 3, 'the payload holds its own pixel arrays');
 });
 
@@ -316,4 +317,115 @@ test('a junk per-layer fx is dropped, the rest of the arrangement survives', () 
 		animations: [{ name: 'x', frames: [{ sprite: 'a', ms: 10, layers: { w: { rotate: 45, hue: 'teal', dx: 2 } } }] }]
 	});
 	assert.deepEqual(set!.animations[0].frames[0].layers, { w: { dx: 2 } });
+});
+
+// --- linked layers -----------------------------------------------------------
+
+/** A set whose sprite `scene` shows `tree` twice, plus the awkward keys that must not persist. */
+const withLinks = () =>
+	pkg({
+		sprites: [
+			{ name: 'tree', layers: [{ name: 'layer-0', pixels: new Uint8Array(64).fill(3) }] },
+			{
+				name: 'scene',
+				layers: [
+					{ name: 'tree', from: 'tree' },
+					{ name: 'tree-2', from: 'tree', dx: 4, dy: -2, wrap: true, hidden: true }
+				]
+			}
+		],
+		animations: [{ name: 'walk', frames: [{ sprite: 'scene', ms: 100 }] }]
+	});
+
+test('a linked layer round-trips with from/dx/dy/wrap intact', () => {
+	const back = parse(serialise(withLinks() as any)) as any;
+	const [plain, placed] = back[0].sets[0].sprites[1].layers;
+	assert.deepEqual(plain, { name: 'tree', from: 'tree' }, 'no pixels invented, no zeroes added');
+	assert.deepEqual(placed, {
+		name: 'tree-2',
+		from: 'tree',
+		dx: 4,
+		dy: -2,
+		wrap: true,
+		hidden: true
+	});
+});
+
+test('serialise is stable across a parse, so undo charges no phantom step', () => {
+	// settle() drops an undo step by comparing serialised documents and restore() round-trips the
+	// whole document through parse. If either side kept a `dx: 0` the other omitted, every command
+	// after this point would register a change it did not make.
+	const doc = pkg({
+		sprites: [
+			{ name: 'tree', layers: [{ name: 'layer-0', pixels: new Uint8Array(64).fill(3) }] },
+			{
+				name: 'scene',
+				layers: [
+					// the falsy keys, written out longhand — exactly what must not survive
+					{ name: 'a', from: 'tree', dx: 0, dy: 0, wrap: false },
+					{ name: 'b', from: 'tree', dx: 7 }
+				]
+			}
+		],
+		animations: []
+	});
+	const once = serialise(doc as any);
+	assert.equal(serialise(parse(once) as any), once, 'parse(serialise(x)) serialises identically');
+	assert.doesNotMatch(once, /"dx":0|"dy":0|"wrap":false/, 'falsy placement keys are omitted');
+});
+
+test('a link to a sprite that is not there survives, rather than being pruned', () => {
+	// flatten draws it blank, which is what lets undo of a delete_sprite bring the link back live.
+	// Pruning here would also empty a stack whose only layer is the link.
+	const back = parse(
+		serialise(pkg({
+			sprites: [{ name: 'scene', layers: [{ name: 'a', from: 'gone' }] }],
+			animations: []
+		}) as any)
+	) as any;
+	const [sprite] = back[0].sets[0].sprites;
+	assert.equal(sprite.layers.length, 1, 'the layer is kept');
+	assert.deepEqual(sprite.layers[0], { name: 'a', from: 'gone' });
+});
+
+test('readSet(setPayload(set)) preserves links and detaches the copy', () => {
+	// the deep-copy idiom copy_set is built on
+	const set = (withLinks() as any)[0].sets[0];
+	const copy = readSet(setPayload(set))!;
+	assert.deepEqual(copy, set);
+	copy.sprites[1].layers[0].name = 'moved';
+	assert.equal(set.sprites[1].layers[0].name, 'tree', 'the copy owns its own layer objects');
+});
+
+test('a junk `from` is dropped the way any other malformed layer is', () => {
+	const back = parse(
+		serialise(pkg({
+			sprites: [
+				{
+					name: 'scene',
+					layers: [
+						{ name: 'ok', pixels: new Uint8Array(64).fill(1) },
+						{ name: 'bad', from: '' },
+						{ name: 'worse', from: 42 }
+					]
+				}
+			],
+			animations: []
+		}) as any)
+	) as any;
+	// '' and 42 are not names, and neither layer carries pixels either — nothing to keep
+	assert.deepEqual(
+		back[0].sets[0].sprites[0].layers.map((l: any) => l.name),
+		['ok']
+	);
+});
+
+test('a sprite whose only layer is a link still satisfies the at-least-one floor', () => {
+	const back = parse(
+		serialise(pkg({
+			sprites: [{ name: 'scene', layers: [{ name: 'a', from: 'scene' }] }],
+			animations: []
+		}) as any)
+	) as any;
+	assert.equal(back[0].sets[0].sprites[0].layers.length, 1);
 });

@@ -68,6 +68,12 @@ opacity or blend mode, because pixels are palette *indices* — there is nothing
 index 3 and index 9. Reach for a layer when you want an outline you can redraw without disturbing
 the fill under it. See [AGENTS.md](AGENTS.md#layers).
 
+A layer can also hold a **sprite name** instead of pixels, and draw whatever that sprite currently
+looks like — `link_layer('tree', { dx: 8 })`. Repaint the tree and every layer linked to it follows,
+so a scene built out of repeated objects stays editable instead of being forty copies to redraw by
+hand. Links nest, a loop is refused when you make it, and `unlink_layer` bakes one instance back to
+ordinary pixels when you want to tweak just that one.
+
 A frame can also slide, hide or transform its sprite's **layers** for that frame alone, which is how a
 parallax scroll is one sprite instead of one per frame: give each depth a layer, then let each frame
 say where each one sits. A layer no frame mentions never moves, and a per-layer `rotate` turns a
@@ -206,6 +212,6 @@ sharing between devices. That is the one feature that would genuinely require a 
 - **No per-layer `trail`** — a trail reaches into other frames, so a per-layer one would have to
   resolve every ghost frame's arrangement of that layer. The other `fx` keys do work per layer.
 - **`stamp` bakes, it does not link** — stamping a sprite copies its pixels once, so editing the
-  source afterwards changes nothing already stamped. Layers arranged per frame are the live
-  alternative. A *linked* stamp (a layer that references another sprite instead of holding pixels,
-  resolved at composite time) is the noted upgrade path, marked `ponytail:` in `api/commands.ts`.
+  source afterwards changes nothing already stamped. That is deliberate, and `link_layer` is the live
+  alternative when you want one. Links are same-set only: `from` names a sprite that shares the grid,
+  so bringing art in from another set means `copy_sprite` first, which bakes.

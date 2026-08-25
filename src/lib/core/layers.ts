@@ -9,12 +9,18 @@
 // touching the fill underneath. They are deliberately not per-frame — a `Frame` names a sprite, not
 // a layer set (see types.ts), so "same body, different arm per frame" is still separate sprites.
 import { applyFx, blank, rotate as spin, stamp, type GridSize, type Pixels } from './grid.ts';
-import type { Arrangement, Layer, Sprite } from './types.ts';
+import type { Arrangement, Layer, Linked, Painted, Sprite } from './types.ts';
 
 /** What a sprite's first layer is called, and what every pre-layers sprite migrates into. */
 export const BASE = 'layer-0';
 
-export const newLayer = (name: string, grid: GridSize): Layer => ({ name, pixels: blank(grid) });
+export const newLayer = (name: string, grid: GridSize): Painted => ({ name, pixels: blank(grid) });
+
+/**
+ * Whether a layer shows another sprite instead of holding pixels. The one narrowing everything
+ * else uses — a bare `'from' in layer` narrows just as well, but this says why.
+ */
+export const isLinked = (layer: Layer): layer is Linked => 'from' in layer;
 
 /**
  * The stack flattened to the pixels you actually see: bottom to top, `TRANSPARENT` is the hole,
@@ -29,31 +35,101 @@ export const newLayer = (name: string, grid: GridSize): Layer => ({ name, pixels
  * point it paints for a one-layer sprite and silently discards for a two-layer one — the worst kind
  * of bug to find. `applyFx` allocates on every path anyway, so the saving was never real.
  */
-export function flatten(sprite: Sprite, grid: number, view?: Arrangement): Uint8Array {
+export function flatten(
+	sprite: Sprite,
+	grid: number,
+	view?: Arrangement,
+	sprites: Sprite[] = []
+): Uint8Array {
 	const out = new Uint8Array(grid * grid);
 	const layers = sprite.layers; // hoisted: the array is a $state proxy, the buffers inside are not
 	for (const layer of layers) {
 		const v = view?.[layer.name];
 		// the frame's word beats the layer's own, so one frame can show a layer the sprite hides
 		if (v?.hidden ?? layer.hidden) continue;
+		// A link resolves to the named sprite's own flattened pixels, which is what makes it live:
+		// nothing is copied here, so repainting the source shows up on the next redraw. `live` tracks
+		// whether `px` is a buffer someone else owns, since only then does a rotate have to copy.
+		let px: Uint8Array;
+		let live: boolean;
+		// a link's own placement, kept aside so the stamp below can add the frame's on top of it
+		const base = isLinked(layer) ? layer : undefined;
+		if (isLinked(layer)) {
+			const src = sprites.find((s) => s.name === layer.from);
+			// A name that resolves to nothing draws nothing, rather than throwing: same rule as an
+			// arrangement naming a layer that is not there, and for the same reason as the clamp below.
+			// It is also what lets storage skip pruning dangling links — undo a delete_sprite and every
+			// link that went blank comes back live.
+			if (!src) continue;
+			// The cycle guard, and the whole of it: recursing with this sprite removed means that at any
+			// depth the list is the set minus the path walked to get here, so A -> B -> A finds no A and
+			// draws blank. Siblings are unaffected, so a diamond still draws the shared sprite twice.
+			// A filter cannot throw, which matters — this runs inside a render effect.
+			//
+			// ponytail: this re-flattens the source on every redraw, and every save() bumps `revision`.
+			// A deep chain with fan-out multiplies that per stroke segment. The upgrade is a
+			// resolved-sprite Map threaded alongside `sprites`; build it when it measures slow.
+			px = flatten(src, grid, undefined, sprites.filter((s) => s.name !== sprite.name));
+			live = false;
+		} else {
+			px = layer.pixels;
+			live = true;
+		}
 		// Colour and geometry first, position second. That is fx's own order (invert -> hue -> flip ->
 		// rotate -> displace), with the displace handed to `stamp` instead so it can wrap — which
 		// `shift`, and therefore a whole-frame `fx.dx`, cannot do.
-		let px = layer.pixels;
-		if (v && (v.invert || v.hue || v.flipX || v.flipY))
+		if (v && (v.invert || v.hue || v.flipX || v.flipY)) {
 			px = applyFx(px, grid, { invert: v.invert, hue: v.hue, flipX: v.flipX, flipY: v.flipY });
+			live = false; // applyFx allocates, so what we hold now is ours
+		}
 		if (v?.rotate) {
 			// rotated about `cx`/`cy` when given, so a wheel turns on its hub instead of swinging across
 			// the canvas. Clamped rather than validated: this runs inside a render effect, where a throw
 			// would take the canvas down with it.
-			if (px === layer.pixels) px = new Uint8Array(px); // never rotate the live buffer in place
+			if (live) px = new Uint8Array(px); // never rotate a buffer we do not own in place
+			live = false;
 			const centre = (n: number | undefined) =>
 				Math.min(grid - 1, Math.max(0, Math.round((n ?? (grid - 1) / 2) * 2) / 2));
 			spin(px, grid, v.rotate, centre(v.cx), centre(v.cy));
 		}
+		// A link's own placement is where it sits in this sprite; the frame's is a nudge on top, so the
+		// two *add*, and `scroll_layer` drives a linked layer with no special case. `wrap` overrides
+		// rather than adding, there being nothing to add.
+		//
+		// ponytail: that makes `wrap` one-way — readArrangement drops a `wrap: false`, so a frame
+		// cannot un-wrap a link that wraps by default. The fix is the tri-state `hidden` gets eleven
+		// lines below it in fx.ts; do it if anyone wants a link that wraps in most frames but not one.
+		//
 		// same blit as `stamp`, because it is the same operation: paint a buffer into another at an
 		// offset, transparent pixels leaving what is underneath alone
-		stamp(out, px, grid, v?.dx ?? 0, v?.dy ?? 0, v?.wrap ?? false);
+		stamp(
+			out,
+			px,
+			grid,
+			(base?.dx ?? 0) + (v?.dx ?? 0),
+			(base?.dy ?? 0) + (v?.dy ?? 0),
+			v?.wrap ?? base?.wrap ?? false
+		);
+	}
+	return out;
+}
+
+/**
+ * Every sprite `sprite` shows, directly or through another link. `link_layer` and `copy_layer` ask
+ * "is my own name in here?" to refuse a cycle *loudly*, which is the counterpart to `flatten`
+ * drawing one blank and saying nothing — an author gets an error, a redraw gets a hole.
+ *
+ * Carries the same filter as `flatten` for the same reason: a hand-edited or imported A -> B -> A
+ * must not put this into infinite recursion the first time anyone opens that set.
+ */
+export function links(sprite: Sprite, sprites: Sprite[]): Set<string> {
+	const out = new Set<string>();
+	for (const layer of sprite.layers) {
+		if (!isLinked(layer)) continue;
+		out.add(layer.from);
+		const src = sprites.find((s) => s.name === layer.from);
+		if (!src) continue;
+		for (const n of links(src, sprites.filter((s) => s.name !== sprite.name))) out.add(n);
 	}
 	return out;
 }

@@ -5,7 +5,7 @@ import * as history from '../core/history.ts';
 import * as storage from '../io/storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
 import { GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
-import { BASE, cycles, flatten, frameStep, layerOf, loops, moves, newLayer, period as periodOf, poseAt, scrollStep } from '../core/layers.ts';
+import { BASE, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, period as periodOf, poseAt, scrollStep } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
 import type { Point } from '../core/shapes.ts';
@@ -134,7 +134,9 @@ const ro = <T extends (...a: any[]) => any>(fn: T): T => wrap(false, fn) as unkn
  * Get that backwards on `print_sprite` and an agent draws a body on one layer, an outline on the
  * next, reads its work back and sees only the outline. Each of the five is commented at the site.
  */
-function target(name?: string, layer?: string): { sprite: Sprite; layer: Layer; grid: GridSize } {
+type Target = { sprite: Sprite; layer: Layer; grid: GridSize; sprites: Sprite[] };
+
+function target(name?: string, layer?: string): Target {
 	const set = editor.requireSet();
 	const sprite = name ? set.sprites.find((s) => s.name === name) : editor.requireSprite();
 	if (!sprite) throw new Error(`no sprite named "${name}" in set "${set.name}"`);
@@ -144,24 +146,83 @@ function target(name?: string, layer?: string): { sprite: Sprite; layer: Layer; 
 		layer,
 		editor.sel.layer
 	);
-	return { sprite, layer: layerOf(sprite, which), grid: set.grid };
+	// `sprites` rides along so every read below resolves linked layers without re-finding the set
+	return { sprite, layer: layerOf(sprite, which), grid: set.grid, sprites: set.sprites };
 }
 
-/** The pixels a read or an export shows: the whole stack, composited. */
-const seen = (t: { sprite: Sprite; grid: GridSize }) => flatten(t.sprite, t.grid);
+/** The pixels a read or an export shows: the whole stack, composited, links resolved. */
+const seen = (t: { sprite: Sprite; grid: GridSize; sprites: Sprite[] }) =>
+	flatten(t.sprite, t.grid, undefined, t.sprites);
+
+/** One layer's pixels as drawn — its own buffer, or what the sprite it links to looks like. */
+const shownAs = (layer: Layer, grid: GridSize, sprites: Sprite[]): Uint8Array =>
+	isLinked(layer)
+		? // one synthetic sprite, so the link's own dx/dy/wrap are applied by the same code that
+			// applies them on screen rather than by a second copy of that arithmetic here
+			flatten({ name: '', layers: [layer] }, grid, undefined, sprites)
+		: layer.pixels;
+
+/**
+ * The buffer a painting verb writes into. A linked layer has none — its art lives in the sprite it
+ * names — so this is where the twenty painting verbs stop, with the two ways forward spelled out.
+ * Reads never come through here: they go through `seen` or `shownAs`, which resolve instead.
+ */
+function buffer(t: { layer: Layer }): Uint8Array {
+	if (isLinked(t.layer))
+		throw new Error(
+			`"${t.layer.name}" shows sprite "${t.layer.from}", so it has no pixels of its own. ` +
+				`Paint into "${t.layer.from}" and every layer linked to it follows. To move this one, ` +
+				`link_layer("${t.layer.from}", { name: "${t.layer.name}", dx, dy }). To turn it into ` +
+				`pixels you can edit here, unlink_layer("${t.layer.name}").`
+		);
+	return t.layer.pixels;
+}
+
+/**
+ * Where a new layer goes: explicit, or relative to the active one — and the active layer is a cursor
+ * some earlier select_layer moved, which is exactly how a stack ends up in the wrong order with
+ * nothing on screen to explain it. Shared by `new_layer` and `link_layer` so the two cannot drift.
+ */
+function placeAt(
+	t: { sprite: Sprite; layer: Layer },
+	{ at, above, below }: { at?: 'top' | 'bottom'; above?: string; below?: string }
+): number {
+	const { sprite } = t;
+	if (at === 'top') return sprite.layers.length;
+	if (at === 'bottom') return 0;
+	if (above) return sprite.layers.findIndex((l) => l.name === layerOf(sprite, above).name) + 1;
+	if (below) return sprite.layers.findIndex((l) => l.name === layerOf(sprite, below).name);
+	return sprite.layers.findIndex((l) => l.name === t.layer.name) + 1;
+}
 
 /**
  * A detached copy of a sprite, layer for layer, optionally into a larger grid. The one place
  * `clone_sprite` and `copy_sprite` share, so cross-set copying and same-set cloning cannot drift.
+ *
+ * `link` says whether a linked layer survives as a link. It is *set identity* that decides, not the
+ * grid and not the calling verb: `from` names a sprite in the source set, so a copy that stays in
+ * that set keeps a name that still resolves, and one that leaves it keeps a name that would bind to
+ * a stranger or to nothing. A cross-set copy therefore bakes, the way `stamp` does.
  */
-function copyOfSprite(src: Sprite, to: string, from: GridSize, into: GridSize): Sprite {
+function copyOfSprite(
+	src: Sprite,
+	to: string,
+	from: GridSize,
+	into: GridSize,
+	sprites: Sprite[],
+	link: boolean
+): Sprite {
 	return {
 		name: to,
-		layers: src.layers.map((l) => ({
-			name: l.name,
-			pixels: from === into ? l.pixels.slice() : upscale(l.pixels, from, into),
-			...(l.hidden && { hidden: true })
-		}))
+		layers: src.layers.map((l) => {
+			if (isLinked(l) && link) return { ...l };
+			const px = shownAs(l, from, sprites);
+			return {
+				name: l.name,
+				pixels: from === into ? px.slice() : upscale(px, from, into),
+				...(l.hidden && { hidden: true })
+			};
+		})
 	};
 }
 
@@ -188,12 +249,24 @@ function reading(sprite?: string, { layer, set, pkg, rect }: ReadOpts = {}) {
 	let pixels: Uint8Array;
 	if (!set && !pkg) {
 		const t = target(sprite, layer);
-		[found, grid, pixels] = [t.sprite, t.grid, layer ? t.layer.pixels : seen(t)];
+		// a named layer is read as it draws, so a link shows the sprite it points at rather than
+		// nothing at all — reading is the half of this feature that must never refuse
+		[found, grid, pixels] = [
+			t.sprite,
+			t.grid,
+			layer ? shownAs(t.layer, t.grid, t.sprites) : seen(t)
+		];
 	} else {
 		const from = source(set, pkg);
 		const hit = sprite ? from.sprites.find((s) => s.name === sprite) : from.sprites[0];
 		if (!hit) throw new Error(`no sprite "${sprite}" in set "${from.name}"`);
-		[found, grid, pixels] = [hit, from.grid, layer ? layerOf(hit, layer).pixels : flatten(hit, from.grid)];
+		[found, grid, pixels] = [
+			hit,
+			from.grid,
+			layer
+				? shownAs(layerOf(hit, layer), from.grid, from.sprites)
+				: flatten(hit, from.grid, undefined, from.sprites)
+		];
 	}
 	// A window, because 128 lines of 128 characters is not something anyone reads — the thing you
 	// are checking is a 40x35 rider, and the rest is noise you have to scroll past to find it.
@@ -275,10 +348,10 @@ function animOf(name?: string): Animation {
 	return anim;
 }
 
-function put(layer: Layer, grid: number, x: number, y: number, color: Color) {
+function put(pixels: Uint8Array, grid: number, x: number, y: number, color: Color) {
 	if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= grid || y >= grid)
 		throw new Error(`(${x},${y}) is outside the ${grid}x${grid} grid`);
-	layer.pixels[y * grid + x] = toIndex(color);
+	pixels[y * grid + x] = toIndex(color);
 }
 
 const api = {
@@ -342,7 +415,7 @@ const api = {
 	// ---- painting --------------------------------------------------------
 	paint_pixel: mut(function (x: number, y: number, color: Color, sprite?: string) {
 		const t = target(sprite);
-		put(t.layer, t.grid, x, y, color);
+		put(buffer(t), t.grid, x, y, color);
 	}),
 
 	/** `color` is one colour for the whole row, or an array of `grid` colours (null = leave as-is). */
@@ -351,7 +424,7 @@ const api = {
 		for (let x = 0; x < t.grid; x++) {
 			const c = Array.isArray(color) ? color[x] : color;
 			if (Array.isArray(color) && c === null) continue;
-			put(t.layer, t.grid, x, y, c);
+			put(buffer(t), t.grid, x, y, c);
 		}
 	}),
 
@@ -361,7 +434,7 @@ const api = {
 		for (let y = 0; y < t.grid; y++) {
 			const c = Array.isArray(color) ? color[y] : color;
 			if (Array.isArray(color) && c === null) continue;
-			put(t.layer, t.grid, x, y, c);
+			put(buffer(t), t.grid, x, y, c);
 		}
 	}),
 
@@ -371,6 +444,7 @@ const api = {
 	 */
 	paint_map: mut(function (rows: string[], legend: Record<string, Color>, sprite?: string) {
 		const t = target(sprite);
+		const px = buffer(t); // resolved once: this writes per character, not per call
 		if (rows.length > t.grid) throw new Error(`${rows.length} rows given, grid is ${t.grid}`);
 		const resolved = Object.fromEntries(
 			Object.entries(legend).map(([k, v]) => [k, toIndex(v)])
@@ -380,14 +454,14 @@ const api = {
 			[...row].forEach((ch, x) => {
 				if (ch === '.' || ch === ' ') return;
 				if (!(ch in resolved)) throw new Error(`char "${ch}" at (${x},${y}) is not in the legend`);
-				t.layer.pixels[y * t.grid + x] = resolved[ch];
+				px[y * t.grid + x] = resolved[ch];
 			});
 		});
 	}),
 
 	clear: mut(function (color: Color = null, sprite?: string) {
 		const t = target(sprite);
-		t.layer.pixels.fill(toIndex(color));
+		buffer(t).fill(toIndex(color));
 	}),
 
 	/**
@@ -408,7 +482,7 @@ const api = {
 		const set = editor.requireSet();
 		const { sprite: into, newSprite, layer, ...rest } = opts;
 		let name: string;
-		let dest: Layer;
+		let dest: { name: string; pixels: Uint8Array };
 		if (newSprite) {
 			taken(set.sprites, newSprite, 'sprite');
 			set.sprites.push({ name: newSprite, layers: [newLayer(BASE, set.grid)] });
@@ -417,13 +491,14 @@ const api = {
 			// applies to the layer inside it too, so reach for it through the proxied sprite.
 			const sprite = set.sprites[set.sprites.length - 1];
 			name = sprite.name;
-			dest = sprite.layers[0];
+			// just made by newLayer, so it is painted — but say so, since `layers[0]` is a union
+			dest = { name: BASE, pixels: buffer({ layer: sprite.layers[0] }) };
 			editor.stop(); // otherwise a running animation hides the sprite we just made
 			editor.sel = { ...editor.sel, sprite: newSprite, layer: BASE };
 		} else {
 			const t = target(into, layer);
 			name = t.sprite.name;
-			dest = t.layer;
+			dest = { name: t.layer.name, pixels: buffer(t) };
 		}
 		const pixels = await imageToPixels(source, set.grid, rest);
 		dest.pixels.set(pixels);
@@ -439,7 +514,9 @@ const api = {
 		const src = set.sprites.find((s) => s.name === from);
 		if (!src) throw new Error(`no sprite "${from}"`);
 		taken(set.sprites, to, 'sprite');
-		set.sprites.push(copyOfSprite(src, to, set.grid, set.grid));
+		// same set, so a linked layer's `from` still names the same sprite — the copy keeps the link,
+		// exactly as a copied frame keeps naming the sprite it named before
+		set.sprites.push(copyOfSprite(src, to, set.grid, set.grid, set.sprites, true));
 		editor.sel = { ...editor.sel, sprite: to, layer: '' };
 		return to;
 	}),
@@ -457,21 +534,17 @@ const api = {
 	 * tile scroll for ever; without it anything past the edge is dropped.
 	 *
 	 * **This bakes.** The pixels are copied once and the link is gone: repaint `from` afterwards and
-	 * what you stamped does not change. For art you are still tweaking, put it on a layer and move it
-	 * per frame with `set_animation`'s `layers` instead — that stays live, because the layer holds the
-	 * art and the frame only says where it sits.
+	 * what you stamped does not change. That is the whole difference from `link_layer`, which puts
+	 * the same picture in as a layer that stays live — reach for that one for anything you will still
+	 * edit, or for the same object repeated. `stamp` is for a one-off you then paint over.
 	 *
 	 * Both sprites live in the active set, so they share a grid. Reach for `copy_sprite` to bring art
 	 * in from a smaller set first.
 	 *
-	 * ponytail: a one-time blit, so a scene assembled by stamping is a dead end — change the tree and
-	 * you re-stamp all forty of them. The upgrade is a *linked* stamp, and the cheap way in is the
-	 * layer stack we already have: let a layer be `{ name, from: 'tree', dx, dy, wrap }` instead of
-	 * `{ name, pixels }`, and have `flatten` resolve `from` against the set's sprites. Arrangements
-	 * then work on it unchanged. Needs `flatten` to take the sprite list (it takes one sprite today),
-	 * a cycle guard for A→B→A, and a decision on what `paint_pixel` into a linked layer means —
-	 * probably refuse, the way a held frame with effects refuses. Do it when someone actually builds a
-	 * scene big enough to hurt; until then `stamp` plus arrangements covers both jobs.
+	 * Stamping a sprite that is itself built from links composites them first, so what lands is what
+	 * you see. It can also read a sprite that links back to the destination: that terminates and is
+	 * well defined, because the source is fully composited into a detached buffer before anything is
+	 * written — you get a snapshot of the loop rather than an error.
 	 */
 	stamp: mut(function (from: string, { dx = 0, dy = 0, wrap = false, sprite, layer }: { dx?: number; dy?: number; wrap?: boolean; sprite?: string; layer?: string } = {}) {
 		const set = editor.requireSet();
@@ -480,7 +553,7 @@ const api = {
 		const t = target(sprite, layer);
 		if (src.name === t.sprite.name)
 			throw new Error(`stamp("${from}") would read and write the same sprite — clone_sprite it first`);
-		const painted = blit(t.layer.pixels, flatten(src, set.grid), set.grid, dx, dy, wrap);
+		const painted = blit(buffer(t), flatten(src, set.grid, undefined, set.sprites), set.grid, dx, dy, wrap);
 		return { sprite: t.sprite.name, layer: t.layer.name, from, painted };
 	}),
 
@@ -493,19 +566,20 @@ const api = {
 		if (!SIDES.includes(from))
 			throw new Error(`reflect needs one of ${SIDES.join(', ')} (got ${JSON.stringify(from)})`);
 		const t = target(sprite);
-		reflectHalf(t.layer.pixels, t.grid, from);
+		reflectHalf(buffer(t), t.grid, from);
 	}),
 
 	/** Turn a sprite in steps of 30°, positive clockwise. See AGENTS.md §Painting. */
 	rotate: mut(function (angle: number, { cx, cy, sprite }: RotateOpts = {}) {
 		const t = target(sprite);
-		const lost = spin(t.layer.pixels, t.grid, angle, cx, cy);
+		const px = buffer(t);
+		const lost = spin(px, t.grid, angle, cx, cy);
 		const mid = (t.grid - 1) / 2;
 		return {
 			sprite: t.sprite.name,
 			angle,
 			center: [cx ?? mid, cy ?? mid],
-			solid: t.layer.pixels.reduce((n, p) => n + (p === TRANSPARENT ? 0 : 1), 0),
+			solid: px.reduce((n, p) => n + (p === TRANSPARENT ? 0 : 1), 0),
 			lost
 		};
 	}),
@@ -523,7 +597,7 @@ const api = {
 		// a bare string is the sprite, which is how every other painting verb spells it
 		const o = typeof opts === 'string' ? { sprite: opts } : opts;
 		const t = target(o.sprite, o.layer);
-		slide(t.layer.pixels, t.grid, dx, dy, o.wrap ?? false);
+		slide(buffer(t), t.grid, dx, dy, o.wrap ?? false);
 	}),
 
 	// ---- deleting --------------------------------------------------------
@@ -534,28 +608,58 @@ const api = {
 	 * Remove a sprite and its layers. Refuses while an animation still shows it, naming them, because
 	 * a frame pointing at a sprite that is gone is dropped silently on the next load — you would lose
 	 * the frame and never be told. `{ force: true }` removes those frames too, and says how many.
+	 *
+	 * It refuses for a linked layer showing it as well, and for the same reason: the layer would go
+	 * on existing and quietly draw nothing. `{ force: true }` *bakes* those layers rather than
+	 * deleting them — the picture is kept, which is what someone forcing this through wants, and
+	 * dropping them could empty a stack that has to keep at least one layer.
 	 */
 	delete_sprite: mut(function (name: string, { force = false } = {}) {
 		const set = editor.requireSet();
 		const i = set.sprites.findIndex((s) => s.name === name);
 		if (i < 0) throw new Error(`no sprite "${name}" in set "${set.name}"`);
 		const used = set.animations.filter((a) => a.frames.some((f) => f.sprite === name));
-		if (used.length && !force)
+		const shownBy = set.sprites.flatMap((sp) =>
+			sp.layers.filter((l) => isLinked(l) && l.from === name).map((l) => `${sp.name}.${l.name}`)
+		);
+		if ((used.length || shownBy.length) && !force) {
+			// each half of the message earns its place, so "drops those frames" never appears for a
+			// sprite that no animation uses — a promise about something that is not there reads as a bug
+			const uses = [
+				used.length ? `frames in ${used.map((a) => `"${a.name}"`).join(', ')}` : '',
+				shownBy.length ? `linked layers ${shownBy.join(', ')}` : ''
+			].filter(Boolean);
+			const fixes = [used.length ? 'drops those frames' : '', shownBy.length ? 'bakes those layers' : '']
+				.filter(Boolean)
+				.join(' and ');
 			throw new Error(
-				`"${name}" is still used by ${used.map((a) => `"${a.name}"`).join(', ')} — ` +
-					`delete_sprite("${name}", { force: true }) to drop those frames too`
+				`"${name}" is still in use: ${uses.join(' and ')}. ` +
+					`delete_sprite("${name}", { force: true }) ${fixes}.`
 			);
+		}
 		let dropped = 0;
 		for (const a of used) {
 			const keep = a.frames.filter((f) => f.sprite !== name);
 			dropped += a.frames.length - keep.length;
 			a.frames = keep;
 		}
+		// baked before the sprite goes, since baking is exactly "resolve it while you still can"
+		let baked = 0;
+		for (const sp of set.sprites)
+			sp.layers.forEach((l, li) => {
+				if (!isLinked(l) || l.from !== name) return;
+				sp.layers[li] = {
+					name: l.name,
+					pixels: shownAs(l, set.grid, set.sprites),
+					...(l.hidden && { hidden: true })
+				};
+				baked++;
+			});
 		set.sprites.splice(i, 1);
 		editor.stop(); // playback may have been sitting on a frame that no longer exists
 		if (editor.sel.sprite === name)
 			editor.sel = { ...editor.sel, sprite: set.sprites[0]?.name ?? '', layer: '' };
-		return { deleted: name, framesDropped: dropped, sprites: set.sprites.map((s) => s.name) };
+		return { deleted: name, framesDropped: dropped, layersBaked: baked, sprites: set.sprites.map((s) => s.name) };
 	}),
 
 	/** Remove a set, with every sprite and animation in it. */
@@ -605,19 +709,95 @@ const api = {
 		const sprite = t.sprite;
 		const named = name ?? freeName(sprite.layers, `layer-${sprite.layers.length}`);
 		taken(sprite.layers, named, 'layer');
-		// Placement is explicit or it is relative to the active layer — and the active layer is a
-		// cursor some earlier select_layer moved, which is exactly how a stack ends up in the wrong
-		// order with nothing on screen to explain it.
-		const index = (): number => {
-			if (at === 'top') return sprite.layers.length;
-			if (at === 'bottom') return 0;
-			if (above) return sprite.layers.findIndex((l) => l.name === layerOf(sprite, above).name) + 1;
-			if (below) return sprite.layers.findIndex((l) => l.name === layerOf(sprite, below).name);
-			return sprite.layers.findIndex((l) => l.name === t.layer.name) + 1;
-		};
-		sprite.layers.splice(index(), 0, newLayer(named, t.grid));
+		sprite.layers.splice(placeAt(t, { at, above, below }), 0, newLayer(named, t.grid));
 		editor.sel = { ...editor.sel, layer: named };
 		return { sprite: sprite.name, layer: named, layers: sprite.layers.map((l) => l.name) };
+	}),
+
+	/**
+	 * Show another sprite as a layer of this one, live. Repaint that sprite and every layer linked to
+	 * it changes with it — which is the difference between this and `stamp`, and the reason a scene
+	 * assembled out of links stays editable.
+	 *
+	 *   link_layer('tree')                                  // the tree, as a layer, at 0,0
+	 *   link_layer('tree', { dx: 30 })                      // a second one, further along
+	 *   link_layer('tree', { name: 'tree-2', dx: 60 })      // and move that one later
+	 *
+	 * Without a `name` every call adds another copy, named `tree`, `tree-2`… — that is how one drawing
+	 * becomes a row of them. **With** an explicit `name` that already names a linked layer, this
+	 * updates that one in place instead, keeping where it sits in the stack and whether it is hidden.
+	 * So a script that builds a scene can be re-run and rebuilds exactly the same scene.
+	 *
+	 * Because it replaces rather than merges, `dx`, `dy` and `wrap` go back to `0`, `0` and `false`
+	 * when you leave them out — the same defaults `stamp` takes, and unlike `set_effects`, which
+	 * merges. A frame can still nudge a link on top of this: `set_animation`'s `layers` adds its `dx`
+	 * to the one here, so `scroll_layer` drives a linked layer like any other.
+	 *
+	 * Same set only, so both sprites share a grid. `copy_sprite` brings art in from another set first.
+	 */
+	link_layer: mut(function (from: string, { name, dx = 0, dy = 0, wrap = false, at, above, below, sprite }: { name?: string; dx?: number; dy?: number; wrap?: boolean; at?: 'top' | 'bottom'; above?: string; below?: string; sprite?: string } = {}) {
+		const t = target(sprite);
+		const src = t.sprites.find((sp) => sp.name === from);
+		// flatten draws a name it cannot resolve as nothing, on purpose. The *command* must not put
+		// one there in the first place: a blank layer nobody can explain is the failure that costs an
+		// afternoon, and this is the moment we still know it is a typo.
+		if (!src)
+			throw new Error(
+				`no sprite "${from}" in this set (has ${t.sprites.map((sp) => sp.name).join(', ')})`
+			);
+		if (src.name === t.sprite.name)
+			throw new Error(`"${t.sprite.name}" can't show itself — there would be nothing left to draw.`);
+		if (links(src, t.sprites).has(t.sprite.name))
+			throw new Error(
+				`"${t.sprite.name}" can't show "${from}": "${from}" already shows "${t.sprite.name}" ` +
+					`through another link, so the two would go round for ever with nothing to draw.`
+			);
+		// zeroes stay off the object: settle() charges no undo step when the document serialises
+		// unchanged, and a `dx: 0` written here would not survive the round-trip through storage
+		const geometry = {
+			...(Math.round(dx) && { dx: Math.round(dx) }),
+			...(Math.round(dy) && { dy: Math.round(dy) }),
+			...(wrap && { wrap: true as const })
+		};
+		const existing = name ? t.sprite.layers.find((l) => l.name === name) : undefined;
+		if (existing) {
+			if (!isLinked(existing))
+				throw new Error(
+					`"${name}" is a painted layer in "${t.sprite.name}" — link_layer would throw its ` +
+						`pixels away. delete_layer("${name}") first if that is what you want.`
+				);
+			// in place, so the stack order and `hidden` survive a re-run. `at`/`above`/`below` are
+			// ignored rather than honoured: keeping the position is the whole point of updating one.
+			const i = t.sprite.layers.findIndex((l) => l.name === name);
+			t.sprite.layers[i] = { name: existing.name, from, ...geometry, ...(existing.hidden && { hidden: true }) };
+			editor.sel = { ...editor.sel, layer: existing.name };
+			return { sprite: t.sprite.name, layer: existing.name, from, ...geometry, updated: true };
+		}
+		const named = name ?? freeName(t.sprite.layers, from);
+		taken(t.sprite.layers, named, 'layer');
+		t.sprite.layers.splice(placeAt(t, { at, above, below }), 0, { name: named, from, ...geometry });
+		editor.sel = { ...editor.sel, layer: named };
+		return { sprite: t.sprite.name, layer: named, from, ...geometry, updated: false };
+	}),
+
+	/**
+	 * Turn a linked layer into ordinary pixels — the picture it is showing, at the offset it is
+	 * showing it, copied in and disconnected. The escape hatch for editing one instance of a repeated
+	 * object without touching the others, and what `paint_pixel` points you at when you try to draw
+	 * on a link. `flatten_sprite` is the whole-stack version.
+	 */
+	unlink_layer: mut(function (name?: string, { sprite }: { sprite?: string } = {}) {
+		const t = target(sprite, name);
+		if (!isLinked(t.layer))
+			throw new Error(`"${t.layer.name}" is already a painted layer — there is no link to break`);
+		const was = t.layer.from;
+		const i = t.sprite.layers.findIndex((l) => l.name === t.layer.name);
+		t.sprite.layers[i] = {
+			name: t.layer.name,
+			pixels: shownAs(t.layer, t.grid, t.sprites),
+			...(t.layer.hidden && { hidden: true })
+		};
+		return { sprite: t.sprite.name, layer: t.layer.name, was };
 	}),
 
 	/** Which layer painting lands on. Reading and exporting are unaffected — they show every layer. */
@@ -692,8 +872,11 @@ const api = {
 			const found = layerOf(sprite, l.name);
 			// rebuild rather than mutate `hidden` in place: it has to land in the serialised document
 			// either way, and this keeps the buffer identity (the canvas reads it) while dropping the
-			// key entirely when false, so a no-op reorder serialises unchanged and costs no undo step
-			return { name: found.name, pixels: found.pixels, ...(l.hidden && { hidden: true as const }) };
+			// key entirely when false, so a no-op reorder serialises unchanged and costs no undo step.
+			// Spread everything else — naming `pixels` here would silently unlink every linked layer
+			// the moment anyone reordered the stack.
+			const { hidden: _was, ...rest } = found;
+			return { ...rest, ...(l.hidden && { hidden: true as const }) };
 		});
 		sprite.layers = next;
 		return { sprite: sprite.name, layers: next.map((l) => (l.hidden ? `${l.name} (hidden)` : l.name)) };
@@ -714,10 +897,11 @@ const api = {
 	 */
 	tile_layer: mut(function (layer?: string, { period, from = 0, sprite }: { period: number; from?: number; sprite?: string } = {} as any) {
 		const t = target(sprite, layer);
-		const copies = tileAcross(t.layer.pixels, t.grid, period, from);
+		const px = buffer(t);
+		const copies = tileAcross(px, t.grid, period, from);
 		// read the repeat back rather than trusting the argument — this is the number scroll_layer
 		// will measure, so returning it closes the loop between the two commands
-		return { sprite: t.sprite.name, layer: t.layer.name, period, copies, repeatsEvery: periodOf(t.layer.pixels, t.grid) };
+		return { sprite: t.sprite.name, layer: t.layer.name, period, copies, repeatsEvery: periodOf(px, t.grid) };
 	}),
 
 	/**
@@ -745,7 +929,10 @@ const api = {
 		const t = target(sprite);
 		const l = layerOf(t.sprite, layer);
 		const n = anim.frames.length;
-		const p = periodOf(l.pixels, t.grid);
+		// measured on the pixels as drawn, so a linked layer scrolls like any other — linking a tiled
+		// motif and then parallaxing it is the point. A link's own dx is a constant horizontal shift
+		// and cannot change a horizontal period, so it does not enter into this.
+		const p = periodOf(shownAs(l, t.grid, t.sprites), t.grid);
 		// a step that is a whole number of repeats lands on identical pixels every frame, and `loops`
 		// waves it through because a layer that never moves trivially ends where it started. Caught
 		// first, since the seamless check below can only ever say yes to it
@@ -821,6 +1008,9 @@ const api = {
 	 * Collapse a sprite's layers into one, as they look composited — the way back to simple sprite
 	 * mode, and the escape hatch for anything downstream that would rather not think about layers.
 	 * Hidden layers are dropped, not merged: they are hidden.
+	 *
+	 * Linked layers bake along with everything else — afterwards this sprite has its own pixels and
+	 * stops following whatever it was showing. `unlink_layer` is the one-layer version.
 	 */
 	flatten_sprite: mut(function (sprite?: string) {
 		const t = target(sprite);
@@ -879,7 +1069,9 @@ const api = {
 					`export_png() it and import_image() it back to go smaller.`
 			);
 		const named = to ? (taken(set.sprites, to, 'sprite'), to) : freeName(set.sprites, name);
-		set.sprites.push(copyOfSprite(sprite, named, src.grid, set.grid));
+		// set identity, not grid size: a same-set copy keeps its links live, and one that crosses sets
+		// bakes them, because `from` would otherwise name a stranger in the destination or nothing
+		set.sprites.push(copyOfSprite(sprite, named, src.grid, set.grid, src.sprites, src === set));
 		editor.stop();
 		editor.sel = { ...editor.sel, sprite: named, layer: '' };
 		return { sprite: named, from: src.grid, to: set.grid, layers: sprite.layers.length };
@@ -936,7 +1128,22 @@ const api = {
 		const src = from ? target(from).sprite : dest;
 		const layer = layerOf(src, name);
 		const named = to ? (taken(dest.layers, to, 'layer'), to) : freeName(dest.layers, name);
-		dest.layers.push({ name: named, pixels: layer.pixels.slice(), ...(layer.hidden && { hidden: true }) });
+		// A link copies as a link — that is the second way to repeat an object, next to link_layer.
+		// It is also the back door into a loop link_layer would refuse, so it gets the same check.
+		if (isLinked(layer)) {
+			const sprites = editor.requireSet().sprites;
+			const shows = sprites.find((sp) => sp.name === layer.from);
+			if (layer.from === dest.name || (shows && links(shows, sprites).has(dest.name)))
+				throw new Error(
+					`"${name}" shows "${layer.from}", so copying it into "${dest.name}" would make ` +
+						`"${dest.name}" show itself — nothing would be left to draw.`
+				);
+		}
+		dest.layers.push(
+			isLinked(layer)
+				? { ...layer, name: named }
+				: { name: named, pixels: layer.pixels.slice(), ...(layer.hidden && { hidden: true }) }
+		);
 		editor.sel = { ...editor.sel, layer: named };
 		return { sprite: dest.name, layer: named, layers: dest.layers.map((l) => l.name) };
 	}),
@@ -1290,7 +1497,7 @@ const api = {
 			],
 			groups: {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select', 'delete_sprite', 'delete_set', 'delete_package'],
-				layers: ['new_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'tile_layer', 'scroll_layer', 'cycle_layers', 'flatten_sprite'],
+				layers: ['new_layer', 'link_layer', 'unlink_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'tile_layer', 'scroll_layer', 'cycle_layers', 'flatten_sprite'],
 				copying: ['copy_set', 'copy_sprite', 'copy_animation', 'copy_frames', 'copy_layer'],
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'ramp', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
@@ -1365,10 +1572,11 @@ const api = {
 		if (index === TRANSPARENT)
 			throw new Error('a permanent silhouette needs a colour — null would erase the sprite');
 		const t = target(sprite);
+		const px = buffer(t);
 		let painted = 0;
-		for (let i = 0; i < t.layer.pixels.length; i++) {
-			if (t.layer.pixels[i] === TRANSPARENT) continue;
-			t.layer.pixels[i] = index;
+		for (let i = 0; i < px.length; i++) {
+			if (px[i] === TRANSPARENT) continue;
+			px[i] = index;
 			painted++;
 		}
 		return { sprite: t.sprite.name, painted, color: PALETTE[index], permanent: true };
@@ -1455,47 +1663,47 @@ const shapes = {
 	 */
 	line: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { width = 1, sprite }: ShapeOpts & { width?: number } = {}) {
 		const t = target(sprite);
-		const painted = shape.line(t.layer.pixels, t.grid, x0, y0, x1, y1, toIndex(color), width);
+		const painted = shape.line(buffer(t), t.grid, x0, y0, x1, y1, toIndex(color), width);
 		return { sprite: t.sprite.name, shape: 'line', painted };
 	}),
 
 	/** Rectangle between two opposite corners, given in either order — the non-square one. */
 	rect: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.rect(t.layer.pixels, t.grid, x0, y0, x1, y1, toIndex(color), fill);
+		const painted = shape.rect(buffer(t), t.grid, x0, y0, x1, y1, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'rect', painted };
 	}),
 
 	/** Axis-aligned square from its top-left corner. */
 	square: mut(function (x: number, y: number, size: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.square(t.layer.pixels, t.grid, x, y, size, toIndex(color), fill);
+		const painted = shape.square(buffer(t), t.grid, x, y, size, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'square', painted };
 	}),
 
 	circle: mut(function (cx: number, cy: number, r: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.circle(t.layer.pixels, t.grid, cx, cy, r, toIndex(color), fill);
+		const painted = shape.circle(buffer(t), t.grid, cx, cy, r, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'circle', painted };
 	}),
 
 	/** Circle with separate radii — the way to draw a body, a head or an eye that isn't round. */
 	ellipse: mut(function (cx: number, cy: number, rx: number, ry: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.ellipse(t.layer.pixels, t.grid, cx, cy, rx, ry, toIndex(color), fill);
+		const painted = shape.ellipse(buffer(t), t.grid, cx, cy, rx, ry, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'ellipse', painted };
 	}),
 
 	triangle: mut(function (x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.triangle(t.layer.pixels, t.grid, x0, y0, x1, y1, x2, y2, toIndex(color), fill);
+		const painted = shape.triangle(buffer(t), t.grid, x0, y0, x1, y1, x2, y2, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'triangle', painted };
 	}),
 
 	/** Any closed shape: `polygon([[2, 1], [13, 6], [7, 14]], '#22aa33')`. Three points or more. */
 	polygon: mut(function (points: Point[], color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.polygon(t.layer.pixels, t.grid, points, toIndex(color), fill);
+		const painted = shape.polygon(buffer(t), t.grid, points, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'polygon', painted };
 	})
 };

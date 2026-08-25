@@ -55,7 +55,34 @@ export type Frame = {
 	layers?: Arrangement;
 };
 /** One image in a sprite's stack. `hidden` is skipped when compositing but keeps its pixels. */
-export type Layer = { name: string; pixels: Uint8Array; hidden?: boolean };
+export type Painted = { name: string; pixels: Uint8Array; hidden?: boolean };
+/**
+ * A layer that shows another sprite in the same set, live — it holds no pixels of its own, only the
+ * name of what to draw. Repaint that sprite and every layer linked to it follows, which is the whole
+ * difference between this and `stamp`.
+ *
+ * `dx`/`dy` place it, so one sprite can appear several times in a stack at different offsets — a
+ * painted layer has no such keys because moving one is `shift`, and you own its buffer. A link has
+ * no buffer to shift, so placement has to live on the link.
+ *
+ * A frame's `LayerView` still applies on top: its `dx` *adds* to this one, and `hidden` and the fx
+ * keys work exactly as they do for a painted layer.
+ */
+export type Linked = {
+	name: string;
+	from: string;
+	dx?: number;
+	dy?: number;
+	wrap?: boolean;
+	hidden?: boolean;
+};
+/**
+ * A union rather than an optional `from` on one shape, for the reason layers.ts gives about
+ * `flatten` never handing back a live buffer: with `pixels` always present, the twenty painting
+ * verbs would write into something nothing renders and discard it silently. This way
+ * `layer.pixels` is a *compile error* wherever a link can turn up, so none of them can be missed.
+ */
+export type Layer = Painted | Linked;
 /**
  * An ordered stack of layers, composited bottom-to-top — `layers[0]` is the back. Always holds at
  * least one; a sprite with exactly one layer behaves precisely as a sprite did before layers

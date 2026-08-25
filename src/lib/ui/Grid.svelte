@@ -4,6 +4,7 @@
 	import { paint as render } from '../io/export';
 	import { PALETTE } from '../core/palette';
 	import { line } from '../core/shapes';
+	import { isLinked } from '../core/layers';
 	import { editor } from '../state/store.svelte';
 
 	// the swatches that set these live in the sidebar's View panel; the canvas only reports them
@@ -36,8 +37,9 @@
 	const grid = $derived(set?.grid ?? 16);
 	// A paused frame is still editable — only the running timer locks the canvas. A frame carrying
 	// effects is the exception: the canvas is showing a transformed view, so a stroke would land
-	// somewhere else on the sprite underneath it.
-	const live = $derived(!editor.running && !editor.transformed && !!sprite);
+	// somewhere else on the sprite underneath it. A linked active layer is the other: it has no
+	// pixels of its own, so there is nothing here to paint into.
+	const live = $derived(!editor.running && !editor.transformed && !editor.linked && !!sprite);
 	/**
 	 * True when what is on screen is not what is stored — effects are being applied. This is the one
 	 * thing the canvas has to say out loud: it is why painting is off, and why a frame can look fine
@@ -75,8 +77,11 @@
 	function paint(i: number) {
 		if (!live || i < 0 || i === from) return; // a drag re-enters the same cell constantly
 		// the active layer, not the flattened sprite the canvas is showing: a stroke on a spot another
-		// layer covers lands underneath it and stays invisible, which is what layers mean
-		const pixels = editor.shownLayer!.pixels;
+		// layer covers lands underneath it and stays invisible, which is what layers mean. `live`
+		// has already ruled out a linked layer, which is the one kind with no buffer to paint into.
+		const layer = editor.shownLayer!;
+		if (isLinked(layer)) return;
+		const pixels = layer.pixels;
 		const prev = from;
 		from = i;
 		if (prev < 0) {

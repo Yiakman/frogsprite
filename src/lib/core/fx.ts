@@ -103,7 +103,11 @@ export function compose(
 		// flattened here rather than when `byName` is built: that map covers every sprite in the set
 		// and a frame reaches for two or three of them
 		return sprite
-			? applyFx(flatten(sprite, grid, effects ? f.layers : undefined), grid, effects ? f.fx : undefined)
+			? applyFx(
+					flatten(sprite, grid, effects ? f.layers : undefined, sprites),
+					grid,
+					effects ? f.fx : undefined
+				)
 			: new Uint8Array(cells);
 	};
 

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { GRAY_START, PALETTE } from '../core/palette';
+	import { isLinked } from '../core/layers';
 	import { editor, pixelsOf } from '../state/store.svelte';
 
 	// The colours actually on the canvas — for pixel art that's the handful you keep reaching for,
@@ -10,9 +11,14 @@
 		const seen = new Set<number>();
 		// every layer's own buffer, hidden ones included, rather than the flattened sprite: a colour
 		// parked under something else is still one you reached for, and flattening would allocate
-		// per sprite per revision to hide it
+		// per sprite per revision to hide it.
+		// A linked layer is skipped rather than resolved — it has no colours of its own, and the
+		// sprite it shows is somewhere in this same loop with all of them already counted.
 		for (const s of set.sprites)
-			for (const l of s.layers) for (const p of pixelsOf(l)) if (p) seen.add(p);
+			for (const l of s.layers) {
+				if (isLinked(l)) continue;
+				for (const p of pixelsOf(l)) if (p) seen.add(p);
+			}
 		return [...seen].sort((a, b) => a - b);
 	});
 </script>

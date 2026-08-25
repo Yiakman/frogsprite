@@ -1,11 +1,11 @@
 import { compose, progress, steps } from '../core/fx.ts';
-import { flatten, layerOf } from '../core/layers.ts';
+import { flatten, isLinked, layerOf } from '../core/layers.ts';
 import { PALETTE } from '../core/palette.ts';
 import { targetLayer } from '../core/selection.ts';
 import * as storage from '../io/storage.ts';
 
 import type { GridSize } from '../core/grid.ts';
-import type { Frame, Layer, Package, Sprite } from '../core/types.ts';
+import type { Frame, Layer, Package, Painted, Sprite } from '../core/types.ts';
 
 const find = <T extends { name: string }>(list: T[], name: string) =>
 	list.find((x) => x.name === name);
@@ -108,6 +108,16 @@ class Editor {
 		return layerOf(sprite, name);
 	}
 
+	/**
+	 * True when the active layer shows another sprite rather than holding pixels. The canvas cannot
+	 * paint into one — the art belongs to the sprite it names — so the stroke is refused here rather
+	 * than reaching for a buffer that is not there.
+	 */
+	get linked() {
+		const l = this.shownLayer;
+		return !!l && isLinked(l);
+	}
+
 	/** True while the canvas is showing something other than the raw sprite, so painting is off. */
 	get transformed() {
 		const f = this.frame >= 0 ? this.frames[this.frame] : undefined;
@@ -126,12 +136,13 @@ class Editor {
 		// only one layer here would read as a bug rather than as a peek. `shown` already resolves to
 		// the held frame's sprite, so this is the whole of it.
 		const grid = set?.grid ?? 0;
-		if (this.raw) return this.shown && flatten(this.shown, grid);
+		const sprites = set?.sprites ?? []; // linked layers resolve against the set they live in
+		if (this.raw) return this.shown && flatten(this.shown, grid, undefined, sprites);
 		if (set && this.frame >= 0 && frames.length) {
 			const n = steps(frames[this.frame], set.grid);
 			return compose(frames, this.frame, set.sprites, set.grid, progress(this.phase, n));
 		}
-		return this.sprite && flatten(this.sprite, grid);
+		return this.sprite && flatten(this.sprite, grid, undefined, sprites);
 	}
 
 	requirePackage() {
@@ -285,7 +296,19 @@ class Editor {
 					// out of a display suffix is unpleasant. It is also the shape set_layers accepts.
 					sprites: s.sprites.map((sp) => ({
 						name: sp.name,
-						layers: sp.layers.map((l) => ({ name: l.name, hidden: !!l.hidden }))
+						// a link reports what it shows and where: this is the only place an agent can see the
+						// scene graph it just built, so a layer that is not a painted one has to say so here
+						// or it reads as an empty layer that mysteriously draws something
+						layers: sp.layers.map((l) => ({
+							name: l.name,
+							hidden: !!l.hidden,
+							...(isLinked(l) && {
+								from: l.from,
+								...(l.dx && { dx: l.dx }),
+								...(l.dy && { dy: l.dy }),
+								...(l.wrap && { wrap: true })
+							})
+						}))
 					})),
 					animations: s.animations.map((a) => ({
 						name: a.name,
@@ -337,7 +360,7 @@ export const editor = new Editor();
  * `layer.pixels` directly renders once and then never updates again. Going through here
  * subscribes to `revision`, which every save() bumps. Writers can use `layer.pixels` as they are.
  */
-export function pixelsOf(layer: Layer): Uint8Array {
+export function pixelsOf(layer: Painted): Uint8Array {
 	void editor.revision;
 	return layer.pixels;
 }
