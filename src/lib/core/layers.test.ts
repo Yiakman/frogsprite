@@ -522,3 +522,19 @@ test('copyOfSprite carries hidden across, and drops it when false', () => {
 	assert.equal(copy.layers[0].hidden, true);
 	assert.equal('hidden' in copy.layers[1], false, 'no hidden:false to serialise');
 });
+
+test('shownAs on a hidden link still holds the picture, at its offset', () => {
+	const t = grid8('tree', 0);
+	const s = linked('scene', { name: 'a', from: 'tree', dx: 1, hidden: true });
+	assert.deepEqual(Array.from(shownAs(s.layers[0], 8, [t, s])).slice(0, 3), [0, 5, 0]);
+	// flatten of the sprite skips it — that is compositing, not what the layer holds
+	assert.deepEqual(Array.from(flatten(s, 8, undefined, [t, s])), new Array(64).fill(0));
+});
+
+test('copyOfSprite bakes a hidden link without erasing it', () => {
+	const t = grid8('tree', 0);
+	const s = linked('scene', { name: 'a', from: 'tree', dx: 1, hidden: true });
+	const baked = copyOfSprite(s, 'copy', 8, 8, [t, s], false);
+	assert.equal(baked.layers[0].hidden, true);
+	assert.deepEqual(Array.from((baked.layers[0] as Painted).pixels.slice(0, 3)), [0, 5, 0]);
+});

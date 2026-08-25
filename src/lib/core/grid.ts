@@ -71,15 +71,6 @@ export function applyFx(pixels: Pixels, grid: number, fx?: Fx): Uint8Array {
 }
 
 /**
- * Paint `src` into `dst` at an offset — the missing verb of *same picture, different position*.
- * Transparent source pixels leave `dst` alone, which is the one blend rule everything here uses.
- * `wrap` re-enters what falls off an edge on the opposite side, which is what makes a tile scroll
- * for ever; without it anything past the edge is dropped, exactly as `shift` does.
- *
- * Returns how many cells it painted. Both buffers are the same grid — to cross grids, `upscale`
- * first.
- */
-/**
  * Write one pixel, refusing a coordinate outside the grid rather than silently wrapping into the
  * next row — `pixels[y * grid + x]` with x = grid is the first pixel of row y+1, which draws
  * something plausible in the wrong place and is very hard to spot in a 128-wide buffer.
@@ -93,6 +84,15 @@ export function put(pixels: Pixels, grid: number, x: number, y: number, index: n
 	pixels[y * grid + x] = index;
 }
 
+/**
+ * Paint `src` into `dst` at an offset — the missing verb of *same picture, different position*.
+ * Transparent source pixels leave `dst` alone, which is the one blend rule everything here uses.
+ * `wrap` re-enters what falls off an edge on the opposite side, which is what makes a tile scroll
+ * for ever; without it anything past the edge is dropped, exactly as `shift` does.
+ *
+ * Returns how many cells it painted. Both buffers are the same grid — to cross grids, `upscale`
+ * first.
+ */
 export function stamp(
 	dst: Pixels,
 	src: Pixels,

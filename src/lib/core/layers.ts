@@ -165,9 +165,15 @@ export function links(sprite: Sprite, sprites: Sprite[]): Set<string> {
  * The link case goes back through `flatten` with a one-layer synthetic sprite rather than reading
  * `dx`/`dy`/`wrap` here, so there is exactly one piece of code that knows how a link is positioned.
  * A second copy of that arithmetic is how a read starts disagreeing with what is on screen.
+ *
+ * `hidden` is stripped first: flatten skips hidden layers (they are not in the composite), but this
+ * is the picture the layer *holds*, which a bake and a named read both need. A painted hidden layer
+ * already returns its buffer; a linked one has to match that, or unlink/copy across sets erase it.
  */
 export const shownAs = (layer: Layer, grid: number, sprites: Sprite[]): Uint8Array =>
-	isLinked(layer) ? flatten({ name: '', layers: [layer] }, grid, undefined, sprites) : layer.pixels;
+	isLinked(layer)
+		? flatten({ name: '', layers: [{ ...layer, hidden: undefined }] }, grid, undefined, sprites)
+		: layer.pixels;
 
 /**
  * Where a new layer goes in a stack: explicit, or relative to the active one. `active` is a cursor
