@@ -389,17 +389,22 @@ const api = {
 	 * file picker should pass a data URL. Options: `fit` ('contain' default, 'cover', 'stretch'),
 	 * `alpha` (0-255 cutoff for a cell counting as transparent, default 128), `trim` (crop a
 	 * transparent or uniform border first, default true), `contrast` (default 0.15),
-	 * `saturation` (default 1.2), plus `sprite` to target one by name or `newSprite` to create one,
-	 * and `layer` to land on one by name. Like every painting verb this replaces the *active layer*,
+	 * `saturation` (default 1.2), `pixel` (the source is already pixel art — turns the three photo
+	 * treatments off, which is what you want re-importing an `export_png`), plus `sprite` to target
+	 * one by name or `newSprite` to create one, and `layer` to land on one by name. Like every painting verb this replaces the *active layer*,
 	 * not the whole sprite.
 	 */
 	import_image: mut(async function (source: ImageSource, opts: ImportOptions & { sprite?: string; newSprite?: string; layer?: string } = {}) {
 		const set = editor.requireSet();
 		const { sprite: into, newSprite, layer, ...rest } = opts;
+		// Name clash first, decode second, document last. Decoding can fail long after the call —
+		// CORS, a truncated data URL, a corrupt file — and a sprite created up front would outlive
+		// that rejection as an empty orphan, selected, holding an undo step nobody asked for.
+		if (newSprite) taken(set.sprites, newSprite, 'sprite');
+		const pixels = await imageToPixels(source, set.grid, rest);
 		let name: string;
 		let dest: { name: string; pixels: Uint8Array };
 		if (newSprite) {
-			taken(set.sprites, newSprite, 'sprite');
 			set.sprites.push({ name: newSprite, layers: [newLayer(BASE, set.grid)] });
 			// read it back: push stores the raw object, but only the $state proxy handed back on
 			// read is the one the UI observes — mutating the raw object writes into a void. That
@@ -415,7 +420,6 @@ const api = {
 			name = t.sprite.name;
 			dest = { name: t.layer.name, pixels: paintable(t.layer) };
 		}
-		const pixels = await imageToPixels(source, set.grid, rest);
 		dest.pixels.set(pixels);
 		return { sprite: name, layer: dest.name, grid: set.grid, colours: new Set(pixels.filter((p) => p)).size };
 	}),
@@ -971,7 +975,8 @@ const api = {
 	 * Across sets the grids have to be compatible, and that means **larger only**: a 16x16 goes into
 	 * a 32x32 as an exact 2x2 block per pixel, with nothing resampled and no colour invented. The
 	 * other direction has to pick one winner per block, which eats every one-pixel highlight, so it
-	 * throws instead. `export_png` then `import_image` is the way down, and it resamples properly.
+	 * throws instead. `export_png` then `import_image(png, { pixel: true })` is the way down, and it
+ * resamples properly.
 	 */
 	copy_sprite: mut(function (name: string, { from = {}, to }: { from?: { set?: string; pkg?: string }; to?: string } = {}) {
 		const set = editor.requireSet();
@@ -981,7 +986,7 @@ const api = {
 		if (src.grid > set.grid)
 			throw new Error(
 				`can't copy a ${src.grid}x${src.grid} sprite into a ${set.grid}x${set.grid} set — upscale only. ` +
-					`export_png() it and import_image() it back to go smaller.`
+					`export_png() it and import_image(png, { pixel: true }) it back to go smaller.`
 			);
 		const named = to ? (taken(set.sprites, to, 'sprite'), to) : freeName(set.sprites, name);
 		// set identity, not grid size: a same-set copy keeps its links live, and one that crosses sets

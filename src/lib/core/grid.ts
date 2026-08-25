@@ -129,14 +129,14 @@ export function stamp(
  * Upscale only, and that asymmetry is deliberate rather than missing work. Going the other way has
  * to pick one winner per block, which drops every one-pixel highlight and breaks any outline
  * thinner than the factor — on palette-indexed art there is no average to fall back on. Refusing
- * says so; `export_png` then `import_image` is the path when you do want a smaller version, and it
- * resamples with the whole image in hand.
+ * says so; `export_png` then `import_image(png, { pixel: true })` is the path when you do want a
+ * smaller version, and it resamples with the whole image in hand.
  */
 export function upscale(pixels: Pixels, from: GridSize, to: GridSize): Uint8Array {
 	if (to < from)
 		throw new Error(
 			`can't fit a ${from}x${from} sprite into a ${to}x${to} grid — upscale only. ` +
-				`Export it and import_image() it back to go smaller.`
+				`Export it and import_image(png, { pixel: true }) it back to go smaller.`
 		);
 	const n = to / from;
 	const out = new Uint8Array(to * to);

@@ -21,7 +21,15 @@ export type ImportOptions = {
 	contrast?: number;
 	/** 1 is untouched, 0 is greyscale. */
 	saturation?: number;
+	/**
+	 * The source is already pixel art at this palette — a sprite on its way back from `export_png`.
+	 * Turns off the photo treatment (trim, contrast, saturation) so the art comes back as drawn.
+	 */
+	pixel?: boolean;
 };
+
+/** Options with every default filled in. `pixel` is spent during that, so it does not survive. */
+export type Settings = Required<Omit<ImportOptions, 'pixel'>>;
 
 export type ImageSource = Blob | string | ImageBitmap | HTMLImageElement | HTMLCanvasElement;
 
@@ -32,6 +40,42 @@ const DEFAULTS = {
 	contrast: 0.15,
 	saturation: 1.2
 };
+
+const FITS: Fit[] = ['contain', 'cover', 'stretch'];
+
+/**
+ * What `pixel: true` means. The three have to move together: contrast and saturation shift 125 of
+ * the 255 palette entries onto a neighbour, and trim crops and re-centres art whose transparent
+ * margin was the composition. Any one of them left on quietly damages a sprite that was already
+ * exactly right, which is why this is one flag and not three things to remember.
+ */
+const PIXEL = { trim: false, contrast: 0, saturation: 1 };
+
+const range = (name: string, v: unknown, lo: number, hi: number) => {
+	if (typeof v !== 'number' || !Number.isFinite(v) || v < lo || v > hi)
+		throw new Error(`${name} must be a number between ${lo} and ${hi}, got ${JSON.stringify(v)}`);
+};
+
+/**
+ * Merge over the defaults, then refuse anything that would quantise to garbage. A plain spread is
+ * not enough: an explicit `undefined` overwrites a default rather than falling back to it, and a
+ * non-number reaches `adjust` as NaN, which snaps to black for every cell — a silent black sprite
+ * is the worst possible answer. An unknown `fit` is the same failure quieter, falling through
+ * `layout` to 'contain'.
+ */
+export function normalise({ pixel, ...options }: ImportOptions): Settings {
+	const opts = { ...DEFAULTS, ...(pixel ? PIXEL : null) };
+	for (const [k, v] of Object.entries(options))
+		if (v !== undefined) (opts as Record<string, unknown>)[k] = v;
+	if (!FITS.includes(opts.fit)) throw new Error(`bad fit ${JSON.stringify(opts.fit)} — use ${FITS.join(', ')}`);
+	range('alpha', opts.alpha, 0, 255);
+	// generous bounds: past these the pixels are flat, clipped or inverted, which is the frame
+	// effects' job (`invert`, `tint`) rather than a pre-quantize touch-up gone very wrong
+	range('contrast', opts.contrast, -1, 1);
+	range('saturation', opts.saturation, 0, 4);
+	opts.trim = !!opts.trim;
+	return opts;
+}
 
 /** Cap the intermediate buffer: a 6000x4000 photo would otherwise be a 96MB ImageData. */
 const MAX_SIDE = 1024;
@@ -142,7 +186,7 @@ export function sampleInto(
 	out: number[],
 	grid: number,
 	dest: Rect,
-	opts: Required<Omit<ImportOptions, 'fit' | 'trim'>>
+	opts: Omit<Settings, 'fit' | 'trim'>
 ) {
 	for (let cy = 0; cy < dest.h; cy++) {
 		const fy0 = src.y + (cy * src.h) / dest.h;
@@ -194,6 +238,10 @@ export function sampleInto(
 
 async function decode(source: ImageSource): Promise<ImageBitmap> {
 	if (typeof source === 'string') {
+		// `export_svg` hands back markup rather than a URL, and feeding it straight back in is the
+		// obvious round-trip. Without this it reaches fetch() and fails as a phantom CORS error.
+		if (source.trimStart().startsWith('<svg'))
+			return svgToBitmap(new Blob([source], { type: 'image/svg+xml' }));
 		// Covers data:, blob: and http(s). Going via a Blob means the canvas is never tainted —
 		// a cross-origin image without CORS headers fails here, at fetch, with a clear message.
 		let res: Response;
@@ -226,6 +274,7 @@ async function decode(source: ImageSource): Promise<ImageBitmap> {
  * fails — with an opaque browser message. Name the likely cause instead.
  */
 async function toBitmap(blob: Blob, fromDataUrl: boolean): Promise<ImageBitmap> {
+	if (blob.type.includes('svg')) return svgToBitmap(blob);
 	try {
 		return await createImageBitmap(blob);
 	} catch {
@@ -237,13 +286,43 @@ async function toBitmap(blob: Blob, fromDataUrl: boolean): Promise<ImageBitmap> 
 	}
 }
 
+/**
+ * SVG through an `<img>` rather than straight to `createImageBitmap`, which does not take an SVG
+ * blob in every browser. This app exports SVG, so re-importing your own file has to work.
+ */
+async function svgToBitmap(blob: Blob): Promise<ImageBitmap> {
+	const url = URL.createObjectURL(blob);
+	const img = new Image();
+	try {
+		img.src = url;
+		await img.decode();
+	} catch {
+		throw new Error('that SVG could not be rendered — it may be malformed');
+	} finally {
+		URL.revokeObjectURL(url);
+	}
+	try {
+		return await createImageBitmap(img);
+	} catch {
+		// The one realistic failure once decode() has succeeded: an SVG carrying only a viewBox has
+		// no intrinsic size to rasterise at, and `naturalWidth` does not report that — Chrome hands
+		// back a default rather than 0, so only the attempt tells you.
+		// ponytail: refuse and say so rather than invent a size. Parse the viewBox for an aspect
+		// ratio if importing width/height-less SVGs ever stops being a rare case.
+		throw new Error(
+			'that SVG has no width and height on its <svg> tag, so there is nothing to size the import from — add them, or export it as a PNG first'
+		);
+	}
+}
+
 /** Decode an image and reduce it to one palette index per grid cell. */
 export async function imageToPixels(
 	source: ImageSource,
 	grid: number,
 	options: ImportOptions = {}
 ): Promise<number[]> {
-	const opts = { ...DEFAULTS, ...options };
+	// before the decode, so a bad option fails instantly instead of after a fetch
+	const opts = normalise(options);
 	const bitmap = await decode(source);
 	try {
 		const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
