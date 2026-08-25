@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyFx, compose, patchEffects, progress, readTrail, steps } from './fx.ts';
+import { applyFx, compose, patchEffects, progress, readArrangement, readFx, readTrail, steps } from './fx.ts';
 import { PALETTE } from './palette.ts';
 
 // 2x2 corners, so every geometric effect moves a distinguishable pixel:
@@ -265,10 +265,32 @@ test('patchEffects merges fx, so setting one key keeps the others', () => {
 test('patchEffects normalises through the same validators the format uses', () => {
 	const frame = { sprite: 'a', ms: 100 };
 	assert.equal(patchEffects(frame, { fx: { rotate: 0 } }).fx, undefined, 'a no-op turn is no fx');
-	assert.deepEqual(patchEffects(frame, { fx: { rotate: 45 } }).fx, undefined, 'not a 30° step');
+	assert.throws(
+		() => patchEffects(frame, { fx: { rotate: 45 } }),
+		/multiple of 30/,
+		'a bad rotate fails at write time'
+	);
 	assert.deepEqual(patchEffects(frame, { trail: 4 }).trail, { frames: 4 }, 'shorthand');
 	assert.deepEqual(patchEffects(frame, { transition: 'vanish' }).transition, { kind: 'vanish' });
 	assert.equal(patchEffects(frame, { transition: 'melt' }).transition, undefined);
+});
+
+test('readFx is lenient on load and strict on write', () => {
+	assert.deepEqual(readFx({ invert: true, hue: 'teal', rotate: 45, wat: 1 }), { invert: true });
+	assert.deepEqual(readFx({ rotate: 90 }, { strict: true }), { rotate: 90 });
+	assert.equal(readFx({ rotate: 0 }, { strict: true }), undefined, 'a no-op turn is still no fx');
+	assert.throws(() => readFx({ rotate: 45 }, { strict: true }), /multiple of 30/);
+	assert.throws(() => readFx({ hue: 'teal' }, { strict: true }), /red, green, blue, cyan, yellow, magenta/);
+	assert.throws(() => readFx({ wat: 1 }, { strict: true }), /unknown key "wat"/);
+});
+
+test('readArrangement is lenient on load and strict on write', () => {
+	assert.deepEqual(readArrangement({ w: { rotate: 45, hue: 'teal', dx: 2 } }), { w: { dx: 2 } });
+	assert.deepEqual(readArrangement({ w: { rotate: 90, wrap: true } }, { strict: true }), {
+		w: { rotate: 90, wrap: true }
+	});
+	assert.throws(() => readArrangement({ w: { rotate: 45 } }, { strict: true }), /multiple of 30/);
+	assert.throws(() => readArrangement({ w: { spin: 1 } }, { strict: true }), /unknown key "spin"/);
 });
 
 test('a layer patch merges key by key, and does not wipe the keys beside it', () => {

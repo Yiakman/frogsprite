@@ -1,6 +1,6 @@
 import { PALETTE, ramp as rampOf, toIndex, TRANSPARENT } from '../core/palette.ts';
 import * as ex from '../io/export.ts';
-import { compose, patchEffects, readArrangement, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
+import { compose, patchEffects, readArrangement, readFx, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
 import * as history from '../core/history.ts';
 import * as storage from '../io/storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
@@ -1013,10 +1013,15 @@ const api = {
 				throw new Error(
 					`frame "${f.sprite}" has a bad trail — use a frame count, or { frames, fade } with 0 < fade < 1`
 				);
-			if (f.layers !== undefined && !readArrangement(f.layers))
-				throw new Error(
-					`frame "${f.sprite}" has a bad layers arrangement — use { layerName: { dx, dy, wrap, hidden } }, or { layerName: dx }`
-				);
+			try {
+				if (f.fx != null) readFx(f.fx, { strict: true });
+				if (f.layers !== undefined && !readArrangement(f.layers, { strict: true }))
+					throw new Error(
+						`bad layers arrangement — use { layerName: { dx, dy, wrap, hidden } }, or { layerName: dx }`
+					);
+			} catch (e) {
+				throw new Error(`frame "${f.sprite}": ${e instanceof Error ? e.message : e}`);
+			}
 			// A key we do not know is nearly always a near-miss for one we do — `layer` for `layers`
 			// being the obvious one. Dropping it silently taught nothing at precisely the moment
 			// something needed teaching, so it is an error now.

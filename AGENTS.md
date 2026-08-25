@@ -276,9 +276,8 @@ layers: { wheel: { rotate: 30 * i, cx: 48, cy: 96 } }   // on its own hub
 ```
 
 Two things this shares with `rotate()` itself, and one it does not. It takes **multiples of 30 only**
-— an arrangement is validated exactly as `fx` is, so a `rotate: 45` is *dropped on the way in* and you
-get a wheel that never turns rather than an error. And `cx`/`cy` are one centre, so a bicycle needs
-one layer per hub.
+— an arrangement is validated exactly as `fx` is, so a `rotate: 45` **throws** rather than giving you
+a wheel that never turns. And `cx`/`cy` are one centre, so a bicycle needs one layer per hub.
 
 What it does **not** share is a guard. `scroll_layer` and `cycle_layers` both refuse a loop that would
 not close; a per-frame `rotate` has the identical failure — land mid-turn and the last frame snaps
@@ -597,9 +596,10 @@ rotate → displace.
 | `dx`, `dy` | displace; anything pushed off the edge is dropped |
 | `flipX`, `flipY` | mirror left↔right / top↔bottom |
 
-Anything unrecognised is dropped on the way in — `rotate: 45` and `hue: 'teal'` simply do not
-survive, rather than failing the whole frame. `rotate: 0` is dropped too, being a no-op, so don't
-expect it back from `state()`.
+Anything unrecognised **throws** at `set_animation` / `set_effects` — `rotate: 45` and `hue: 'teal'`
+fail in that call, naming what is legal, rather than producing a wheel that never turns. A load of
+damaged data still strips them. `rotate: 0` is dropped as a no-op, so don't expect it back from
+`state()`.
 
 #### Motion trails
 
