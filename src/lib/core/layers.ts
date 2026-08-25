@@ -8,7 +8,7 @@
 // Layers are non-destructive editing *within* one sprite: an outline you can redraw without
 // touching the fill underneath. They are deliberately not per-frame — a `Frame` names a sprite, not
 // a layer set (see types.ts), so "same body, different arm per frame" is still separate sprites.
-import { applyFx, blank, rotate as spin, stamp, type GridSize, type Pixels } from './grid.ts';
+import { applyFx, blank, rotate as spin, stamp, upscale, type GridSize, type Pixels } from './grid.ts';
 import type { Arrangement, Layer, Linked, Painted, Sprite } from './types.ts';
 
 /** What a sprite's first layer is called, and what every pre-layers sprite migrates into. */
@@ -21,6 +21,30 @@ export const newLayer = (name: string, grid: GridSize): Painted => ({ name, pixe
  * else uses — a bare `'from' in layer` narrows just as well, but this says why.
  */
 export const isLinked = (layer: Layer): layer is Linked => 'from' in layer;
+
+/**
+ * The buffer a painting verb writes into, or a refusal. A linked layer has none — its art lives in
+ * the sprite it names — so this is where every painting verb stops, with the two ways forward.
+ *
+ * Here rather than in commands.ts for the reason selection.ts gives about its own two decisions:
+ * this is a *policy*, node cannot load commands.ts to test one, and an untested policy in that file
+ * is how the first version of this shipped returning itself instead of the pixels — infinite
+ * recursion that `tsc` accepts silently, because it types an unconditionally self-calling function
+ * as `never` and has nothing to say about it.
+ *
+ * Resolve it **once** per command and reuse the result. It reads like a property and is a guard, so
+ * a call left inside a per-pixel loop costs a proxy trap per pixel for no reason.
+ */
+export function paintable(layer: Layer): Uint8Array {
+	if (isLinked(layer))
+		throw new Error(
+			`"${layer.name}" shows sprite "${layer.from}", so it has no pixels of its own. ` +
+				`Paint into "${layer.from}" and every layer linked to it follows. To move this one, ` +
+				`link_layer("${layer.from}", { name: "${layer.name}", dx, dy }). To turn it into ` +
+				`pixels you can edit here, unlink_layer("${layer.name}").`
+		);
+	return layer.pixels;
+}
 
 /**
  * The stack flattened to the pixels you actually see: bottom to top, `TRANSPARENT` is the hole,
@@ -132,6 +156,71 @@ export function links(sprite: Sprite, sprites: Sprite[]): Set<string> {
 		for (const n of links(src, sprites.filter((s) => s.name !== sprite.name))) out.add(n);
 	}
 	return out;
+}
+
+/**
+ * One layer's pixels as they are drawn: its own buffer, or the composited picture of the sprite it
+ * links to, placed at the link's own offset.
+ *
+ * The link case goes back through `flatten` with a one-layer synthetic sprite rather than reading
+ * `dx`/`dy`/`wrap` here, so there is exactly one piece of code that knows how a link is positioned.
+ * A second copy of that arithmetic is how a read starts disagreeing with what is on screen.
+ */
+export const shownAs = (layer: Layer, grid: number, sprites: Sprite[]): Uint8Array =>
+	isLinked(layer) ? flatten({ name: '', layers: [layer] }, grid, undefined, sprites) : layer.pixels;
+
+/**
+ * Where a new layer goes in a stack: explicit, or relative to the active one. `active` is a cursor
+ * some earlier `select_layer` moved, which is exactly how a stack ends up in the wrong order with
+ * nothing on screen to explain it — so a caller building a stack over several calls should say
+ * where it means. Shared by `new_layer` and `link_layer` so the two cannot drift apart.
+ *
+ * Returns a splice index, so `layers.length` means "on top" and `0` means "at the back".
+ */
+export function placeAt(
+	sprite: Sprite,
+	active: string,
+	{ at, above, below }: { at?: 'top' | 'bottom'; above?: string; below?: string } = {}
+): number {
+	if (at === 'top') return sprite.layers.length;
+	if (at === 'bottom') return 0;
+	// through layerOf, so a name that is not there throws with the stack rather than landing at 0
+	if (above) return sprite.layers.findIndex((l) => l.name === layerOf(sprite, above).name) + 1;
+	if (below) return sprite.layers.findIndex((l) => l.name === layerOf(sprite, below).name);
+	return sprite.layers.findIndex((l) => l.name === active) + 1;
+}
+
+/**
+ * A detached copy of a sprite, layer for layer, optionally into a larger grid. The one place
+ * cloning and cross-set copying share, so the two cannot drift apart.
+ *
+ * `link` says whether a linked layer survives as a link. It is *set identity* that decides — not the
+ * grid size, and not which verb called: `from` names a sprite in the source set, so a copy that
+ * stays in that set keeps a name that still resolves, and one that leaves it keeps a name that would
+ * bind to a stranger or to nothing. A cross-set copy therefore bakes. Deciding on `from === into`
+ * instead is wrong twice over: a same-set copy has equal grids and would bake, and a 32-set to
+ * 32-set copy also has equal grids but must not stay linked.
+ */
+export function copyOfSprite(
+	src: Sprite,
+	to: string,
+	from: GridSize,
+	into: GridSize,
+	sprites: Sprite[],
+	link: boolean
+): Sprite {
+	return {
+		name: to,
+		layers: src.layers.map((l) => {
+			if (isLinked(l) && link) return { ...l };
+			const px = shownAs(l, from, sprites);
+			return {
+				name: l.name,
+				pixels: from === into ? px.slice() : upscale(px, from, into),
+				...(l.hidden && { hidden: true })
+			};
+		})
+	};
 }
 
 // --- scrolling ---------------------------------------------------------------

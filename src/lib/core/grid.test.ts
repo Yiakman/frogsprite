@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { GRIDS, SIDES, reflect, rotate, shift, stamp, tile, upscale } from './grid.ts';
+import { GRIDS, put, reflect, rotate, shift, SIDES, stamp, tile, upscale } from './grid.ts';
 
 /** 4x4 grid from rows of digits, for readable expectations. */
 const grid4 = (...rows: string[]) => rows.flatMap((r) => [...r].map(Number));
@@ -281,4 +281,20 @@ test('tile from an offset window', () => {
 	const px = Uint8Array.from([9, 1, 2, 9, 9, 3, 4, 9, 9, 5, 6, 9, 9, 7, 8, 9]);
 	tile(px, 4, 2, 1); // take columns 1..2
 	assert.deepEqual(Array.from(px).slice(0, 4), [1, 2, 1, 2]);
+});
+
+test('put writes one pixel at row-major position', () => {
+	const px = new Uint8Array(9);
+	put(px, 3, 2, 1, 7);
+	assert.equal(px[1 * 3 + 2], 7);
+	assert.equal(px.reduce((n, p) => n + (p ? 1 : 0), 0), 1, 'and nothing else');
+});
+
+test('put refuses a coordinate off the grid instead of wrapping into the next row', () => {
+	// pixels[y * grid + x] with x === grid is the first pixel of row y+1 — it draws something
+	// plausible in the wrong place, which in a 128-wide buffer is very hard to spot
+	const px = new Uint8Array(9);
+	for (const [x, y] of [[3, 0], [0, 3], [-1, 0], [0, -1], [1.5, 0]])
+		assert.throws(() => put(px, 3, x, y, 7), /outside the 3x3 grid/, `(${x},${y})`);
+	assert.deepEqual(Array.from(px), [0, 0, 0, 0, 0, 0, 0, 0, 0], 'nothing written');
 });

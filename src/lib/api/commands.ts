@@ -4,8 +4,9 @@ import { compose, patchEffects, readArrangement, readFx, readTrail, readTransiti
 import * as history from '../core/history.ts';
 import * as storage from '../io/storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
-import { GRIDS, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
-import { BASE, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, period as periodOf, poseAt, scrollStep } from '../core/layers.ts';
+import { GRIDS, put, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
+import { freeName, taken } from '../core/names.ts';
+import { BASE, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, period as periodOf, placeAt, poseAt, scrollStep, shownAs } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
 import type { Point } from '../core/shapes.ts';
@@ -20,18 +21,6 @@ type RotateOpts = { cx?: number; cy?: number; sprite?: string };
 
 /** Everything a frame may carry. `set_animation` refuses anything else rather than dropping it. */
 const FRAME_KEYS = new Set(['sprite', 'ms', 'fx', 'trail', 'transition', 'layers']);
-
-const taken = (list: { name: string }[], name: string, what: string) => {
-	if (!name || typeof name !== 'string') throw new Error(`${what} needs a name`);
-	if (list.some((x) => x.name === name)) throw new Error(`${what} "${name}" already exists`);
-};
-
-/** `base`, or `base-2`, `base-3`… — the first name nothing in `list` has taken. */
-function freeName(list: { name: string }[], base: string) {
-	let name = base;
-	for (let n = 2; list.some((x) => x.name === name); n++) name = `${base}-${n}`;
-	return name;
-}
 
 // ---- undo ------------------------------------------------------------------
 // The one place that turns live state into a history entry and back.
@@ -154,77 +143,7 @@ function target(name?: string, layer?: string): Target {
 const seen = (t: { sprite: Sprite; grid: GridSize; sprites: Sprite[] }) =>
 	flatten(t.sprite, t.grid, undefined, t.sprites);
 
-/** One layer's pixels as drawn — its own buffer, or what the sprite it links to looks like. */
-const shownAs = (layer: Layer, grid: GridSize, sprites: Sprite[]): Uint8Array =>
-	isLinked(layer)
-		? // one synthetic sprite, so the link's own dx/dy/wrap are applied by the same code that
-			// applies them on screen rather than by a second copy of that arithmetic here
-			flatten({ name: '', layers: [layer] }, grid, undefined, sprites)
-		: layer.pixels;
 
-/**
- * The buffer a painting verb writes into. A linked layer has none — its art lives in the sprite it
- * names — so this is where the twenty painting verbs stop, with the two ways forward spelled out.
- * Reads never come through here: they go through `seen` or `shownAs`, which resolve instead.
- */
-function buffer(t: { layer: Layer }): Uint8Array {
-	if (isLinked(t.layer))
-		throw new Error(
-			`"${t.layer.name}" shows sprite "${t.layer.from}", so it has no pixels of its own. ` +
-				`Paint into "${t.layer.from}" and every layer linked to it follows. To move this one, ` +
-				`link_layer("${t.layer.from}", { name: "${t.layer.name}", dx, dy }). To turn it into ` +
-				`pixels you can edit here, unlink_layer("${t.layer.name}").`
-		);
-	return t.layer.pixels;
-}
-
-/**
- * Where a new layer goes: explicit, or relative to the active one — and the active layer is a cursor
- * some earlier select_layer moved, which is exactly how a stack ends up in the wrong order with
- * nothing on screen to explain it. Shared by `new_layer` and `link_layer` so the two cannot drift.
- */
-function placeAt(
-	t: { sprite: Sprite; layer: Layer },
-	{ at, above, below }: { at?: 'top' | 'bottom'; above?: string; below?: string }
-): number {
-	const { sprite } = t;
-	if (at === 'top') return sprite.layers.length;
-	if (at === 'bottom') return 0;
-	if (above) return sprite.layers.findIndex((l) => l.name === layerOf(sprite, above).name) + 1;
-	if (below) return sprite.layers.findIndex((l) => l.name === layerOf(sprite, below).name);
-	return sprite.layers.findIndex((l) => l.name === t.layer.name) + 1;
-}
-
-/**
- * A detached copy of a sprite, layer for layer, optionally into a larger grid. The one place
- * `clone_sprite` and `copy_sprite` share, so cross-set copying and same-set cloning cannot drift.
- *
- * `link` says whether a linked layer survives as a link. It is *set identity* that decides, not the
- * grid and not the calling verb: `from` names a sprite in the source set, so a copy that stays in
- * that set keeps a name that still resolves, and one that leaves it keeps a name that would bind to
- * a stranger or to nothing. A cross-set copy therefore bakes, the way `stamp` does.
- */
-function copyOfSprite(
-	src: Sprite,
-	to: string,
-	from: GridSize,
-	into: GridSize,
-	sprites: Sprite[],
-	link: boolean
-): Sprite {
-	return {
-		name: to,
-		layers: src.layers.map((l) => {
-			if (isLinked(l) && link) return { ...l };
-			const px = shownAs(l, from, sprites);
-			return {
-				name: l.name,
-				pixels: from === into ? px.slice() : upscale(px, from, into),
-				...(l.hidden && { hidden: true })
-			};
-		})
-	};
-}
 
 /** The set a copy reads from: named, in a named package, else whatever is active. */
 function source(set?: string, pkg?: string): SpriteSet {
@@ -348,12 +267,6 @@ function animOf(name?: string): Animation {
 	return anim;
 }
 
-function put(pixels: Uint8Array, grid: number, x: number, y: number, color: Color) {
-	if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= grid || y >= grid)
-		throw new Error(`(${x},${y}) is outside the ${grid}x${grid} grid`);
-	pixels[y * grid + x] = toIndex(color);
-}
-
 const api = {
 	// ---- structure -------------------------------------------------------
 	new_package: mut(function (name: string) {
@@ -415,26 +328,28 @@ const api = {
 	// ---- painting --------------------------------------------------------
 	paint_pixel: mut(function (x: number, y: number, color: Color, sprite?: string) {
 		const t = target(sprite);
-		put(buffer(t), t.grid, x, y, color);
+		put(paintable(t.layer), t.grid, x, y, toIndex(color));
 	}),
 
 	/** `color` is one colour for the whole row, or an array of `grid` colours (null = leave as-is). */
 	paint_row: mut(function (y: number, color: Color | Color[], sprite?: string) {
 		const t = target(sprite);
+		const px = paintable(t.layer); // once, not once per pixel — it is a guard, not a property
 		for (let x = 0; x < t.grid; x++) {
 			const c = Array.isArray(color) ? color[x] : color;
 			if (Array.isArray(color) && c === null) continue;
-			put(buffer(t), t.grid, x, y, c);
+			put(px, t.grid, x, y, toIndex(c));
 		}
 	}),
 
 	/** `color` is one colour for the whole column, or an array of `grid` colours (null = leave as-is). */
 	paint_column: mut(function (x: number, color: Color | Color[], sprite?: string) {
 		const t = target(sprite);
+		const px = paintable(t.layer); // once, not once per pixel — it is a guard, not a property
 		for (let y = 0; y < t.grid; y++) {
 			const c = Array.isArray(color) ? color[y] : color;
 			if (Array.isArray(color) && c === null) continue;
-			put(buffer(t), t.grid, x, y, c);
+			put(px, t.grid, x, y, toIndex(c));
 		}
 	}),
 
@@ -444,7 +359,7 @@ const api = {
 	 */
 	paint_map: mut(function (rows: string[], legend: Record<string, Color>, sprite?: string) {
 		const t = target(sprite);
-		const px = buffer(t); // resolved once: this writes per character, not per call
+		const px = paintable(t.layer); // resolved once: this writes per character, not per call
 		if (rows.length > t.grid) throw new Error(`${rows.length} rows given, grid is ${t.grid}`);
 		const resolved = Object.fromEntries(
 			Object.entries(legend).map(([k, v]) => [k, toIndex(v)])
@@ -461,7 +376,7 @@ const api = {
 
 	clear: mut(function (color: Color = null, sprite?: string) {
 		const t = target(sprite);
-		buffer(t).fill(toIndex(color));
+		paintable(t.layer).fill(toIndex(color));
 	}),
 
 	/**
@@ -492,13 +407,13 @@ const api = {
 			const sprite = set.sprites[set.sprites.length - 1];
 			name = sprite.name;
 			// just made by newLayer, so it is painted — but say so, since `layers[0]` is a union
-			dest = { name: BASE, pixels: buffer({ layer: sprite.layers[0] }) };
+			dest = { name: BASE, pixels: paintable(sprite.layers[0]) };
 			editor.stop(); // otherwise a running animation hides the sprite we just made
 			editor.sel = { ...editor.sel, sprite: newSprite, layer: BASE };
 		} else {
 			const t = target(into, layer);
 			name = t.sprite.name;
-			dest = { name: t.layer.name, pixels: buffer(t) };
+			dest = { name: t.layer.name, pixels: paintable(t.layer) };
 		}
 		const pixels = await imageToPixels(source, set.grid, rest);
 		dest.pixels.set(pixels);
@@ -553,7 +468,7 @@ const api = {
 		const t = target(sprite, layer);
 		if (src.name === t.sprite.name)
 			throw new Error(`stamp("${from}") would read and write the same sprite — clone_sprite it first`);
-		const painted = blit(buffer(t), flatten(src, set.grid, undefined, set.sprites), set.grid, dx, dy, wrap);
+		const painted = blit(paintable(t.layer), flatten(src, set.grid, undefined, set.sprites), set.grid, dx, dy, wrap);
 		return { sprite: t.sprite.name, layer: t.layer.name, from, painted };
 	}),
 
@@ -566,13 +481,13 @@ const api = {
 		if (!SIDES.includes(from))
 			throw new Error(`reflect needs one of ${SIDES.join(', ')} (got ${JSON.stringify(from)})`);
 		const t = target(sprite);
-		reflectHalf(buffer(t), t.grid, from);
+		reflectHalf(paintable(t.layer), t.grid, from);
 	}),
 
 	/** Turn a sprite in steps of 30°, positive clockwise. See AGENTS.md §Painting. */
 	rotate: mut(function (angle: number, { cx, cy, sprite }: RotateOpts = {}) {
 		const t = target(sprite);
-		const px = buffer(t);
+		const px = paintable(t.layer);
 		const lost = spin(px, t.grid, angle, cx, cy);
 		const mid = (t.grid - 1) / 2;
 		return {
@@ -597,7 +512,7 @@ const api = {
 		// a bare string is the sprite, which is how every other painting verb spells it
 		const o = typeof opts === 'string' ? { sprite: opts } : opts;
 		const t = target(o.sprite, o.layer);
-		slide(buffer(t), t.grid, dx, dy, o.wrap ?? false);
+		slide(paintable(t.layer), t.grid, dx, dy, o.wrap ?? false);
 	}),
 
 	// ---- deleting --------------------------------------------------------
@@ -709,7 +624,7 @@ const api = {
 		const sprite = t.sprite;
 		const named = name ?? freeName(sprite.layers, `layer-${sprite.layers.length}`);
 		taken(sprite.layers, named, 'layer');
-		sprite.layers.splice(placeAt(t, { at, above, below }), 0, newLayer(named, t.grid));
+		sprite.layers.splice(placeAt(t.sprite, t.layer.name, { at, above, below }), 0, newLayer(named, t.grid));
 		editor.sel = { ...editor.sel, layer: named };
 		return { sprite: sprite.name, layer: named, layers: sprite.layers.map((l) => l.name) };
 	}),
@@ -775,7 +690,7 @@ const api = {
 		}
 		const named = name ?? freeName(t.sprite.layers, from);
 		taken(t.sprite.layers, named, 'layer');
-		t.sprite.layers.splice(placeAt(t, { at, above, below }), 0, { name: named, from, ...geometry });
+		t.sprite.layers.splice(placeAt(t.sprite, t.layer.name, { at, above, below }), 0, { name: named, from, ...geometry });
 		editor.sel = { ...editor.sel, layer: named };
 		return { sprite: t.sprite.name, layer: named, from, ...geometry, updated: false };
 	}),
@@ -897,7 +812,7 @@ const api = {
 	 */
 	tile_layer: mut(function (layer?: string, { period, from = 0, sprite }: { period: number; from?: number; sprite?: string } = {} as any) {
 		const t = target(sprite, layer);
-		const px = buffer(t);
+		const px = paintable(t.layer);
 		const copies = tileAcross(px, t.grid, period, from);
 		// read the repeat back rather than trusting the argument — this is the number scroll_layer
 		// will measure, so returning it closes the loop between the two commands
@@ -1572,7 +1487,7 @@ const api = {
 		if (index === TRANSPARENT)
 			throw new Error('a permanent silhouette needs a colour — null would erase the sprite');
 		const t = target(sprite);
-		const px = buffer(t);
+		const px = paintable(t.layer);
 		let painted = 0;
 		for (let i = 0; i < px.length; i++) {
 			if (px[i] === TRANSPARENT) continue;
@@ -1663,47 +1578,47 @@ const shapes = {
 	 */
 	line: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { width = 1, sprite }: ShapeOpts & { width?: number } = {}) {
 		const t = target(sprite);
-		const painted = shape.line(buffer(t), t.grid, x0, y0, x1, y1, toIndex(color), width);
+		const painted = shape.line(paintable(t.layer), t.grid, x0, y0, x1, y1, toIndex(color), width);
 		return { sprite: t.sprite.name, shape: 'line', painted };
 	}),
 
 	/** Rectangle between two opposite corners, given in either order — the non-square one. */
 	rect: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.rect(buffer(t), t.grid, x0, y0, x1, y1, toIndex(color), fill);
+		const painted = shape.rect(paintable(t.layer), t.grid, x0, y0, x1, y1, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'rect', painted };
 	}),
 
 	/** Axis-aligned square from its top-left corner. */
 	square: mut(function (x: number, y: number, size: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.square(buffer(t), t.grid, x, y, size, toIndex(color), fill);
+		const painted = shape.square(paintable(t.layer), t.grid, x, y, size, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'square', painted };
 	}),
 
 	circle: mut(function (cx: number, cy: number, r: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.circle(buffer(t), t.grid, cx, cy, r, toIndex(color), fill);
+		const painted = shape.circle(paintable(t.layer), t.grid, cx, cy, r, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'circle', painted };
 	}),
 
 	/** Circle with separate radii — the way to draw a body, a head or an eye that isn't round. */
 	ellipse: mut(function (cx: number, cy: number, rx: number, ry: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.ellipse(buffer(t), t.grid, cx, cy, rx, ry, toIndex(color), fill);
+		const painted = shape.ellipse(paintable(t.layer), t.grid, cx, cy, rx, ry, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'ellipse', painted };
 	}),
 
 	triangle: mut(function (x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.triangle(buffer(t), t.grid, x0, y0, x1, y1, x2, y2, toIndex(color), fill);
+		const painted = shape.triangle(paintable(t.layer), t.grid, x0, y0, x1, y1, x2, y2, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'triangle', painted };
 	}),
 
 	/** Any closed shape: `polygon([[2, 1], [13, 6], [7, 14]], '#22aa33')`. Three points or more. */
 	polygon: mut(function (points: Point[], color: Color, { fill = true, sprite }: ShapeOpts = {}) {
 		const t = target(sprite);
-		const painted = shape.polygon(buffer(t), t.grid, points, toIndex(color), fill);
+		const painted = shape.polygon(paintable(t.layer), t.grid, points, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'polygon', painted };
 	})
 };

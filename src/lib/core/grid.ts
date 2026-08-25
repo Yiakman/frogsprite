@@ -79,6 +79,20 @@ export function applyFx(pixels: Pixels, grid: number, fx?: Fx): Uint8Array {
  * Returns how many cells it painted. Both buffers are the same grid — to cross grids, `upscale`
  * first.
  */
+/**
+ * Write one pixel, refusing a coordinate outside the grid rather than silently wrapping into the
+ * next row — `pixels[y * grid + x]` with x = grid is the first pixel of row y+1, which draws
+ * something plausible in the wrong place and is very hard to spot in a 128-wide buffer.
+ *
+ * Takes a palette index, not a colour: everything in this file works on indices, and resolving the
+ * colour in the caller keeps it out of per-pixel loops.
+ */
+export function put(pixels: Pixels, grid: number, x: number, y: number, index: number): void {
+	if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= grid || y >= grid)
+		throw new Error(`(${x},${y}) is outside the ${grid}x${grid} grid`);
+	pixels[y * grid + x] = index;
+}
+
 export function stamp(
 	dst: Pixels,
 	src: Pixels,

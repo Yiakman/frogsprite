@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BASE, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, period, poseAt, scrollStep } from './layers.ts';
+import { BASE, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, period, placeAt, poseAt, scrollStep, shownAs } from './layers.ts';
 import type { Linked, Painted, Sprite } from './types.ts';
 
 // typed as Painted rather than Layer so tests can reach `.pixels` — this factory only ever builds
@@ -411,4 +411,114 @@ test('isLinked narrows a layer to the one that has pixels', () => {
 	};
 	assert.equal(isLinked(s.layers[0]), false);
 	assert.equal(isLinked(s.layers[1]), true);
+});
+
+test('paintable hands back the layer’s own buffer, not a copy and not itself', () => {
+	// The regression this exists for: the first version of paintable returned `paintable(t)` instead
+	// of the pixels. `tsc` accepts that silently — it types an unconditionally self-calling function
+	// as `never` — so only running it finds the stack overflow. This is that run, under `npm test`.
+	const s = sprite(['layer-0', [1, 2, 3, 4]]);
+	const px = paintable(s.layers[0]);
+	assert.equal(px, s.layers[0].pixels, 'the live buffer, so a paint verb writes where it is seen');
+	px[0] = 9;
+	assert.equal(s.layers[0].pixels[0], 9, 'writes land on the layer');
+});
+
+test('paintable refuses a linked layer and names both ways forward', () => {
+	const s = linked('scene', { name: 'tree-2', from: 'tree' });
+	assert.throws(
+		() => paintable(s.layers[0]),
+		(e: Error) =>
+			/link_layer\("tree", \{ name: "tree-2"/.test(e.message) &&
+			/unlink_layer\("tree-2"\)/.test(e.message),
+		'an agent that hits this needs to be told how to move it AND how to bake it'
+	);
+});
+
+// --- helpers that used to live in the untestable file ------------------------
+
+test('shownAs gives a painted layer its own live buffer', () => {
+	const s = sprite(['a', [1, 2, 3, 4]]);
+	assert.equal(shownAs(s.layers[0], 2, []), s.layers[0].pixels, 'the buffer itself, not a copy');
+});
+
+test('shownAs resolves a link at its own offset, matching what flatten draws', () => {
+	const t = sprite(['t', [5, 0, 0, 0]]);
+	t.name = 'tree';
+	const s = linked('scene', { name: 'a', from: 'tree', dx: 1 });
+	// the point of routing through flatten: a read and the canvas cannot disagree about placement
+	assert.deepEqual(Array.from(shownAs(s.layers[0], 2, [t, s])), [0, 5, 0, 0]);
+	assert.deepEqual(Array.from(shownAs(s.layers[0], 2, [t, s])), Array.from(flatten(s, 2, undefined, [t, s])));
+});
+
+test('shownAs on an unresolvable link is blank rather than a throw', () => {
+	const s = linked('scene', { from: 'gone' });
+	assert.deepEqual(Array.from(shownAs(s.layers[0], 2, [s])), [0, 0, 0, 0]);
+});
+
+test('placeAt puts a layer above the active one by default', () => {
+	const s = sprite(['back', [0]], ['mid', [0]], ['front', [0]]);
+	assert.equal(placeAt(s, 'back'), 1, 'above back');
+	assert.equal(placeAt(s, 'front'), 3, 'above front is the top');
+});
+
+test('placeAt honours at/above/below over the active layer', () => {
+	const s = sprite(['back', [0]], ['mid', [0]], ['front', [0]]);
+	assert.equal(placeAt(s, 'mid', { at: 'top' }), 3);
+	assert.equal(placeAt(s, 'mid', { at: 'bottom' }), 0);
+	assert.equal(placeAt(s, 'front', { above: 'back' }), 1, 'above wins over the cursor');
+	assert.equal(placeAt(s, 'front', { below: 'mid' }), 1);
+});
+
+test('placeAt throws on a name that is not in the stack', () => {
+	const s = sprite(['back', [0]]);
+	assert.throws(() => placeAt(s, 'back', { above: 'nope' }), /no layer "nope"/);
+});
+
+/** An 8x8 painted sprite (the smallest real GridSize) with `at` set to `ink`. */
+const grid8 = (named: string, at: number, ink = 5): Sprite & { layers: Painted[] } => {
+	const px = new Array(64).fill(0);
+	px[at] = ink;
+	const s = sprite(['a', px]);
+	s.name = named;
+	return s;
+};
+
+test('copyOfSprite detaches the pixels it copies', () => {
+	const s = grid8('tree', 0);
+	const copy = copyOfSprite(s, 'b', 8, 8, [s], true);
+	assert.equal(copy.name, 'b');
+	(copy.layers[0] as Painted).pixels[0] = 9;
+	assert.equal(s.layers[0].pixels[0], 5, 'the copy owns its buffer');
+});
+
+test('copyOfSprite keeps a link when link is true, bakes it when false', () => {
+	const t = grid8('tree', 0);
+	const s = linked('scene', { name: 'a', from: 'tree', dx: 1 });
+
+	const kept = copyOfSprite(s, 'copy', 8, 8, [t, s], true);
+	assert.deepEqual(kept.layers[0], { name: 'a', from: 'tree', dx: 1 }, 'still a link');
+
+	const baked = copyOfSprite(s, 'copy', 8, 8, [t, s], false);
+	assert.equal(isLinked(baked.layers[0]), false, 'now pixels');
+	// baked at the link's own offset — dropping dx here would jump the art back to 0,0
+	assert.deepEqual(Array.from((baked.layers[0] as Painted).pixels.slice(0, 3)), [0, 5, 0]);
+});
+
+test('copyOfSprite upscales a baked link into a larger grid', () => {
+	const t = grid8('tree', 0);
+	const s = linked('scene', { name: 'a', from: 'tree' });
+	const up = copyOfSprite(s, 'copy', 8, 16, [t, s], false);
+	const px = (up.layers[0] as Painted).pixels;
+	assert.equal(px.length, 256, 'a 16x16 buffer');
+	// one source pixel became an exact 2x2 block, nothing resampled
+	assert.deepEqual([px[0], px[1], px[16], px[17]], [5, 5, 5, 5]);
+	assert.equal(px[2], 0, 'and stops there');
+});
+
+test('copyOfSprite carries hidden across, and drops it when false', () => {
+	const s = sprite(['a', new Array(64).fill(1), true], ['b', new Array(64).fill(2)]);
+	const copy = copyOfSprite(s, 'c', 8, 8, [s], true);
+	assert.equal(copy.layers[0].hidden, true);
+	assert.equal('hidden' in copy.layers[1], false, 'no hidden:false to serialise');
 });
