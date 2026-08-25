@@ -407,10 +407,14 @@ const api = {
 	import_image: mut(async function (source: ImageSource, opts: ImportOptions & { sprite?: string; newSprite?: string; layer?: string } = {}) {
 		const set = editor.requireSet();
 		const { sprite: into, newSprite, layer, ...rest } = opts;
+		// Name clash first, decode second, document last. Decoding can fail long after the call —
+		// CORS, a truncated data URL, a corrupt file — and a sprite created up front would outlive
+		// that rejection as an empty orphan, selected, holding an undo step nobody asked for.
+		if (newSprite) taken(set.sprites, newSprite, 'sprite');
+		const pixels = await imageToPixels(source, set.grid, rest);
 		let name: string;
 		let dest: Layer;
 		if (newSprite) {
-			taken(set.sprites, newSprite, 'sprite');
 			set.sprites.push({ name: newSprite, layers: [newLayer(BASE, set.grid)] });
 			// read it back: push stores the raw object, but only the $state proxy handed back on
 			// read is the one the UI observes — mutating the raw object writes into a void. That
@@ -425,7 +429,6 @@ const api = {
 			name = t.sprite.name;
 			dest = t.layer;
 		}
-		const pixels = await imageToPixels(source, set.grid, rest);
 		dest.pixels.set(pixels);
 		return { sprite: name, layer: dest.name, grid: set.grid, colours: new Set(pixels.filter((p) => p)).size };
 	}),

@@ -33,6 +33,34 @@ const DEFAULTS = {
 	saturation: 1.2
 };
 
+const FITS: Fit[] = ['contain', 'cover', 'stretch'];
+
+const range = (name: string, v: unknown, lo: number, hi: number) => {
+	if (typeof v !== 'number' || !Number.isFinite(v) || v < lo || v > hi)
+		throw new Error(`${name} must be a number between ${lo} and ${hi}, got ${JSON.stringify(v)}`);
+};
+
+/**
+ * Merge over the defaults, then refuse anything that would quantise to garbage. A plain spread is
+ * not enough: an explicit `undefined` overwrites a default rather than falling back to it, and a
+ * non-number reaches `adjust` as NaN, which snaps to black for every cell — a silent black sprite
+ * is the worst possible answer. An unknown `fit` is the same failure quieter, falling through
+ * `layout` to 'contain'.
+ */
+export function normalise(options: ImportOptions): Required<ImportOptions> {
+	const opts = { ...DEFAULTS };
+	for (const [k, v] of Object.entries(options))
+		if (v !== undefined) (opts as Record<string, unknown>)[k] = v;
+	if (!FITS.includes(opts.fit)) throw new Error(`bad fit ${JSON.stringify(opts.fit)} — use ${FITS.join(', ')}`);
+	range('alpha', opts.alpha, 0, 255);
+	// generous bounds: past these the pixels are flat, clipped or inverted, which is the frame
+	// effects' job (`invert`, `tint`) rather than a pre-quantize touch-up gone very wrong
+	range('contrast', opts.contrast, -1, 1);
+	range('saturation', opts.saturation, 0, 4);
+	opts.trim = !!opts.trim;
+	return opts;
+}
+
 /** Cap the intermediate buffer: a 6000x4000 photo would otherwise be a 96MB ImageData. */
 const MAX_SIDE = 1024;
 /** How far a pixel must differ from the corner colour to count as content when trimming. */
@@ -243,7 +271,8 @@ export async function imageToPixels(
 	grid: number,
 	options: ImportOptions = {}
 ): Promise<number[]> {
-	const opts = { ...DEFAULTS, ...options };
+	// before the decode, so a bad option fails instantly instead of after a fetch
+	const opts = normalise(options);
 	const bitmap = await decode(source);
 	try {
 		const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PALETTE } from '../core/palette.ts';
-import { adjust, contentBounds, layout, sampleInto } from './image.ts';
+import { adjust, contentBounds, layout, normalise, sampleInto } from './image.ts';
 
 /** Build RGBA data from rows of [r,g,b,a] tuples. */
 const rgba = (rows: number[][][]) =>
@@ -86,4 +86,18 @@ test('adjust desaturates to grey and clamps to the byte range', () => {
 	assert.ok(r === g && g === b, `saturation 0 should be grey, got ${r},${g},${b}`);
 	assert.deepEqual(adjust(255, 255, 255, 5, 1), [255, 255, 255], 'no overflow past 255');
 	assert.deepEqual(adjust(0, 0, 0, 5, 1), [0, 0, 0], 'no underflow past 0');
+});
+
+test('normalise falls back past undefined and refuses values that would quantise to garbage', () => {
+	// the shape an agent gets from `{ contrast: maybeContrast }` — a plain spread would keep the
+	// undefined, and every cell would come back black
+	assert.equal(normalise({ contrast: undefined }).contrast, 0.15);
+	assert.equal(normalise({}).fit, 'contain');
+	assert.equal(normalise({ fit: 'cover' }).fit, 'cover');
+	assert.equal(normalise({ contrast: 0, saturation: 1 }).contrast, 0, '0 is a value, not a miss');
+
+	assert.throws(() => normalise({ fit: 'fill' as any }), /bad fit/);
+	assert.throws(() => normalise({ contrast: NaN }), /contrast must be a number/);
+	assert.throws(() => normalise({ saturation: '1.2' as any }), /saturation must be a number/);
+	assert.throws(() => normalise({ alpha: 300 }), /alpha must be a number between 0 and 255/);
 });
