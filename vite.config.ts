@@ -1,11 +1,41 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { defineConfig, type Plugin } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 
 const read = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url), 'utf8')
 
-// The emerging convention for "instructions for an LLM that lands on this site".
-const LLMS_TXT = `# frogsprite
+/**
+ * Every worked example, discovered rather than listed. A hand-maintained index has to be edited in
+ * two places to add one file, and forgetting either fails *silently* — the doc simply never ships.
+ * Here the file existing is the single fact that makes it both served and indexed.
+ *
+ * README.md leads; the rest are alphabetical.
+ */
+const exampleDocs = (): string[] =>
+  readdirSync(new URL('./examples', import.meta.url))
+    .filter((f) => f.endsWith('.md'))
+    .sort((a, b) => (a === 'README.md' ? -1 : b === 'README.md' ? 1 : a.localeCompare(b)))
+    .map((f) => `examples/${f}`)
+
+/**
+ * One llms.txt bullet per example, read out of the file itself: the `# title`, and the `> summary`
+ * under it. That is the shape llms.txt already uses for the site as a whole, so an example carries
+ * its own index entry rather than having one written about it somewhere else.
+ */
+const indexEntry = (name: string): string => {
+  const src = read(name)
+  // the summary must sit directly under the title: a doc body may quote things too, and the first
+  // stray blockquote is not the one that belongs in an index
+  const [, title = name, summary] = src.match(/^#[^#\n]\s*(.+?)\s*\n\n>\s*(.+?)\s*$/m)
+    ?? src.match(/^#[^#\n]\s*(.+?)\s*$/m)
+    ?? []
+  return `- [${title}](/${name})${summary ? `: ${summary}` : ''}`
+}
+
+// The emerging convention for "instructions for an LLM that lands on this site". Built at request
+// time rather than as a literal, so the worked-example list cannot drift from the directory — and
+// so example titles containing backticks need no escaping.
+const llmsTxt = (): string => `# frogsprite
 
 > A pixel-sprite editor whose entire feature set is driveable from JavaScript. Built for LLM agents.
 
@@ -15,6 +45,11 @@ and no build step — the editor runs entirely in the page and saves to localSto
 - [AGENTS.md](/AGENTS.md): the full command reference — packages, sets, sprites, painting, shapes,
   grids, the 256-colour palette, animation, undo, image import, and the SVG/PNG/ICO/ZIP/
   spritesheet exports.
+
+Worked examples — complete sprite packages, each with the script that built it and notes on what the
+API rewards and where it pushes back:
+
+${exampleDocs().map(indexEntry).join('\n')}
 
 Quick start, pasted into the browser console:
 
@@ -38,8 +73,8 @@ Call \`frogsprite.help()\` in the page for the command list without leaving the 
  */
 function agentDocs(): Plugin {
   const files = (): Record<string, string> => ({
-    'AGENTS.md': read('AGENTS.md'),
-    'llms.txt': LLMS_TXT,
+    ...Object.fromEntries(['AGENTS.md', ...exampleDocs()].map((name) => [name, read(name)])),
+    'llms.txt': llmsTxt(),
   })
   return {
     name: 'frogsprite:agent-docs',
