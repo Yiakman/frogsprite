@@ -1,5 +1,7 @@
 # Arcade space shooter — effects, trails and transitions
 
+> Frame effects, motion trails and transitions: grey art driven by `fx.hue`, and a mirrored pose that is never drawn twice.
+
 A top-down shooter in three sets: `ship` (16), `fx` (16), `starfield` (32).
 **2 hull sprites carry 3 animations; 6 effect sprites carry 3 more; the whole
 scrolling background is 1 sprite.** Nine sprites, seven animations.

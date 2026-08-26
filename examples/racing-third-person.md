@@ -1,5 +1,7 @@
 # Third-person racer — layers, parallax and a scene you can still edit
 
+> A third-person racer: depth-band layers, parallax with `tile_layer` and `scroll_layer`, live `link_layer` scenes, and the spritesheet hand-off to a game engine.
+
 Two 32x32 sets: `car` (the player's car, chase camera up and behind) and `road`
 (a parallax scene that is **one sprite with seven layers**). Ten sprites, six
 animations, four linked layers.

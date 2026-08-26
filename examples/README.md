@@ -1,5 +1,7 @@
 # Three sprite sets, written entirely from JavaScript
 
+> How three sprite packages were built entirely from JavaScript — what the API rewards, the palette and contrast traps, and how to verify animations `print_sprite` cannot see.
+
 frogsprite's pitch is that an agent can read [AGENTS.md](../AGENTS.md), open the
 page, and start drawing without ever touching the UI. This is the write-up of
 actually doing that three times over — a fantasy sword-and-sorcery package, a

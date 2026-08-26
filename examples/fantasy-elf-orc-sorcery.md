@@ -1,5 +1,7 @@
 # Fantasy sword and sorcery — characters at 16x16
 
+> Hand-drawn 16x16 characters: half-maps and `reflect`, paint order as z-order, and a hurt flash that costs no new sprites.
+
 Three 16x16 sets in one package: `elf` (7 sprites, 4 animations), `orc`
 (4 sprites, 3 animations), `sorcery` (4 sprites, 1 animation). Fifteen sprites,
 eight animations, **23 `paint_map` calls and one `shapes.line`** — no
