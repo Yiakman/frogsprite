@@ -16,6 +16,18 @@ and no build step — the editor runs entirely in the page and saves to localSto
   grids, the 256-colour palette, animation, undo, image import, and the SVG/PNG/ICO/ZIP/
   spritesheet exports.
 
+Worked examples — three complete sprite packages, each with the script that built it and notes on
+what the API rewards and where it pushes back:
+
+- [examples/README.md](/examples/README.md): how the three were built, the palette and contrast
+  traps, and how to verify animations you cannot see with \`print_sprite\`.
+- [examples/fantasy-elf-orc-sorcery.md](/examples/fantasy-elf-orc-sorcery.md): hand-drawn 16x16
+  characters — half-maps and \`reflect\`, paint order as z-order, a hurt flash with no new sprites.
+- [examples/racing-third-person.md](/examples/racing-third-person.md): layers, parallax, occluders,
+  live \`link_layer\` scenes, and the spritesheet hand-off to a game engine.
+- [examples/space-shooter.md](/examples/space-shooter.md): frame effects, motion trails,
+  transitions, and grey art driven by \`fx.hue\`.
+
 Quick start, pasted into the browser console:
 
     frogsprite.new_package('demo');
@@ -36,9 +48,17 @@ Call \`frogsprite.help()\` in the page for the command list without leaving the 
  * site can answer /AGENTS.md too. Keeps AGENTS.md at the repo root rather than duplicating it
  * into public/.
  */
+const DOC_FILES = [
+  'AGENTS.md',
+  'examples/README.md',
+  'examples/fantasy-elf-orc-sorcery.md',
+  'examples/racing-third-person.md',
+  'examples/space-shooter.md',
+]
+
 function agentDocs(): Plugin {
   const files = (): Record<string, string> => ({
-    'AGENTS.md': read('AGENTS.md'),
+    ...Object.fromEntries(DOC_FILES.map((name) => [name, read(name)])),
     'llms.txt': LLMS_TXT,
   })
   return {
