@@ -254,6 +254,37 @@ export function shift(pixels: Pixels, grid: number, dx: number, dy: number, wrap
 }
 
 /**
+ * Which pixels differ between two buffers, with a per-row count — the engine behind
+ * `diff_frames`. Coordinates are grid coordinates and never relative to `box`, so what comes
+ * back can be fed straight back into `paint_pixel`.
+ *
+ * `identical` is the whole point: two frames of an animation that compose to the same picture is
+ * the frozen-layer bug no single frame, no return value and no contact sheet can show.
+ */
+export function diffPixels(
+	a: Pixels,
+	b: Pixels,
+	grid: number,
+	box: readonly [number, number, number, number] = [0, 0, grid - 1, grid - 1]
+): {
+	identical: boolean;
+	pixels: { x: number; y: number; from: number; to: number }[];
+	rows: Record<number, number>;
+} {
+	const changed: { x: number; y: number; from: number; to: number }[] = [];
+	const rows: Record<number, number> = {};
+	const [x0, y0, x1, y1] = box;
+	for (let y = y0; y <= y1; y++)
+		for (let x = x0; x <= x1; x++) {
+			const at = y * grid + x;
+			if (a[at] === b[at]) continue;
+			changed.push({ x, y, from: a[at], to: b[at] });
+			rows[y] = (rows[y] ?? 0) + 1;
+		}
+	return { identical: !changed.length, pixels: changed, rows };
+}
+
+/**
  * Mirror one half of a sprite onto the other, in place. `from` names the half that is *copied* —
  * `reflect(px, 16, 'left')` keeps the left half and overwrites the right with its mirror image.
  * Every supported grid is even, so there is no middle row or column to disambiguate.

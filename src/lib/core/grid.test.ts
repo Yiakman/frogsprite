@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { GRIDS, put, reflect, rotate, shift, SIDES, stamp, tile, upscale } from './grid.ts';
+import { diffPixels, GRIDS, put, reflect, rotate, shift, SIDES, stamp, tile, upscale } from './grid.ts';
 
 /** 4x4 grid from rows of digits, for readable expectations. */
 const grid4 = (...rows: string[]) => rows.flatMap((r) => [...r].map(Number));
@@ -297,4 +297,33 @@ test('put refuses a coordinate off the grid instead of wrapping into the next ro
 	for (const [x, y] of [[3, 0], [0, 3], [-1, 0], [0, -1], [1.5, 0]])
 		assert.throws(() => put(px, 3, x, y, 7), /outside the 3x3 grid/, `(${x},${y})`);
 	assert.deepEqual(Array.from(px), [0, 0, 0, 0, 0, 0, 0, 0, 0], 'nothing written');
+});
+
+test('diffPixels lists changed pixels with grid coordinates and a per-row count', () => {
+	const a = grid4('0000', '0110', '0110', '0000');
+	const b = grid4('0000', '0110', '0220', '0000'); // row 2: the two 1s became 2s
+	const d = diffPixels(a, b, 4);
+	assert.equal(d.identical, false);
+	assert.deepEqual(d.pixels, [
+		{ x: 1, y: 2, from: 1, to: 2 },
+		{ x: 2, y: 2, from: 1, to: 2 }
+	]);
+	assert.deepEqual(d.rows, { 2: 2 });
+});
+
+test('diffPixels reports identical buffers — the frozen-frame check', () => {
+	const a = grid4('0100', '0000', '0000', '0000');
+	const d = diffPixels(a, [...a], 4);
+	assert.equal(d.identical, true);
+	assert.deepEqual(d.pixels, []);
+	assert.deepEqual(d.rows, {});
+});
+
+test('diffPixels honours a box but keeps grid coordinates', () => {
+	// the changed pixel sits outside the window, so the diff sees nothing — coordinates stay
+	// absolute so a follow-up paint_pixel lands where the diff said
+	const a = grid4('0000', '0000', '0000', '0001');
+	const b = grid4('0000', '0000', '0000', '0002');
+	assert.equal(diffPixels(a, b, 4, [0, 0, 1, 1]).identical, true);
+	assert.equal(diffPixels(a, b, 4, [0, 3, 3, 3]).identical, false);
 });

@@ -4,7 +4,8 @@ import { compose, patchEffects, readArrangement, readFx, readTrail, readTransiti
 import * as history from '../core/history.ts';
 import * as storage from '../io/storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
-import { GRIDS, put, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
+import { diffPixels, GRIDS, put, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
+import { sha256 as hashOf } from '../io/hash.ts';
 import { freeName, taken } from '../core/names.ts';
 import { BASE, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, period as periodOf, placeAt, poseAt, scrollStep, shownAs } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
@@ -162,6 +163,12 @@ function source(set?: string, pkg?: string): SpriteSet {
  */
 type ReadOpts = { layer?: string; set?: string; pkg?: string; rect?: [number, number, number, number] };
 
+/**
+ * Options every frame read shares: a window, an animation by name, and — the same escape
+ * `read_sprite` takes — a set to read from without selecting it.
+ */
+type FrameOpts = { rect?: [number, number, number, number]; animation?: string; set?: string; pkg?: string };
+
 function reading(sprite?: string, { layer, set, pkg, rect }: ReadOpts = {}) {
 	let found: Sprite;
 	let grid: GridSize;
@@ -235,13 +242,24 @@ function asciiOf(cells: number[][], pin?: Record<string, Color>) {
  * same picture as the sprite: `print_sprite` shows the stack with every pose visible and every
  * scroll at zero, which is a frame that appears nowhere in the animation. This is what is actually
  * on screen at frame `i`.
+ *
+ * `from` reads a frame out of another set **without selecting it** — the same `{ set, pkg }`
+ * `read_sprite` takes, so a script that builds a scratch set mid-run can still read the real one's
+ * clips afterwards.
  */
-function frameAt(i?: number, animation?: string, rect?: [number, number, number, number]) {
-	const set = editor.requireSet();
-	const anim = animOf(animation);
+function frameAt(
+	i?: number,
+	animation?: string,
+	rect?: [number, number, number, number],
+	from?: { set?: string; pkg?: string }
+) {
+	const away = !!(from && (from.set || from.pkg));
+	const set = away ? source(from!.set, from!.pkg) : editor.requireSet();
+	const anim = animOf(animation, set);
 	if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
-	// default to whatever is held, so `view_frame(3); print_frame()` reads what you are looking at
-	const at = i ?? (editor.frame >= 0 ? editor.frame : 0);
+	// default to whatever is held, so `view_frame(3); print_frame()` reads what you are looking
+	// at — but only when reading the set on screen; another set has no held frame, so frame 0
+	const at = i ?? (away ? 0 : editor.frame >= 0 ? editor.frame : 0);
 	if (!Number.isInteger(at) || at < 0 || at >= anim.frames.length)
 		throw new Error(`frame ${at} is outside 0..${anim.frames.length - 1}`);
 	const grid = set.grid;
@@ -259,11 +277,20 @@ function frameAt(i?: number, animation?: string, rect?: [number, number, number,
 	};
 }
 
-/** An animation in the active set, by name or the selected one. */
-function animOf(name?: string): Animation {
-	const set = editor.requireSet();
-	const anim = name ? set.animations.find((a) => a.name === name) : editor.requireAnimation();
-	if (!anim) throw new Error(`no animation "${name}" in set "${set.name}"`);
+/**
+ * An animation in the active set, by name or the selected one. Pass a `set` to look in another
+ * one: unnamed there means its *first* animation, since the selection cannot point at it.
+ */
+function animOf(name?: string, set: SpriteSet = editor.requireSet()): Animation {
+	const anim = name
+		? set.animations.find((a) => a.name === name)
+		: set === editor.set
+			? editor.requireAnimation()
+			: set.animations[0];
+	if (!anim)
+		throw new Error(
+			name ? `no animation "${name}" in set "${set.name}"` : `set "${set.name}" has no animations`
+		);
 	return anim;
 }
 
@@ -1304,13 +1331,26 @@ const api = {
 			animations
 		});
 		if (download) ex.downloadBlob(blob, filename);
-		const out: Record<string, unknown> = { filename, bytes: blob.size, files };
+		const out: Record<string, unknown> = { filename, bytes: blob.size, files, sha256: await hashOf(blob) };
 		if (base64) {
 			let bin = '';
 			for (const b of new Uint8Array(await blob.arrayBuffer())) bin += String.fromCharCode(b);
 			out.base64 = btoa(bin);
 		}
 		return out;
+	}),
+
+	/**
+	 * SHA-256 of an artifact, as hex — verify a transfer with one comparison instead of the
+	 * hash-both-sides dance: hash what you exported, then `shasum -a 256` what arrived.
+	 *
+	 *   await sha256(export_png({ scale: 1 }))    // a data URL hashes as its decoded bytes
+	 *   await sha256('some text')                 // a plain string as its UTF-8 bytes
+	 *
+	 * Async. `export_zip` already returns one of itself.
+	 */
+	sha256: ro(async function (data: string | Uint8Array | Blob) {
+		return hashOf(data);
 	}),
 
 	// ---- interchange -----------------------------------------------------
@@ -1422,9 +1462,9 @@ const api = {
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'ramp', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
-				exporting: ['export_zip', 'export_spritesheet', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico'],
+				exporting: ['export_zip', 'export_spritesheet', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico', 'sha256'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
-				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'contact_sheet', 'palette', 'color', 'background', 'silhouette', 'zoom', 'raw', 'help'],
+				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'diff_frames', 'contact_sheet', 'palette', 'color', 'background', 'silhouette', 'zoom', 'raw', 'help'],
 				history: ['undo', 'redo', 'history', 'batch'],
 				storage: ['flush', 'reset']
 			},
@@ -1434,6 +1474,9 @@ const api = {
 				'paint_map() is by far the fastest way to draw — one call per sprite.',
 				'shapes.circle/square/triangle/… fill a whole form in one call, and one undo step. Blocking a body out with shapes then detailing with paint_map beats plotting pixels by hand.',
 				'print_sprite() renders the sprite as ASCII so you can check your own work.',
+			'read_frame()/print_frame() take { set, pkg } exactly like read_sprite, so a script that created a scratch set mid-run can still read the real set\'s clips without selecting anything.',
+			'diff_frames(0, 1) reports which pixels differ between two composed frames — the only check that catches a frozen layer or a wrong pose, since no single frame shows either. identical: true means two frames draw exactly the same thing.',
+			'await sha256(export_png()) hashes the artifact itself (a data URL as its decoded bytes), so a transfer is verified by one comparison against shasum -a 256 of what arrived. export_zip returns one of itself.',
 				'rotate() only comes back exactly at 90/180/270 about the default centre — check the `lost` it returns.',
 				"set_animation() frames carry `fx`, `trail` and `transition`, all applied when the frame is drawn — so one sprite can look different in every animation it appears in. A motion trail is `trail: 5`, not 5 hand-painted ghosts.",
 				"set_effects('*', { trail: 5 }) puts the same effect on every frame in one undo step — effects are usually uniform across an animation, so reach for '*' before a per-frame loop.",
@@ -1520,17 +1563,41 @@ const api = {
 	 * visible and every scroll at zero: a frame that appears nowhere in the animation.
 	 *
 	 *   read_frame(3, { rect: [44, 54, 96, 116] })
+	 *   read_frame(0, { animation: 'fly', set: 'frog', pkg: 'critters' })
 	 *
 	 * `i` defaults to the frame being held, so `view_frame(3); print_frame()` reads what is on screen.
+	 * `{ set, pkg }` reads another set's clip without selecting it — the same escape `read_sprite`
+	 * takes, and the one a script that made a scratch set mid-run needs.
 	 */
-	read_frame: ro(function (i?: number, { rect, animation }: { rect?: [number, number, number, number]; animation?: string } = {}) {
-		return windowRows(frameAt(i, animation, rect));
+	read_frame: ro(function (i?: number, { rect, animation, set, pkg }: FrameOpts = {}) {
+		return windowRows(frameAt(i, animation, rect, { set, pkg }));
 	}),
 
 	/** The same frame as ASCII rows plus a legend — see `read_frame`, and `print_sprite` for glyphs. */
-	print_frame: ro(function (i?: number, { rect, animation, legend }: { rect?: [number, number, number, number]; animation?: string; legend?: Record<string, Color> } = {}) {
-		const f = frameAt(i, animation, rect);
+	print_frame: ro(function (i?: number, { rect, animation, legend, set, pkg }: FrameOpts & { legend?: Record<string, Color> } = {}) {
+		const f = frameAt(i, animation, rect, { set, pkg });
 		return { animation: f.animation, frame: f.frame, ...asciiOf(windowRows(f), legend) };
+	}),
+
+	/**
+	 * Which pixels differ between two frames of an animation, as composed — the manual's own advice
+	 * ("only diffing two frames" reveals a frozen layer or a wrong pose) as a command, instead of
+	 * two ASCII dumps read side by side. `identical: true` is the red flag: an animation drawing
+	 * exactly the same thing twice.
+	 *
+	 *   diff_frames(0, 1)                          // the active animation
+	 *   diff_frames(0, 3, { animation: 'fly' })    // by name
+	 *
+	 * Coordinates are grid coordinates, so `pixels` can go straight back into `paint_pixel`.
+	 */
+	diff_frames: ro(function (i: number, j: number, { rect, animation, set, pkg }: FrameOpts = {}) {
+		const a = frameAt(i, animation, rect, { set, pkg });
+		const b = frameAt(j, animation, rect, { set, pkg });
+		return {
+			animation: a.animation,
+			frames: [a.frame, b.frame],
+			...diffPixels(a.pixels, b.pixels, a.grid, a.box)
+		};
 	}),
 
 	/** Same thing as ASCII: '.' is transparent, other chars are per-colour. Easier to eyeball. */
