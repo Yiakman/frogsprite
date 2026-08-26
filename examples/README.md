@@ -1,15 +1,16 @@
-# Three sprite sets, written entirely from JavaScript
+# Four sprite packages, written entirely from JavaScript
 
-> How three sprite packages were built entirely from JavaScript — what the API rewards, the palette and contrast traps, and how to verify animations `print_sprite` cannot see.
+> How four sprite packages were built entirely from JavaScript — what the API rewards, the palette and contrast traps, and how to verify animations `print_sprite` cannot see.
 
 frogsprite's pitch is that an agent can read [AGENTS.md](../AGENTS.md), open the
 page, and start drawing without ever touching the UI. This is the write-up of
-actually doing that three times over — a fantasy sword-and-sorcery package, a
-third-person racer, and an arcade space shooter — and of what the API rewarded,
-what it punished, and the two places it pushed back.
+actually doing that four times over — a fantasy sword-and-sorcery package, a
+third-person racer, an arcade space shooter and a fighting game's reaction
+layer — and of what the API rewarded, what it punished, and the two places it
+pushed back.
 
 Everything below was built and verified in a running editor. The finished
-scripts are in the three case studies:
+scripts are in the four case studies:
 
 - **[Fantasy — elf, orc, sorcery](fantasy-elf-orc-sorcery.md)** — hand-drawn
   characters at 16x16. Half-maps and `reflect`, paint order as z-order, a hurt
@@ -18,8 +19,11 @@ scripts are in the three case studies:
   parallax, occluders, live links, and the spritesheet hand-off to a game engine.
 - **[Space shooter](space-shooter.md)** — frame effects, motion trails,
   transitions, and grey art driven by `hue`.
+- **[Fighting game — the hit-flash vocabulary](fighting-game-hit-flash.md)** —
+  hand-drawn 32x32 poses, and the arcade damage flash with its relatives:
+  inversion, palette swap, solarisation, flicker and a whole-screen flash.
 
-Final count: **3 packages, 8 sets, 34 sprites, 21 animations.**
+Final count: **4 packages, 10 sets, 38 sprites, 31 animations.**
 
 ## The constraint that shaped the whole run
 
