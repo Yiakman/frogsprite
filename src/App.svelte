@@ -7,8 +7,6 @@
 	import Palette from './lib/ui/Palette.svelte';
 	import Sidebar from './lib/ui/Sidebar.svelte';
 	import { editor } from './lib/state/store.svelte';
-	// the same animation the README shows
-	import jumpSvg from '../frog-jump.svg?raw';
 
 	let picker: HTMLInputElement;
 	let exportMenu: HTMLDetailsElement;
@@ -33,27 +31,6 @@
 		menu.open = false;
 		run(fn);
 	};
-
-	// ---- the brand hop -------------------------------------------------------
-	// The frog is the app icon, so it lives in the top bar now. A fresh blob: URL every hop: one
-	// animation timeline per URL, and it keeps running while detached.
-	const HOP_EVERY = 10_000;
-	const HOP_MS = 1330; // one loop of frog-jump.svg
-
-	/** blob: URL of the animation while the frog is hopping, otherwise null */
-	let hop = $state<string | null>(null);
-
-	$effect(() => {
-		const id = setInterval(() => {
-			const url = URL.createObjectURL(new Blob([jumpSvg], { type: 'image/svg+xml' }));
-			hop = url;
-			setTimeout(() => {
-				hop = null;
-				URL.revokeObjectURL(url);
-			}, HOP_MS);
-		}, HOP_EVERY);
-		return () => clearInterval(id);
-	});
 
 	/** The selection as one line — pkg / set / sprite. The sidebar does the clicking; this only
 	 * says where you are, so it reads `sel` rather than the held frame the caption reports. */
@@ -110,7 +87,7 @@
 
 <main>
 	<header class="top">
-		<h1><img src={hop ?? '/icon.svg'} alt="" width="16" height="16" /> frogsprite</h1>
+		<h1><img src="/icon.svg" alt="" width="16" height="16" /> frogsprite</h1>
 		<p class="crumbs" data-testid="crumbs" title="Current selection — package / set / sprite">
 			{crumbs || 'nothing selected'}
 		</p>

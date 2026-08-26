@@ -82,7 +82,6 @@
 
 	// Static strings defined right here — {@html} never sees anything from outside the file.
 	const ICONS: Record<string, string> = {
-		paint: '<path d="M3 13l1.2-3.6L10.6 3l2.4 2.4L6.6 11.8 3 13z"/><path d="M9.4 4.2l2.4 2.4"/>',
 		line: '<path d="M3 13L13 3"/>',
 		square: '<rect x="3" y="3" width="10" height="10"/>',
 		circle: '<circle cx="8" cy="8" r="5"/>',
@@ -96,11 +95,6 @@
 </script>
 
 <nav class="rail" aria-label="Tools">
-	<!-- the slot item 4 fills: pencil, fill, eyedropper. Placeholder until the tools exist. -->
-	<button class="tool" disabled title="Paint — pencil, fill and eyedropper, coming soon" data-testid="tool-paint" aria-label="Paint (coming soon)">{@html icon('paint')}</button>
-
-	<span class="gap" aria-hidden="true"></span>
-
 	{#each SHAPES as t (t.name)}
 		<button
 			class="tool"
@@ -141,13 +135,9 @@
 		color: #aaa;
 		cursor: pointer;
 	}
-	.tool:hover:not(:disabled) {
+	.tool:hover {
 		background: #222;
 		color: #cfe9ff;
-	}
-	.tool:disabled {
-		opacity: 0.35;
-		cursor: default;
 	}
 	.gap {
 		width: 1.2rem;
