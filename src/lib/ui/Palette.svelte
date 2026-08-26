@@ -69,7 +69,7 @@
 <style>
 	.wrap {
 		padding: 0.75rem;
-		border-top: 1px solid #333;
+		/* topmost in the right column — the top bar already draws the rule above it */
 	}
 	h2 {
 		display: flex;

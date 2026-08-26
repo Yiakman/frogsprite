@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { beginStroke, endStroke, importFiles } from '../api/commands';
+	import { beginStroke, endStroke, frogsprite as fs, importFiles } from '../api/commands';
 	import { notify } from './Dialog.svelte';
 	import { paint as render } from '../io/export';
 	import { PALETTE } from '../core/palette';
@@ -7,7 +7,7 @@
 	import { isLinked } from '../core/layers';
 	import { editor } from '../state/store.svelte';
 
-	// the swatches that set these live in the sidebar's View panel; the canvas only reports them
+	// the swatches that set these live in the context bar; the canvas only reports them
 	const backdrop = $derived(editor.background ? PALETTE[editor.background] : null);
 	const silhouette = $derived(editor.silhouette ? PALETTE[editor.silhouette] : null);
 
@@ -16,6 +16,15 @@
 	let canvas: HTMLCanvasElement | undefined = $state();
 	/** cell under the pointer, or -1 — drawn as one moving outline instead of a :hover per cell */
 	let hover = $state(-1);
+
+	/** What the pointer is actually over: coordinates plus the palette index shown there. The whole
+	 * API is coordinate-addressed, so reading `x7,y3` off the canvas is how you write the
+	 * `paint_pixel(7, 3, …)` call. `shownPixels` is the same buffer the canvas draws, so the index
+	 * is what you see, effects included. */
+	const hoverIdx = $derived.by(() => {
+		const p = editor.shownPixels;
+		return p && hover >= 0 ? p[hover] : -1;
+	});
 
 	// Mac uses ⌘, everyone else Ctrl — same shortcut, just named for the keyboard it's on.
 	const mac = navigator.platform?.startsWith('Mac') ?? false;
@@ -112,99 +121,172 @@
 	}}
 />
 
-<!-- drag-and-drop has no keyboard equivalent by nature; the Import button covers that path -->
-<div
-	class="stage"
-	bind:this={stage}
-	class:dropping
-	role="region"
-	aria-label="Sprite canvas — drop an image here to pixelate it"
-	ondragover={(e) => {
-		e.preventDefault();
-		dropping = true;
-	}}
-	ondragleave={() => (dropping = false)}
-	ondrop={drop}
->
-	{#if sprite}
-		<!-- the checkerboard and the cell rules live on the wrapper, behind and over a canvas that
-		     is transparent wherever the sprite is -->
-		<div
-			class="grid"
-			class:live
-			class:composed={showingComposite}
-			style:--n={grid}
-			style:--zoom={editor.zoom}
-			style:background={backdrop}
-			role="img"
-			aria-label="{grid} by {grid} pixel canvas showing {sprite.name}"
-		>
-			<canvas
-				bind:this={canvas}
-				data-testid="grid"
-				width={grid}
-				height={grid}
-				aria-hidden="true"
-				onpointerdown={(e) => {
-					painting = true;
-					from = -1; // a new stroke starts where it lands, not where the last one ended
-					// one snapshot for the whole drag, not one per cell it crosses
-					if (live) beginStroke();
-					paint(cellOf(e));
-				}}
-				onpointermove={(e) => {
-					hover = cellOf(e);
-					if (painting) paint(hover);
-				}}
-				onpointerleave={() => (hover = -1)}
-			></canvas>
-			{#if live && hover >= 0}
-				<div class="cursor" style:--x={hover % grid} style:--y={Math.floor(hover / grid)}></div>
-			{/if}
-		</div>
-		<p class="caption" data-testid="caption">
-			{grid}×{grid} — <strong>{sprite.name}</strong>
-			{#if editor.frame >= 0 && set}
-				<em>
-					{editor.anim?.name ?? 'animation'} — frame {editor.frame + 1}/{editor.frames.length}
-					{#if editor.running}· playing{:else if editor.transformed && editor.raw}· showing sprite, not editable{:else if editor.transformed}· effect preview, not editable{:else}· paused, editable{/if}
-				</em>
-			{/if}
-			{#if editor.transformed}
-				<!-- only offered where it means something: with no effects on the frame, raw *is* what
-				     you are already looking at. Hold rather than click — judging an effect is a
-				     back-and-forth comparison, not a state you sit in. -->
-				<button
-					class="peek"
-					class:on={editor.raw}
-					data-testid="peek"
-					title="Hold to see the sprite as it is stored, without this frame's effects (or hold \)"
-					onpointerdown={() => (editor.peekPointer = true)}
-					onpointerup={() => (editor.peekPointer = false)}
-					onpointerleave={() => (editor.peekPointer = false)}
-				>{editor.raw ? 'showing sprite' : 'hold to show sprite'}</button>
-			{/if}
-			{#if editor.raw && !editor.transformed}
-				<!-- the peek button only exists for a transformed frame, so a raw set through the API
-				     on a plain sprite would otherwise be invisible on a screenshot -->
-				<span class="on" data-testid="raw-on">· raw on</span>
-			{/if}
-			<!-- named, not just shown: a screenshot has to say what it was taken under -->
-			<span class="on" data-testid="backdrop"
-				>· on {backdrop ?? 'checkerboard'}{silhouette ? ` · silhouette ${silhouette}` : ''}</span
+<!-- the canvas cell: a scrolling stage with the context bar pinned under it -->
+<section class="cell">
+	<!-- drag-and-drop has no keyboard equivalent by nature; the Import button covers that path -->
+	<div
+		class="stage"
+		bind:this={stage}
+		class:dropping
+		role="region"
+		aria-label="Sprite canvas — drop an image here to pixelate it"
+		ondragover={(e) => {
+			e.preventDefault();
+			dropping = true;
+		}}
+		ondragleave={() => (dropping = false)}
+		ondrop={drop}
+	>
+		{#if sprite}
+			<!-- the checkerboard and the cell rules live on the wrapper, behind and over a canvas that
+			     is transparent wherever the sprite is -->
+			<div
+				class="grid"
+				class:live
+				class:composed={showingComposite}
+				style:--n={grid}
+				style:--zoom={editor.zoom}
+				style:background={backdrop}
+				role="img"
+				aria-label="{grid} by {grid} pixel canvas showing {sprite.name}"
 			>
-			{#if editor.frame >= 0}
-				<span class="on" data-testid="esc-hint">· Esc leave frame</span>
-			{/if}
-			<span class="on" data-testid="undo-hint">· {undoKey} undo · {redoKey} redo</span>
-		</p>
-	{:else}
-		<p class="empty">No sprite selected. Create one in the sidebar, or run <code>frogsprite.new_package('demo')</code> in the console.</p>
-	{/if}
-</div>
+				<canvas
+					bind:this={canvas}
+					data-testid="grid"
+					width={grid}
+					height={grid}
+					aria-hidden="true"
+					onpointerdown={(e) => {
+						painting = true;
+						from = -1; // a new stroke starts where it lands, not where the last one ended
+						// one snapshot for the whole drag, not one per cell it crosses
+						if (live) beginStroke();
+						paint(cellOf(e));
+					}}
+					onpointermove={(e) => {
+						hover = cellOf(e);
+						if (painting) paint(hover);
+					}}
+					onpointerleave={() => (hover = -1)}
+				></canvas>
+				{#if live && hover >= 0}
+					<div class="cursor" style:--x={hover % grid} style:--y={Math.floor(hover / grid)}></div>
+				{/if}
+			</div>
+		{:else}
+			<p class="empty">
+				No sprite selected. Create one in the sidebar, or run <code>frogsprite.new_package('demo')</code> in the console.
+			</p>
+		{/if}
+	</div>
+
+	<div class="context">
+		{#if sprite}
+			<p class="caption" data-testid="caption">
+				{grid}×{grid} — <strong>{sprite.name}</strong>
+				{#if hover >= 0 && hoverIdx >= 0}
+					<span class="pos" data-testid="pos">x{hover % grid},y{Math.floor(hover / grid)} · idx {hoverIdx}</span>
+				{/if}
+				{#if editor.frame >= 0 && set}
+					<em>
+						{editor.anim?.name ?? 'animation'} — frame {editor.frame + 1}/{editor.frames.length}
+						{#if editor.running}· playing{:else if editor.transformed && editor.raw}· showing sprite, not editable{:else if editor.transformed}· effect preview, not editable{:else}· paused, editable{/if}
+					</em>
+				{/if}
+				{#if editor.transformed}
+					<!-- only offered where it means something: with no effects on the frame, raw *is* what
+					     you are already looking at. Hold rather than click — judging an effect is a
+					     back-and-forth comparison, not a state you sit in. -->
+					<button
+						class="peek"
+						class:on={editor.raw}
+						data-testid="peek"
+						title="Hold to see the sprite as it is stored, without this frame's effects (or hold \)"
+						onpointerdown={() => (editor.peekPointer = true)}
+						onpointerup={() => (editor.peekPointer = false)}
+						onpointerleave={() => (editor.peekPointer = false)}
+					>{editor.raw ? 'showing sprite' : 'hold to show sprite'}</button>
+				{/if}
+				{#if editor.raw && !editor.transformed}
+					<!-- the peek button only exists for a transformed frame, so a raw set through the API
+					     on a plain sprite would otherwise be invisible on a screenshot -->
+					<span class="on" data-testid="raw-on">· raw on</span>
+				{/if}
+				<!-- named, not just shown: a screenshot has to say what it was taken under -->
+				<span class="on" data-testid="backdrop"
+					>· on {backdrop ?? 'checkerboard'}{silhouette ? ` · silhouette ${silhouette}` : ''}</span
+				>
+				{#if editor.frame >= 0}
+					<span class="on" data-testid="esc-hint">· Esc leave frame</span>
+				{/if}
+				<span class="on" data-testid="undo-hint">· {undoKey} undo · {redoKey} redo</span>
+			</p>
+		{/if}
+
+		<div class="viewtools">
+			<div class="zoomer" role="group" aria-label="Canvas zoom">
+				<button
+					disabled={editor.zoom <= 1}
+					onclick={() => fs.zoom(editor.zoom - 1)}
+					aria-label="Zoom out"
+					title="Show more of the sprite">−</button
+				>
+				<span class="z" title="Zoom factor">{editor.zoom}×</span>
+				<button
+					disabled={editor.zoom >= 8}
+					onclick={() => fs.zoom(editor.zoom + 1)}
+					aria-label="Zoom in"
+					title="Closer — for two-pixel details at 128">+</button
+				>
+				{#if editor.zoom > 1}
+					<button class="fit" onclick={() => fs.zoom(1)} title="Fit the pane again">fit</button>
+				{/if}
+			</div>
+
+			<span class="split" aria-hidden="true"></span>
+
+			<!-- Same swatches the View panel used to carry: exact palette entries, so a swatch shows
+			     what the command will resolve to. -->
+			<div class="backdrops" role="group" aria-label="Review view — the sprite itself is unchanged">
+				{#each [null, '#ffffff', '#999999', '#000000', '#ff00ff'] as c (c ?? 'checker')}
+					<button
+						class="sw"
+						class:checker={!c}
+						class:sel={backdrop === c}
+						style:background={c}
+						aria-pressed={backdrop === c}
+						aria-label="{c ?? 'checkerboard'} background"
+						title="Show {c ?? 'the checkerboard'} through transparent pixels"
+						onclick={() => fs.background(c)}
+					></button>
+				{/each}
+				{#each ['#000000', '#ffffff'] as c (c)}
+					<button
+						class="sw sil"
+						class:sel={silhouette === c}
+						style:background={c}
+						aria-pressed={silhouette === c}
+						aria-label="{c} silhouette"
+						title="Show every painted pixel as {c} — preview only, nothing is painted"
+						onclick={() => fs.silhouette(silhouette === c ? null : c)}
+					></button>
+				{/each}
+			</div>
+		</div>
+	</div>
+</section>
 
 <style>
+	.cell {
+		flex: 1;
+		min-width: 0;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+	}
 	.stage {
+		flex: 1;
+		min-height: 0;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -270,6 +352,17 @@
 		box-shadow: inset 0 0 0 1px #7cf;
 		pointer-events: none;
 	}
+
+	/* ---- the context bar: how this canvas is shown, and where the pointer is on it ---- */
+	.context {
+		flex: none;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.4rem 0.75rem;
+		padding: 0.4rem 0.75rem;
+		border-top: 1px solid #333;
+	}
 	.caption {
 		margin: 0;
 		color: #aaa;
@@ -280,6 +373,11 @@
 	}
 	.caption .on {
 		color: #666;
+	}
+	/* the paint_pixel address — accent blue, because it is the one number here you act on */
+	.pos {
+		color: #7cf;
+		font-variant-numeric: tabular-nums;
 	}
 	.peek {
 		margin-left: 0.4rem;
@@ -299,6 +397,72 @@
 		border-color: #d8b46a;
 		color: #1b1b1b;
 	}
+	.viewtools {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		margin-left: auto;
+	}
+	.zoomer {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+	}
+	.zoomer button {
+		padding: 1px 7px;
+		font-size: 0.72rem;
+		background: #1b1b1b;
+		color: #ddd;
+		border: 1px solid #3a3a3a;
+		border-radius: 4px;
+		cursor: pointer;
+	}
+	.zoomer button:disabled {
+		opacity: 0.35;
+		cursor: default;
+	}
+	.z {
+		min-width: 2ch;
+		text-align: center;
+		font-size: 0.72rem;
+		color: #888;
+		font-variant-numeric: tabular-nums;
+	}
+	.split {
+		width: 1px;
+		height: 1.1rem;
+		background: #444;
+	}
+	.backdrops {
+		display: flex;
+		gap: 0.3rem;
+	}
+	.sw {
+		width: 1.1rem;
+		height: 1.1rem;
+		padding: 0;
+		border: 1px solid #444;
+		border-radius: 3px;
+		cursor: pointer;
+	}
+	.sw.checker {
+		/* what shows through transparent pixels, until `background()` replaces it */
+		background-image: conic-gradient(
+			#2a2a2a 90deg,
+			#232323 90deg 180deg,
+			#2a2a2a 180deg 270deg,
+			#232323 270deg
+		);
+		background-size: 50% 50%;
+	}
+	/* round = the sprite, square = what is behind it */
+	.sw.sil {
+		border-radius: 50%;
+	}
+	.sw.sel {
+		outline: 2px solid #7cf;
+		outline-offset: 1px;
+	}
 	.empty {
 		color: #888;
 		max-width: 34ch;
@@ -309,5 +473,11 @@
 		background: #222;
 		padding: 0.1em 0.4em;
 		border-radius: 3px;
+	}
+	/* stacked under the 900px collapse, the context bar can lead rather than trail */
+	@media (max-width: 900px) {
+		.viewtools {
+			margin-left: 0;
+		}
 	}
 </style>

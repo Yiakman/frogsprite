@@ -518,9 +518,9 @@ Two rules worth knowing:
 Blocking a sprite out with shapes and then detailing it with `paint_map()` is usually faster than
 plotting pixels by hand, and much easier to correct.
 
-In the UI these are under **Tools → Shapes** in the sidebar: one dialog per shape, filled, in the
-current colour. Outlines are JS-only. **Tools → Rotate** takes an angle, and optionally a `cx` and
-`cy` centre, and warns when a turn loses pixels.
+In the UI these are the shape buttons in the tool rail (the icon column left of the sidebar): one
+dialog per shape, filled, in the current colour. Outlines are JS-only. The rail's **Rotate** button
+takes an angle, and optionally a `cx` and `cy` centre, and warns when a turn loses pixels.
 
 ### Importing an image
 
@@ -732,7 +732,7 @@ thumbnail calls `view_frame`, and the frame it holds expands into an **effect tr
 `set_effects` calls documented above, with a `this frame | all frames` scope switch. A frame with a
 transition also gets a **reveal** slider there, which scrubs `phase` through the transition so you
 can see the middle of a scan or a dissolve while authoring it. Whole-animation recipes (Comet,
-Ghost, Flash, Fade in, Hue cycle, Clear effects) live behind **Effects** in the sidebar.
+Ghost, Flash, Fade in, Hue cycle, Clear effects) are the **Effects** buttons beside the timeline.
 
 ### Export
 
@@ -924,8 +924,8 @@ every non-transparent pixel of one sprite (the active one by default) to that co
 `undo()` is the only way back. It returns `{ sprite, painted, color, permanent }`; a `null` colour is refused,
 since that would erase the sprite rather than flatten it.
 
-The UI has all of this under **Tools → View** in the sidebar: square swatches set the background, round ones toggle the
-silhouette.
+The UI has all of this in the context bar under the canvas: square swatches set the background,
+round ones toggle the silhouette.
 
 ### Doing a lot at once
 

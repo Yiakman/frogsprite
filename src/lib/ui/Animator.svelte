@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { checkpoint, frogsprite as fs } from '../api/commands';
+	import { beginStroke, checkpoint, endStroke, frogsprite as fs } from '../api/commands';
 	import { form, notify } from './Dialog.svelte';
 	import { toSVG } from '../io/export';
 	import { compose, steps, TRANSITIONS, type Fx, type EffectPatch } from '../core/fx';
@@ -139,6 +139,55 @@
 		anim.frames.splice(i, 1);
 		if (editor.frame >= anim.frames.length) editor.stop();
 		editor.save();
+	}
+
+	// ---- whole-animation effect presets ------------------------------------
+	// Recipes over every frame at once, for anyone who has no idea what `fx` or `trail` mean. Each
+	// one is set_effects() — the same writer the tray below uses — so each is a single undo step.
+	// Beside the timeline because that is what they act on.
+
+	// Spectrum order, not palette order: a *cycle* has to walk the rainbow, and palette.ts lists the
+	// six as RGB-then-CMY, which lands red→green→blue on consecutive frames and reads as flashing.
+	const SPECTRUM: typeof HUES = ['red', 'yellow', 'green', 'cyan', 'blue', 'magenta'];
+
+	type Preset = { name: string; what: string; run: (frames: number) => void };
+
+	const PRESETS: Preset[] = [
+		{ name: 'Comet', what: 'a 5-frame motion trail on every frame',
+			run: () => fs.set_effects('*', { trail: 5 }) },
+		{ name: 'Ghost', what: 'a shorter, fainter trail',
+			run: () => fs.set_effects('*', { trail: { frames: 3, fade: 0.4 } }) },
+		{ name: 'Flash', what: 'every other frame inverted',
+			run: (n) => fs.set_effects(odd(n), { fx: { invert: true } }) },
+		{ name: 'Fade in', what: 'the first frame scans in from the top',
+			run: () => fs.set_effects(0, { transition: 'scan-down' }) },
+		// shaped, not uniform: a silhouette is an accent on one beat. Spread over every frame it
+		// never lets the sprite draw normally, which is how it turns into static.
+		{ name: 'Impact', what: 'a silhouette flash on the last frame only',
+			run: (n) => fs.set_effects(n - 1, { transition: 'silhouette', trail: null }) },
+		{ name: 'Hue cycle', what: 'the six hues spread across the run',
+			run: (n) => SPECTRUM.forEach((h, i) => fs.set_effects(block(n, i), { fx: { hue: h } })) },
+		{ name: 'Clear effects', what: 'strip every effect from every frame',
+			run: () => fs.set_effects('*', { fx: null, trail: null, transition: null }) }
+	];
+
+	const odd = (n: number) => [...Array(n).keys()].filter((i) => i % 2);
+	/** The `i`th of six even blocks of frames — the ones a hue lands on. */
+	const block = (n: number, i: number) =>
+		[...Array(n).keys()].filter((f) => Math.min(5, Math.floor((f / n) * 6)) === i);
+
+	function preset(p: Preset) {
+		const n = editor.frames.length;
+		// A preset is one gesture, like a drag is: begin/end fold the set_effects() snapshots inside
+		// it into a single step, so Hue cycle costs one ⌘Z rather than six.
+		beginStroke();
+		try {
+			p.run(n);
+		} catch (e) {
+			notify((e as Error).message);
+		} finally {
+			endStroke();
+		}
 	}
 </script>
 
@@ -364,6 +413,28 @@
 				<p class="none">No frames. Add sprites, then <code>set_animation([...])</code>.</p>
 			{/each}
 		</ol>
+
+		<div class="effects">
+			<h3>Effects</h3>
+			<div class="presets">
+				{#each PRESETS as p (p.name)}
+					<button class="preset" title={p.what} disabled={!editor.frames.length}
+						onclick={() => preset(p)}>{p.name}</button>
+				{/each}
+			</div>
+			{#if editor.frames.length}
+				<p class="none">
+					Whole-animation recipes for <strong>{editor.anim?.name}</strong> — {editor.frames.length}
+					frames. Each is one undo step. For one frame at a time, click its thumbnail above
+					and use the tray that opens.
+				</p>
+			{:else}
+				<p class="none">
+					Effects live on animation frames. Add some above first — then these recipes apply to
+					all of them at once.
+				</p>
+			{/if}
+		</div>
 	</div>
 {/if}
 
@@ -597,6 +668,45 @@
 		margin: 0;
 		font-size: 0.78rem;
 		color: #555;
+	}
+
+	/* ---- whole-animation presets ---- */
+	.effects {
+		margin-top: 0.75rem;
+	}
+	.effects h3 {
+		margin: 0 0 0.35rem;
+		font-size: 0.7rem;
+		font-weight: normal;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: #888;
+	}
+	.presets {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.3rem;
+	}
+	.preset {
+		background: #222;
+		color: #ddd;
+		border: 1px solid #444;
+		border-radius: 4px;
+		padding: 0.3rem 0.5rem;
+		font-size: 0.78rem;
+		cursor: pointer;
+	}
+	.preset:hover:not(:disabled) {
+		border-color: #35617d;
+		color: #cfe9ff;
+	}
+	.preset:disabled {
+		opacity: 0.35;
+		cursor: default;
+	}
+	.effects .none {
+		margin-top: 0.45rem;
+		line-height: 1.5;
 	}
 	code {
 		background: #222;
