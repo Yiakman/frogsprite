@@ -289,7 +289,8 @@ frogsprite.scroll_layer('road', { speed: -16 });   // loops flawlessly. also com
 
 This is nastier than a jump, because a jump at least *looks* wrong. A frozen layer looks like a layer
 you forgot to animate, and no single frame, no return value and no contact sheet shows it — only
-diffing two frames does. `scroll_layer` now refuses it by name, so you will get a real error rather
+diffing two frames does, which is one call: `diff_frames(0, 1)` and an `identical: true` is the layer
+sitting still. `scroll_layer` refuses the case by name, so you will get a real error rather
 than a still road; `{ seamless: false }` allows it if you actually meant it.
 
 The rule that avoids both traps: **the per-frame step must be a fraction of the repeat, and the whole
@@ -518,9 +519,9 @@ Two rules worth knowing:
 Blocking a sprite out with shapes and then detailing it with `paint_map()` is usually faster than
 plotting pixels by hand, and much easier to correct.
 
-In the UI these are under **Tools → Shapes** in the sidebar: one dialog per shape, filled, in the
-current colour. Outlines are JS-only. **Tools → Rotate** takes an angle, and optionally a `cx` and
-`cy` centre, and warns when a turn loses pixels.
+In the UI these are the shape buttons in the tool rail (the icon column left of the sidebar): one
+dialog per shape, filled, in the current colour. Outlines are JS-only. The rail's **Rotate** button
+takes an angle, and optionally a `cx` and `cy` centre, and warns when a turn loses pixels.
 
 ### Importing an image
 
@@ -732,12 +733,19 @@ thumbnail calls `view_frame`, and the frame it holds expands into an **effect tr
 `set_effects` calls documented above, with a `this frame | all frames` scope switch. A frame with a
 transition also gets a **reveal** slider there, which scrubs `phase` through the transition so you
 can see the middle of a scan or a dissolve while authoring it. Whole-animation recipes (Comet,
-Ghost, Flash, Fade in, Hue cycle, Clear effects) live behind **Effects** in the sidebar.
+Ghost, Flash, Fade in, Hue cycle, Clear effects) are the **Effects** buttons beside the timeline.
 
 ### Export
 
 Each returns its data (and also downloads a file when passed `{ download: true }`).
 
+- `sha256(data)` → **async**, hex. A data URL hashes as its **decoded bytes** — the PNG file, not
+  the base64 text — so the digest matches `shasum -a 256` of what arrives on the other side; a
+  plain string as its UTF-8 bytes. `export_zip` returns one of itself for free, so moving a set
+  across a boundary is one comparison rather than the hash-both-sides dance.
+  ```js
+  await frogsprite.sha256(frogsprite.export_png({ scale: 1 }));
+  ```
 - `export_svg({ sprite?, scale?, download? })` → SVG string, horizontal runs merged
 - `export_png({ sprite?, scale = 8, download? })` → `data:image/png;base64,…`
 - `export_ico({ sprite?, sizes = [16, 32, 48], download? })` → Promise of `data:image/x-icon;base64,…`
@@ -790,8 +798,10 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   render.
 
   `set.json` carries the full pixel data, so the archive reconstructs the set exactly — it is the
-  closest thing to a project file. Returns `{ filename, bytes, files }`; pass `base64: true` to also
-  get the archive bytes back (large — a 10-sprite 32×32 set is ~55 KB, so ~74 K characters).
+  closest thing to a project file. Returns `{ filename, bytes, files, sha256 }` — compare the digest
+  against `shasum -a 256` of what arrived, and a transfer across a machine boundary is verified;
+  pass `base64: true` to also get the archive bytes back (large — a 10-sprite 32×32 set is
+  ~55 KB, so ~74 K characters).
 
 ### Moving work in and out
 
@@ -829,10 +839,16 @@ cannot. In the UI: **Project → Save all… / Load…**, or drop a `.json` / `.
   name a layer. `opts` is `{ layer, set, pkg, rect }`, or a bare string for the layer
 - `print_sprite(sprite?, opts?)` — the same as ASCII rows plus a legend; easiest to eyeball. Also
   takes `{ legend }`, in `paint_map`'s shape
-- `read_frame(i?, { rect, animation })` / `print_frame(i?, { rect, animation, legend })` — the same
-  two reads, but of **a frame as the timeline draws it**: `fx`, trails, transitions and the frame's
+- `read_frame(i?, { rect, animation, set, pkg })` / `print_frame(i?, { rect, animation, legend, set, pkg })` —
+  the same two reads, but of **a frame as the timeline draws it**: `fx`, trails, transitions and the frame's
   per-layer arrangement all applied. `i` defaults to the frame being held, so `view_frame(3)` then
   `print_frame()` reads what is on screen
+- `diff_frames(i, j, { animation, set, pkg, rect })` — which pixels differ between two composed frames:
+  `{ animation, frames, identical, pixels, rows }`. This is the check that catches a frozen layer
+  or a wrong pose, which no single frame, no return value and no contact sheet shows — and doing it by
+  eye across two ASCII dumps is where coordinate mis-reads come from. `identical: true` is the red flag:
+  an animation drawing exactly the same thing twice. Coordinates are grid coordinates, so `pixels` feeds
+  straight back into `paint_pixel`
 
 **`print_sprite` cannot see a frame, and this is the mistake to get out of the way early.** A
 parallax scene is *one* sprite, and every `dx` and `hidden` that makes frame 4 differ from frame 3
@@ -861,10 +877,15 @@ frogsprite.print_sprite('scene', { rect, legend: { M: '#4a3a6a', s: '#ffee99' } 
 ```
 
 `set` and `pkg` read straight out of another set **without selecting it** — the selection, and any
-playback riding on it, stay exactly where they were:
+playback riding on it, stay exactly where they were. The sprite reads, the frame reads, `diff_frames`
+and `export_json` all take them, and the frame reads are the ones that matter for scripts: a
+verification run that does `new_set('verify')` mid-flight has just moved the selection, and without
+`{ set, pkg }` every frame read after it resolves against the scratch set and dies on
+`no animation "fly" in set "verify"`:
 
 ```js
 frogsprite.read_sprite('f0', { set: 'scene', pkg: 'parallax' });
+frogsprite.print_frame(0, { animation: 'fly', set: 'frog' });   // …frames too, now
 ```
 
 For everything at once, `export_json()` is the bulk read: every sprite, every layer, every pixel of a
@@ -924,8 +945,8 @@ every non-transparent pixel of one sprite (the active one by default) to that co
 `undo()` is the only way back. It returns `{ sprite, painted, color, permanent }`; a `null` colour is refused,
 since that would erase the sprite rather than flatten it.
 
-The UI has all of this under **Tools → View** in the sidebar: square swatches set the background, round ones toggle the
-silhouette.
+The UI has all of this in the context bar under the canvas: square swatches set the background,
+round ones toggle the silhouette.
 
 ### Doing a lot at once
 
@@ -1033,5 +1054,6 @@ frogsprite.export_animated_svg();
 | `src/lib/io/export.ts` | SVG / animated SVG / PNG / ICO encoders |
 | `src/lib/io/image.ts` | image import: trim, box-average, palette snap |
 | `src/lib/io/zip.ts` | dependency-free ZIP writer and single-entry reader (`Compression`/`DecompressionStream`) |
+| `src/lib/io/hash.ts` | `sha256` of a data URL (decoded bytes), text or `Blob` — transfer verification |
 | `src/lib/ui/*.svelte` | UI: sidebar, canvas, palette, animation timeline |
 | `src/lib/**/*.test.ts` | `npm test` — self-check for the DOM-free logic, one file per module, co-located |
