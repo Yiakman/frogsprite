@@ -577,6 +577,7 @@ an image"*; and a random image URL off the web, which needs CORS headers and usu
 | --- | --- | --- |
 | `fit` | `'contain'` | `'contain'` keeps the whole image with transparent padding, `'cover'` centre-crops to fill, `'stretch'` distorts |
 | `trim` | `true` | crop a transparent (or uniform-colour) border first, so a padded logo fills the grid |
+| `crop` | — | `{ x, y, w, h }` in the source image's own pixels — import only that region, and skip `trim` |
 | `alpha` | `128` | cells averaging below this alpha become transparent |
 | `contrast` | `0.15` | pre-quantize boost; `0` disables |
 | `saturation` | `1.2` | `1` disables, `0` is greyscale |
@@ -586,6 +587,21 @@ an image"*; and a random image URL off the web, which needs CORS headers and usu
 
 Returns `{ sprite, grid, colours }`. In the UI: the **Import image…** button, or drop/paste an image
 onto the canvas — those create a new sprite named after the file.
+
+#### Importing part of an image
+
+`crop` names the region to take, in the coordinates of the source image itself (before any internal
+downscaling), and stands in for `trim` — a region you chose by hand is not one an auto-trim should
+shrink further. `fit` then applies to that region, so a square crop under the default `'contain'`
+fills the grid edge to edge. A crop reaching past an edge is clamped; one entirely outside the image
+throws.
+
+```js
+await frogsprite.import_image(sheet, { crop: { x: 64, y: 0, w: 32, h: 32 }, newSprite: 'walk1' });
+```
+
+That is also how you slice a sprite sheet: one call per cell, same source, a different `crop` and
+`newSprite` each time.
 
 Coming back from `export_png` — the supported way to move a sprite into a **smaller** grid — pass
 `{ pixel: true }`. Without it the photo treatment applies to art that is already palette-exact:

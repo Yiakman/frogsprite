@@ -415,7 +415,9 @@ const api = {
 	 * `source` is a File/Blob, a data: / blob: / http(s) URL, or an ImageBitmap. An agent with no
 	 * file picker should pass a data URL. Options: `fit` ('contain' default, 'cover', 'stretch'),
 	 * `alpha` (0-255 cutoff for a cell counting as transparent, default 128), `trim` (crop a
-	 * transparent or uniform border first, default true), `contrast` (default 0.15),
+	 * transparent or uniform border first, default true), `crop` ({ x, y, w, h } in the source
+	 * image's own pixels — import just that region, and skip `trim`; loop it to slice a sprite
+	 * sheet), `contrast` (default 0.15),
 	 * `saturation` (default 1.2), `pixel` (the source is already pixel art — turns the three photo
 	 * treatments off, which is what you want re-importing an `export_png`), plus `sprite` to target
 	 * one by name or `newSprite` to create one, and `layer` to land on one by name. Like every painting verb this replaces the *active layer*,

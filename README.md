@@ -140,6 +140,10 @@ border, fit with `contain` / `cover` / `stretch`, and apply a small contrast and
 (small grids plus a coarse palette look flat without one). In the UI: the Import button, or drop or
 paste an image onto the canvas.
 
+Pass `crop: { x, y, w, h }` — in the source image's own pixels — to import one region instead of the
+whole picture. It stands in for the auto-trim, and `fit` then applies to the region you named; the
+same option slices a sprite sheet, one call per cell.
+
 Expect a starting point rather than a finished sprite — it works best on high-contrast, simple,
 centred subjects, and smooth gradients will band visibly.
 

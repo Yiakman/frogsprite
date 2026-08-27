@@ -17,6 +17,11 @@ export type ImportOptions = {
 	alpha?: number;
 	/** Crop away a transparent or uniform-colour border before fitting. */
 	trim?: boolean;
+	/**
+	 * Import only this region of the source, in the source image's own pixels. Takes the place of
+	 * `trim`: a region you chose by hand is not one an auto-trim should shrink further.
+	 */
+	crop?: Rect;
 	/** Pre-quantize punch-up; 0 is untouched. Small grids plus a coarse palette look flat without it. */
 	contrast?: number;
 	/** 1 is untouched, 0 is greyscale. */
@@ -29,7 +34,7 @@ export type ImportOptions = {
 };
 
 /** Options with every default filled in. `pixel` is spent during that, so it does not survive. */
-export type Settings = Required<Omit<ImportOptions, 'pixel'>>;
+export type Settings = Required<Omit<ImportOptions, 'pixel' | 'crop'>> & { crop: Rect | null };
 
 export type ImageSource = Blob | string | ImageBitmap | HTMLImageElement | HTMLCanvasElement;
 
@@ -38,7 +43,8 @@ const DEFAULTS = {
 	alpha: 128,
 	trim: true,
 	contrast: 0.15,
-	saturation: 1.2
+	saturation: 1.2,
+	crop: null as Rect | null
 };
 
 const FITS: Fit[] = ['contain', 'cover', 'stretch'];
@@ -73,6 +79,10 @@ export function normalise({ pixel, ...options }: ImportOptions): Settings {
 	// effects' job (`invert`, `tint`) rather than a pre-quantize touch-up gone very wrong
 	range('contrast', opts.contrast, -1, 1);
 	range('saturation', opts.saturation, 0, 4);
+	// the rest of the rectangle is clamped against the real image in `cropRect`, which is the
+	// first point that knows how big it is; an empty one cannot be salvaged there, so refuse here
+	if (opts.crop && !(opts.crop.w > 0 && opts.crop.h > 0))
+		throw new Error(`crop needs a positive w and h, got ${JSON.stringify(opts.crop)}`);
 	opts.trim = !!opts.trim;
 	return opts;
 }
@@ -186,7 +196,7 @@ export function sampleInto(
 	out: number[],
 	grid: number,
 	dest: Rect,
-	opts: Omit<Settings, 'fit' | 'trim'>
+	opts: Omit<Settings, 'fit' | 'trim' | 'crop'>
 ) {
 	for (let cy = 0; cy < dest.h; cy++) {
 		const fy0 = src.y + (cy * src.h) / dest.h;
@@ -234,6 +244,22 @@ export function sampleInto(
 			out[i] = nearestIndex(ar, ag, ab);
 		}
 	}
+}
+
+/**
+ * A caller's crop is in the source image's own pixels; the buffer it will be read from may have
+ * been reduced to MAX_SIDE, so it has to travel by the same scale. Clamped to the image rather
+ * than refused, so a rectangle drawn slightly over an edge still imports.
+ */
+export function cropRect({ x, y, w, h }: Rect, scale: number, maxW: number, maxH: number): Rect {
+	const px = (v: number, max: number) => Math.max(0, Math.min(max, Math.round(v * scale)));
+	const x0 = px(x, maxW);
+	const y0 = px(y, maxH);
+	const x1 = Math.max(x0, px(x + w, maxW));
+	const y1 = Math.max(y0, px(y + h, maxH));
+	if (x1 === x0 || y1 === y0)
+		throw new Error(`crop ${JSON.stringify({ x, y, w, h })} lies outside the ${maxW}x${maxH} image`);
+	return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
 async function decode(source: ImageSource): Promise<ImageBitmap> {
@@ -338,7 +364,11 @@ export async function imageToPixels(
 		ctx.drawImage(bitmap, 0, 0, w, h);
 
 		const { data } = ctx.getImageData(0, 0, w, h);
-		const bounds = opts.trim ? contentBounds(data, w, h, opts.alpha) : { x: 0, y: 0, w, h };
+		const bounds = opts.crop
+			? cropRect(opts.crop, scale, w, h)
+			: opts.trim
+				? contentBounds(data, w, h, opts.alpha)
+				: { x: 0, y: 0, w, h };
 		const { src, dest } = layout(opts.fit, bounds, grid);
 		const out = new Array<number>(grid * grid).fill(TRANSPARENT);
 		sampleInto(data, w, h, src, out, grid, dest, opts);

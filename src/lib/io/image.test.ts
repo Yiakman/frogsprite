@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { nearestIndex, PALETTE } from '../core/palette.ts';
-import { adjust, contentBounds, layout, normalise, sampleInto } from './image.ts';
+import { adjust, contentBounds, cropRect, layout, normalise, sampleInto } from './image.ts';
 
 /** Build RGBA data from rows of [r,g,b,a] tuples. */
 const rgba = (rows: number[][][]) =>
@@ -133,4 +133,24 @@ test('the palette survives a pixel round-trip that the photo defaults would shif
 	const pixel = normalise({ pixel: true });
 	assert.ok(drift(photo.contrast, photo.saturation) > 100, 'the photo defaults do move colours');
 	assert.equal(drift(pixel.contrast, pixel.saturation), 0, 'pixel: true moves none of them');
+});
+
+test('cropRect follows the MAX_SIDE reduction and clamps to the image', () => {
+	// a 2000px source reduced to 1000 halves every coordinate with it
+	assert.deepEqual(cropRect({ x: 100, y: 40, w: 256, h: 256 }, 0.5, 1000, 1000), {
+		x: 50,
+		y: 20,
+		w: 128,
+		h: 128
+	});
+	// over the edge is clamped, not refused
+	assert.deepEqual(cropRect({ x: 90, y: 90, w: 50, h: 50 }, 1, 100, 100), {
+		x: 90,
+		y: 90,
+		w: 10,
+		h: 10
+	});
+	assert.throws(() => cropRect({ x: 200, y: 0, w: 50, h: 50 }, 1, 100, 100), /outside the 100x100/);
+	assert.throws(() => normalise({ crop: { x: 0, y: 0, w: 0, h: 10 } }), /positive w and h/);
+	assert.equal(normalise({}).crop, null);
 });
