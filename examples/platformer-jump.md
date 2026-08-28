@@ -1,16 +1,22 @@
-# Platformer jump — a working palette, and a six-frame arc
+# Platformer jump — sixteen colours, and a light that moves
 
-> A 16×16 jump cycle painted inside PICO-8's sixteen colours: what a working palette constrains, what it deliberately does not, and the one way it still bites.
+> A 16×16 jump cycle painted inside PICO-8's sixteen colours, then lit by normal maps derived from its own silhouette: what a working palette constrains, what it deliberately does not, and what it takes to make a flat sprite react to a moving light.
 
-One set, `hero` (16). **Six sprites, one animation.** The art is ordinary; the
-point is the first line of the script:
+One set, `hero` (16). **Six sprites, one animation, six normal maps.** The art is
+ordinary; the two things worth reading for are the first line of the script and
+the last:
 
 ```js
-fs.palette('pico8');   // → { palette: 'pico8', colors: 16, hexes: [...] }
+const fs = frogsprite;
+
+fs.palette('pico8');             // → { palette: 'pico8', colors: 16, hexes: [...] }
+// ... six poses and an animation ...
+fs.normals_from_sprite('*');     // one normal map per pose, from the silhouette
 ```
 
-Everything painted after that lands inside those sixteen colours, including
-hexes that are not any of them.
+Everything painted after that first line lands inside those sixteen colours,
+including hexes that are not any of them. Everything after the last one reacts to
+a light. Nothing in between is drawn twice.
 
 ## What it demonstrates
 
@@ -22,6 +28,10 @@ hexes that are not any of them.
 | Hang time carried by `ms`, not by art | `apex` holds 140ms against 80ms for `rise` and `fall` |
 | Reading the set back | `palette()` with no argument returns the active hexes |
 | Escaping the set on purpose | an index still paints itself, whatever is active |
+| A normal map from the silhouette | `normals_from_sprite('*')` bevels all six poses |
+| Directions stored as labels, not normals | nine cube-exact indices, translated at export |
+| The palette earning its keep twice | `palette('normals')` makes those labels the swatches |
+| Proving a normal map is right | `export_lit()` — drag the light and watch the shading swing |
 
 ## The build
 
@@ -63,13 +73,14 @@ fs.paint_map([
 ```
 
 `land` is its opposite — five empty rows at the top, the figure squashed to ten
-pixels wide:
+pixels wide. Its first four painted rows, where the squash is:
 
 ```js
-'...KKKKKKKKKK...',
+'...KKKKKKKKKK...',    // rows 0-4 are empty: the figure has dropped
 '..KKHHHHHHHHKK..',
 '..KHHHHHHHHHHK..',
 '..KSSSSSSSSSSK..',
+// ... eight more rows
 ```
 
 The arc, with the timing doing the work `apex` art cannot:
@@ -86,7 +97,7 @@ fs.set_animation([
 ```
 
 Six frames, 700ms. `contact_sheet({ animation: 'jump' })` reads left to right as
-crouch, stretch, spread, reach, squash, stand.
+a shape, not a list of names: squat, stretch, spread, reach, squash, stand.
 
 ## What the working set actually does
 
@@ -103,8 +114,8 @@ Because every hex-to-index path in the editor funnels through one
 `nearestIndex`, this reaches `paint_map`, `shapes.*`, `ramp` and `import_image`
 without any of them taking a palette argument. A whole set comes out coherent
 instead of scattered across thirty unrelated cube entries — which is the
-mechanical version of the advice in [README.md](README.md) to pick cube
-coordinates by hand.
+mechanical version of [the palette trap](README.md#the-palette-is-the-trap) and
+its advice to pick cube coordinates by hand.
 
 **An index is not a request to snap.** `paint_pixel(x, y, 42)` paints 42, and
 `color(42)` is 42, whatever is active. The set constrains *choosing* a colour,
@@ -136,13 +147,21 @@ do not care which of the sixteen you get.
 Check it in one line rather than trusting it:
 
 ```js
+// palette() with no argument is index-aligned — hexes[3] really is colour 3 — but
+// only reports what is *active*, so the full table has to be read with the cube on
+// and the working set put back afterwards
+fs.palette('cube');
+const hexes = fs.palette();                    // 256 entries, hexes[0] === 'transparent'
 const set = fs.palette('pico8');
-const hexes = fs.palette('cube');           // index → hex, all 256
-fs.palette('pico8');
+
 [...new Set(fs.read_sprite('idle').flat())]
   .filter(v => v !== 0)
   .every(v => set.hexes.includes(hexes[v]));   // → true
 ```
+
+Do not reach for `palette('cube').hexes` here. That list is the colours *in* the
+palette — 255 entries starting at index 1, transparent omitted — so indexing it by
+a pixel value is off by one. The no-argument read is the index-aligned one.
 
 ## Presets, and your own
 
