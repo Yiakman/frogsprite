@@ -279,15 +279,21 @@ function isoEven(v: unknown, what: string): number {
 	return n;
 }
 
-/** N, E, S, W of a 2:1 diamond. w and d must already be even and congruent mod 4. */
+/**
+ * N, E, S, W of a 2:1 diamond centred on (cx, cy). w and d must already be even and congruent
+ * mod 4, which is exactly what makes all four half-extents whole. The two axes are (+w, +w/2) and
+ * (-d, +d/2), so N/S are offset sideways by half their difference — a rhombus, not a kite.
+ */
 function isoDiamond(cx: number, cy: number, w: number, d: number): Point[] {
-	const halfH = (w + d) >> 2;
-	const skew = (w - d) >> 2;
+	const hx = (w + d) >> 1;
+	const hy = (w + d) >> 2;
+	const sx = (w - d) >> 1;
+	const sy = (w - d) >> 2;
 	return [
-		[cx, cy - halfH],
-		[cx + w, cy + skew],
-		[cx, cy + halfH],
-		[cx - d, cy - skew]
+		[cx - sx, cy - hy],
+		[cx + hx, cy + sy],
+		[cx + sx, cy + hy],
+		[cx - hx, cy - sy]
 	];
 }
 

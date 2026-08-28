@@ -205,3 +205,20 @@ test('isoToGrid is the 2:1 lattice', () => {
 	assert.deepEqual(shapes.isoToGrid(0, 0), { dx: 0, dy: 0 });
 	assert.throws(() => shapes.isoToGrid(0.5, 0, 0), /whole number/);
 });
+
+test('a w != d iso tile is still a rhombus, not a kite', () => {
+	const px = new Array(40 * 40).fill(0);
+	shapes.isoBox(px, 40, 20, 20, 8, 4, 0, { top: 1 });
+	// the two axes are (+8, +4) and (-4, +2) about the centre, so the four vertices are a
+	// parallelogram: N + S === E + W === twice the centre
+	const at = (x: number, y: number) => px[y * 40 + x];
+	assert.equal(at(18, 17), 1, 'north vertex');
+	assert.equal(at(26, 21), 1, 'east vertex');
+	assert.equal(at(22, 23), 1, 'south vertex — (w - d) / 2 right of north, not above it');
+	assert.equal(at(14, 19), 1, 'west vertex');
+	const cells = drawn(px, 40);
+	const xs = cells.map(([x]) => x);
+	const ys = cells.map(([, y]) => y);
+	assert.equal(Math.max(...xs) - Math.min(...xs), 12, 'w + d across');
+	assert.equal(Math.max(...ys) - Math.min(...ys), 6, '(w + d) / 2 down');
+});
