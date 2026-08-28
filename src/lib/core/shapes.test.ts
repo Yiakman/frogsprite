@@ -222,3 +222,29 @@ test('a w != d iso tile is still a rhombus, not a kite', () => {
 	assert.equal(Math.max(...xs) - Math.min(...xs), 12, 'w + d across');
 	assert.equal(Math.max(...ys) - Math.min(...ys), 6, '(w + d) / 2 down');
 });
+
+test('isoToGrid takes the tile size iso_tile takes, and defaults to the unit cell', () => {
+	assert.deepEqual(shapes.isoToGrid(1, 0, { w: 8 }), { dx: 8, dy: 4 }, 'one 16x8 tile down-right');
+	assert.deepEqual(shapes.isoToGrid(0, 1, { w: 8 }), { dx: -8, dy: 4 }, 'and one down-left');
+	assert.deepEqual(shapes.isoToGrid(1, 0), shapes.isoToGrid(1, 0, { w: 2 }), 'w defaults to the unit cell');
+	// z is pixels, so the same lift on any lattice — it is the one term w does not scale
+	assert.deepEqual(shapes.isoToGrid(0, 0, { w: 8, z: 4 }), { dx: 0, dy: -4 });
+	assert.deepEqual(shapes.isoToGrid(0, 0, 4), { dx: 0, dy: -4 }, 'and the bare-number form still means z');
+	assert.throws(() => shapes.isoToGrid(1, 0, { w: 3 }), /even/, 'an odd w would half-pixel every other row');
+	assert.throws(() => shapes.isoToGrid(1, 0, { w: 0 }), /at least 2/);
+	assert.throws(() => shapes.isoToGrid(1, 0, { w: 8, z: null as any }), /whole number/, 'null z is still a mistake');
+});
+
+test('a floor placed with isoToGrid is exactly the lattice iso_tile tessellates', () => {
+	// the whole point of the option: the placement helper and the shape now agree without arithmetic
+	const W = 8, G = 64;
+	const px = new Array(G * G).fill(0);
+	for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) {
+		const { dx, dy } = shapes.isoToGrid(i, j, { w: W });
+		shapes.isoTile(px, G, 32 + dx, 8 + dy, W, 1);
+	}
+	let holes = 0;
+	for (let y = 0; y < G; y++) for (let x = 0; x < G; x++)
+		if (!px[y * G + x] && Math.abs(x - 32) / 2 + Math.abs(y - 24) < 12) holes++;
+	assert.equal(holes, 0, 'neighbours share edges, so the field has no gaps');
+});

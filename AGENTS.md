@@ -653,12 +653,15 @@ and `iso_box` are JS-only, like `rect`.
 `iso_to_grid`.
 
 ```js
-frogsprite.background('iso-grid');                          // a lattice to check vertices against
-frogsprite.shapes.iso_tile(64, 34, 8, '#666699');           // one floor tile, 16 across by 8 down
-frogsprite.shapes.iso_box(64, 42, 8, 8, 24, {
+const W = 8, OX = 64, OY = 20;                     // 16 x 8 tiles, and where (0, 0) sits
+for (let i = 0; i < 10; i++) for (let j = 0; j < 10; j++) {
+  const { dx, dy } = frogsprite.iso_to_grid(i, j, { w: W });
+  frogsprite.shapes.iso_tile(OX + dx, OY + dy, W, (i + j) % 2 ? '#666699' : '#669999');
+}
+const wall = frogsprite.iso_to_grid(3, -1, { w: W });        // the same lattice holds boxes
+frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
   top: '#99cccc', left: '#669999', right: '#336666'
 });
-const { dx, dy } = frogsprite.iso_to_grid(0, 0, 4);         // jump 4px up
 ```
 
 - **`iso_tile(cx, cy, w)`** — diamond centred on `(cx, cy)`, width `2w`, height `w`. `w` even and ≥ 2.
@@ -666,26 +669,18 @@ const { dx, dy } = frogsprite.iso_to_grid(0, 0, 4);         // jump 4px up
   extrudes screen-up. `w` and `d` even, ≥ 2, congruent modulo 4 (so the 2:1 vertices land on pixels).
   `h === 0` is just the top tile. Paint order is left, right, top, then outline — top wins on the
   ridges. Missing `left` / `right` / `outline` skips that face.
-- **`iso_to_grid(x, y, z = 0)`** → `{ dx: (x - y) * 2, dy: (x + y) - z }`. Integers only. A 1×1×1
-  world cube is `iso_box(..., 2, 2, 1)` because one world-x step is 2px across.
-
-**The two ends of this count in different units, and neither signature says so.** `iso_to_grid` is
-in world units of **2px across**; `iso_tile` and `iso_box` are in **screen half-width**. A tile of
-half-width `w` sits `w` across and `w/2` down from its neighbour, which is `w/2` world units — so a
-floor of them is:
-
-```js
-const W = 8;                                                  // 16 x 8 tiles
-for (let i = 0; i < 10; i++) for (let j = 0; j < 10; j++) {
-  const { dx, dy } = frogsprite.iso_to_grid(i * W / 2, j * W / 2);
-  frogsprite.shapes.iso_tile(64 + dx, 20 + dy, W, (i + j) % 2 ? '#666699' : '#669999');
-}
-```
-
-Both ways of getting the scale wrong are silent, and they fail in opposite directions:
-`iso_to_grid(i * W, …)` doubles the step to `(16, 8)` and leaves a gap between every tile, while
-`iso_to_grid(i, …)` quarters it to `(2, 1)` and smears them through each other. Neither call has
-anything to check it against.
+- **`iso_to_grid(x, y, z?)`** or **`iso_to_grid(x, y, { w, z })`** → `{ dx, dy }`, a screen offset
+  to add to wherever you put the origin. Integers only.
+  - **`w` is the same tile half-width `iso_tile` takes**, so a lattice and the shapes standing on it
+    are said in one unit: `iso_to_grid(i, j, { w: 8 })` steps one 16×8 tile per `i`, and feeding
+    `dx`/`dy` straight to `iso_tile(…, 8)` tessellates with no arithmetic in between. Even and ≥ 2,
+    the constraint `iso_tile` already has — `dy` multiplies by `w / 2`, and an odd `w` would put
+    every other row of the lattice on a half pixel.
+  - **It defaults to `2`**, the unit cell, which is what this returned before it took one:
+    `{ dx: (x - y) * 2, dy: (x + y) - z }`. Omit `{ w }` and `x`/`y` are those 2px units rather than
+    tiles, which on a real tile size reads as the whole floor collapsed into a smear.
+  - **`z` is pixels and does not scale with `w`** — the same unit as `iso_box`'s `h`, so
+    `iso_to_grid(0, 0, 4)` is a 4px jump whatever the tiles measure.
 
 **`background('iso-grid')` only shows through transparent pixels**, like every other backdrop — see
 [Reviewing what you drew](#reviewing-what-you-drew). A finished scene is opaque wall to wall, so it
@@ -1135,7 +1130,9 @@ set.sprites[0].layers[0].pixels;   // a plain array, grid * grid long
   `palette()` reads the active list as hexes, `palette('pico8')` sets a preset, `palette([...])`
   takes your own, `palette('cube')` restores all 256. See [Colours](#colours)
 - `palettes()` — the preset names, with the colour count each one survives snapping with
-- `iso_to_grid(x, y, z?)` — 2:1 world `(x, y, z)` to screen `{ dx, dy }`. Integers only
+- `iso_to_grid(x, y, z?)` / `iso_to_grid(x, y, { w, z })` — a 2:1 lattice point to a screen
+  `{ dx, dy }`. `w` is the tile half-width `iso_tile` takes and defaults to `2`; `z` stays in pixels.
+  Integers only
 - `normals_from_sprite(sprite?, opts?)` — derive a normal map from the silhouette into `<name>.n`;
   `'*'` does the whole set. See [Normal maps](#normal-maps)
 - `export_normal_map(opts?)` — a normal map as a PNG, labels translated to true normal RGB

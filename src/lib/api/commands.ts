@@ -1780,8 +1780,19 @@ const api = {
 	/** Palette index for a colour — color('#22aa33') → nearest index. */
 	color: ro((c: Color) => toIndex(c)),
 
-	/** Screen offset of a 2:1 world point: `dx = (x - y) * 2`, `dy = (x + y) - z`. Integers only. */
-	iso_to_grid: ro((x: number, y: number, z = 0) => shape.isoToGrid(x, y, z)),
+	/**
+	 * Screen offset of a 2:1 world point, in the units `shapes.iso_tile` and `shapes.iso_box` take.
+	 *
+	 *   iso_to_grid(i, j, { w: 8 })   // tile (i, j) of a floor of 16 x 8 diamonds
+	 *   iso_to_grid(0, 0, 4)          // 4px straight up, on any size of tile
+	 *
+	 * `w` is the tile half-width `iso_tile` takes — even and at least 2 — so a lattice and the shapes
+	 * on it are said in one unit. It defaults to `2`, the unit cell: `{ dx: (x - y) * 2, dy: x + y - z }`.
+	 * `z` is pixels and does not scale with `w`, matching `iso_box`'s `h`. Integers only.
+	 */
+	iso_to_grid: ro((x: number, y: number, zOrOpts: number | { w?: number; z?: number } = 0) =>
+		shape.isoToGrid(x, y, zOrOpts)
+	),
 
 	/**
 	 * `steps` palette indices blending evenly between two colours, ends included — a sky gradient or

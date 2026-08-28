@@ -388,10 +388,38 @@ export function isoBox(
 	return all.size;
 }
 
-/** Screen offset of a 2:1 world point. One world-x is 2px across, 1px down. */
-export function isoToGrid(x: number, y: number, z = 0): { dx: number; dy: number } {
+/**
+ * Screen offset of a 2:1 world point, in the units `isoTile` and `isoBox` already take.
+ *
+ *   isoToGrid(i, j, { w: 8 })   // tile (i, j) of a floor of 16 x 8 diamonds
+ *   isoToGrid(0, 0, 4)          // 4px straight up, on any size of tile
+ *
+ * `w` is the tile half-width, meaning exactly what it means in `isoTile(cx, cy, w)` — so a lattice
+ * and the shapes standing on it are said in one unit instead of two. It defaults to `2`, the unit
+ * cell, which is what this returned before it took one, so every existing call is unchanged. Even
+ * and >= 2 for the reason `isoTile` insists on it: `dy` multiplies by `w / 2`, and an odd `w` would
+ * put every other row of the lattice on a half pixel.
+ *
+ * `z` is the one term that does **not** scale with `w`. It is pixels, the same unit as `isoBox`'s
+ * `h`, so a jump is the same jump whatever the tiles measure. Scaling it would quietly redefine
+ * every `isoToGrid(x, y, z)` ever written, the moment a `w` appeared next to it.
+ *
+ * ponytail: one `w`, no `d`. `isoDiamond` does handle `w != d`, so a rhombus lattice is already
+ * drawable and this leaves it unplaceable — deliberately, since square tiles are the case that
+ * actually got built by hand. Add `{ d }` here, defaulting to `w`, if anyone lays one out.
+ */
+export function isoToGrid(
+	x: number,
+	y: number,
+	zOrOpts: number | { w?: number; z?: number } = 0
+): { dx: number; dy: number } {
+	// one option bag rather than a fourth argument: `{ w, z }` already says everything a trailing
+	// opts could, and a parameter whose meaning depends on the type of the one before it is worse
+	const spec = typeof zOrOpts === 'object' && zOrOpts !== null ? zOrOpts : { z: zOrOpts };
+	const w = spec.w === undefined ? 2 : isoEven(spec.w, 'w');
 	const xx = whole(x, 'x');
 	const yy = whole(y, 'y');
-	const zz = whole(z, 'z');
-	return { dx: (xx - yy) * 2, dy: xx + yy - zz };
+	// `=== undefined` rather than `??`, so an explicit null still throws instead of reading as 0
+	const zz = whole(spec.z === undefined ? 0 : spec.z, 'z');
+	return { dx: (xx - yy) * w, dy: (xx + yy) * (w / 2) - zz };
 }
