@@ -8,6 +8,7 @@ import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image
 import { diffPixels, GRIDS, put, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
 import { sha256 as hashOf } from '../io/hash.ts';
 import { freeName, taken } from '../core/names.ts';
+import { normalsOf } from '../core/normals.ts';
 import { BASE, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, period as periodOf, placeAt, poseAt, scrollStep, shownAs } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
@@ -1258,6 +1259,111 @@ const api = {
 	view_frame: ro((i: number) => editor.viewFrame(i)),
 
 	// ---- export ----------------------------------------------------------
+	/**
+	 * Derive a normal map from the sprite's own silhouette: flat across the middle, turning outward
+	 * at the edges. Written to a sibling sprite named `<name>.n`, which is the convention every
+	 * normal-map export looks for.
+	 *
+	 *   normals_from_sprite();              // the selected sprite
+	 *   normals_from_sprite('*');           // every sprite in the set that is not itself a map
+	 *
+	 * `strength` is the **bevel threshold**, not a depth — every direction the map can hold sits at
+	 * the same tilt, so turning it up bevels more of the sprite rather than steepening what is
+	 * already bevelled. `blur` is how far in from the edge the bevel reaches.
+	 *
+	 * Re-running overwrites the existing map rather than making a second one: a `.n-2` would be an
+	 * orphan, since every exporter goes looking for `.n`.
+	 */
+	normals_from_sprite: mut(function (
+		sprite?: string,
+		{ strength = 1, blur = 2, to }: { strength?: number; blur?: number; to?: string } = {}
+	) {
+		const set = editor.requireSet();
+		if (!(strength > 0)) throw new Error(`strength must be above 0, got ${strength}`);
+		if (!Number.isInteger(blur) || blur < 0 || blur > 8)
+			throw new Error(`blur must be a whole number from 0 to 8, got ${blur}`);
+		if (sprite === '*' && to) throw new Error('`to` names one sprite, so it cannot be used with *');
+
+		const wanted =
+			sprite === '*'
+				? set.sprites.filter((s) => !s.name.endsWith('.n')).map((s) => s.name)
+				: [target(sprite).sprite.name];
+
+		const made = wanted.map((name) => {
+			const t = target(name);
+			const { labels, painted } = normalsOf(seen(t), t.grid, { strength, blur });
+			const named = to ?? `${name}.n`;
+			const existing = set.sprites.find((s) => s.name === named);
+			if (existing) existing.layers = [{ name: BASE, pixels: labels }];
+			else set.sprites.push({ name: named, layers: [{ name: BASE, pixels: labels }] });
+			return { sprite: named, from: name, painted };
+		});
+		editor.sel = { ...editor.sel, sprite: made[made.length - 1].sprite, layer: BASE };
+		return sprite === '*' ? made : made[0];
+	}),
+
+	/**
+	 * A normal map as a PNG, with its direction labels translated to true normal RGB — the one place
+	 * that translation happens, and the reason the stored sprite is not itself a normal map.
+	 *
+	 * Defaults to the OpenGL convention (green is up), which is what Godot and Unity URP 2D expect.
+	 * `flipY: true` gives the DirectX convention instead.
+	 */
+	export_normal_map: ro(function ({
+		sprite,
+		scale = 8,
+		flipY = false,
+		download = false
+	}: { sprite?: string; scale?: number; flipY?: boolean; download?: boolean } = {}) {
+		const name = target(sprite).sprite.name;
+		const base = name.endsWith('.n') ? name.slice(0, -2) : name;
+		const t = target(`${base}.n`);
+		const url = ex.toNormalPNG(seen(t), t.grid, scale, flipY);
+		if (download) ex.download(url, `${ex.safeFile(base)}_n.png`);
+		return url;
+	}),
+
+	/**
+	 * A self-contained HTML page that lights the sprite with its normal map, cursor as the light.
+	 *
+	 * A normal map PNG tells a human nothing — "it exported" and "it is correct" look the same. Drag
+	 * the light here and the shading swings with it, or it does not and the map is wrong.
+	 */
+	export_lit: ro(function ({
+		animation,
+		sprite,
+		zoom = 12,
+		download = false
+	}: { animation?: string; sprite?: string; zoom?: number; download?: boolean } = {}) {
+		const set = editor.requireSet();
+		// a still sprite is a one-frame animation, so there is one code path rather than two
+		const frames =
+			sprite || !(animation || editor.anim)
+				? [{ sprite: (() => { const n = target(sprite).sprite.name; return n.endsWith('.n') ? n.slice(0, -2) : n; })(), ms: 1 }]
+				: animOf(animation).frames;
+		if (!frames.length) throw new Error('that animation has no frames');
+		const art = ex.toSpritesheet(set.sprites, frames, set.grid, { scale: 1, image: 'a.png' });
+		const map = ex.toSpritesheet(set.sprites, ex.normalFrames(set.sprites, frames), set.grid, {
+			cols: art.meta.cols,
+			scale: 1,
+			transitions: false,
+			colors: ex.normalColorTable(),
+			normals: true,
+			image: 'n.png'
+		});
+		const name = sprite ? frames[0].sprite : (animation ?? editor.anim?.name ?? 'sprite');
+		const html = ex.toLitHTML(art.url, map.url, {
+			frames: art.meta.frames.map((f) => ({ x: f.x, y: f.y, ms: f.ms })),
+			cell: art.meta.frameWidth,
+			title: `${set.name}/${name}`,
+			file: ex.safeFile(name),
+			zoom
+		});
+		if (download)
+			ex.downloadBlob(new Blob([html], { type: 'text/html' }), `${ex.safeFile(name)}-lit.html`);
+		return { name, frames: frames.length, html };
+	}),
+
 	export_svg: ro(function ({ sprite, scale = 1, download = false } = {} as any) {
 		const t = target(sprite);
 		const svg = ex.toSVG(seen(t), t.grid, scale); // display, not edit: the whole stack
@@ -1300,12 +1406,20 @@ const api = {
 	 * a CSS `steps()` background) needs nothing but the PNG. The JSON carries what the strip
 	 * cannot: which sprite each cell came from, and how long it is held.
 	 */
-	export_spritesheet: ro(function ({ animation, cols, scale = 8, effects = true, transitions = true, download = false }: { animation?: string; cols?: number; scale?: number; effects?: boolean; transitions?: boolean; download?: boolean } = {}) {
+	export_spritesheet: ro(function ({ animation, cols, scale = 8, effects = true, transitions = true, normals = false, download = false }: { animation?: string; cols?: number; scale?: number; effects?: boolean; transitions?: boolean; normals?: boolean; download?: boolean } = {}) {
 		const set = editor.requireSet();
 		const anim = animOf(animation);
 		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
-		const base = `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}-sheet`;
-		const { url, meta } = ex.toSpritesheet(set.sprites, anim.frames, set.grid, { cols, scale, effects, transitions, image: `${base}.png` });
+		const stem = `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}-sheet`;
+		const base = `${stem}${normals ? '_n' : ''}`;
+		// the albedo sheet names its normal sibling when one can be built, so the .json an engine
+		// reads is self-describing rather than leaving the `_n` suffix to be inferred
+		const lightable = anim.frames.every((f) => set.sprites.some((s) => s.name === `${f.sprite}.n`));
+		// same cols and scale either way, so frame i lands in the same cell in both sheets and one
+		// meta describes the pair — that alignment is the whole contract with the engine
+		const { url, meta } = normals
+			? ex.toSpritesheet(set.sprites, ex.normalFrames(set.sprites, anim.frames), set.grid, { cols, scale, effects, transitions: false, colors: ex.normalColorTable(), normals: true, image: `${base}.png` })
+			: ex.toSpritesheet(set.sprites, anim.frames, set.grid, { cols, scale, effects, transitions, image: `${base}.png`, ...(lightable ? { normalImage: `${stem}_n.png` } : {}) });
 		if (download) {
 			ex.download(url, `${base}.png`);
 			ex.downloadJSON(meta, `${base}.json`);

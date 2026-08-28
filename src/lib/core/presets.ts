@@ -3,7 +3,15 @@
 // so they are spelled out. Each one snaps onto the cube when it is made active, which is lossy —
 // `palette()` reports how many distinct entries survived so a collision is visible rather than
 // silent.
+import { LABEL_HEXES } from './normals.ts';
+
 export const PRESETS: Record<string, string[]> = {
+	/**
+	 * The nine normal-map direction labels. Not a colour scheme — the one palette here whose entries
+	 * mean something rather than look like something, and the reason hand-editing a `.n` sprite lands
+	 * on a direction instead of near one.
+	 */
+	normals: [...LABEL_HEXES],
 	pico8: [
 		'#000000', '#1d2b53', '#7e2553', '#008751', '#ab5236', '#5f574f', '#c2c3c7', '#fff1e8',
 		'#ff004d', '#ffa300', '#ffec27', '#00e436', '#29adff', '#83769c', '#ff77a8', '#ffccaa'

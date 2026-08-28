@@ -1,16 +1,22 @@
-# Platformer jump — a working palette, and a six-frame arc
+# Platformer jump — sixteen colours, and a light that moves
 
-> A 16×16 jump cycle painted inside PICO-8's sixteen colours: what a working palette constrains, what it deliberately does not, and the one way it still bites.
+> A 16×16 jump cycle painted inside PICO-8's sixteen colours, then lit by normal maps derived from its own silhouette: what a working palette constrains, what it deliberately does not, and what it takes to make a flat sprite react to a moving light.
 
-One set, `hero` (16). **Six sprites, one animation.** The art is ordinary; the
-point is the first line of the script:
+One set, `hero` (16). **Six sprites, one animation, six normal maps.** The art is
+ordinary; the two things worth reading for are the first line of the script and
+the last:
 
 ```js
-fs.palette('pico8');   // → { palette: 'pico8', colors: 16, hexes: [...] }
+const fs = frogsprite;
+
+fs.palette('pico8');             // → { palette: 'pico8', colors: 16, hexes: [...] }
+// ... six poses and an animation ...
+fs.normals_from_sprite('*');     // one normal map per pose, from the silhouette
 ```
 
-Everything painted after that lands inside those sixteen colours, including
-hexes that are not any of them.
+Everything painted after that first line lands inside those sixteen colours,
+including hexes that are not any of them. Everything after the last one reacts to
+a light. Nothing in between is drawn twice.
 
 ## What it demonstrates
 
@@ -22,6 +28,10 @@ hexes that are not any of them.
 | Hang time carried by `ms`, not by art | `apex` holds 140ms against 80ms for `rise` and `fall` |
 | Reading the set back | `palette()` with no argument returns the active hexes |
 | Escaping the set on purpose | an index still paints itself, whatever is active |
+| A normal map from the silhouette | `normals_from_sprite('*')` bevels all six poses |
+| Directions stored as labels, not normals | nine cube-exact indices, translated at export |
+| The palette earning its keep twice | `palette('normals')` makes those labels the swatches |
+| Proving a normal map is right | `export_lit()` — drag the light and watch the shading swing |
 
 ## The build
 
@@ -63,13 +73,14 @@ fs.paint_map([
 ```
 
 `land` is its opposite — five empty rows at the top, the figure squashed to ten
-pixels wide:
+pixels wide. Its first four painted rows, where the squash is:
 
 ```js
-'...KKKKKKKKKK...',
+'...KKKKKKKKKK...',    // rows 0-4 are empty: the figure has dropped
 '..KKHHHHHHHHKK..',
 '..KHHHHHHHHHHK..',
 '..KSSSSSSSSSSK..',
+// ... eight more rows
 ```
 
 The arc, with the timing doing the work `apex` art cannot:
@@ -86,7 +97,7 @@ fs.set_animation([
 ```
 
 Six frames, 700ms. `contact_sheet({ animation: 'jump' })` reads left to right as
-crouch, stretch, spread, reach, squash, stand.
+a shape, not a list of names: squat, stretch, spread, reach, squash, stand.
 
 ## What the working set actually does
 
@@ -103,8 +114,8 @@ Because every hex-to-index path in the editor funnels through one
 `nearestIndex`, this reaches `paint_map`, `shapes.*`, `ramp` and `import_image`
 without any of them taking a palette argument. A whole set comes out coherent
 instead of scattered across thirty unrelated cube entries — which is the
-mechanical version of the advice in [README.md](README.md) to pick cube
-coordinates by hand.
+mechanical version of [the palette trap](README.md#the-palette-is-the-trap) and
+its advice to pick cube coordinates by hand.
 
 **An index is not a request to snap.** `paint_pixel(x, y, 42)` paints 42, and
 `color(42)` is 42, whatever is active. The set constrains *choosing* a colour,
@@ -136,13 +147,21 @@ do not care which of the sixteen you get.
 Check it in one line rather than trusting it:
 
 ```js
+// palette() with no argument is index-aligned — hexes[3] really is colour 3 — but
+// only reports what is *active*, so the full table has to be read with the cube on
+// and the working set put back afterwards
+fs.palette('cube');
+const hexes = fs.palette();                    // 256 entries, hexes[0] === 'transparent'
 const set = fs.palette('pico8');
-const hexes = fs.palette('cube');           // index → hex, all 256
-fs.palette('pico8');
+
 [...new Set(fs.read_sprite('idle').flat())]
   .filter(v => v !== 0)
   .every(v => set.hexes.includes(hexes[v]));   // → true
 ```
+
+Do not reach for `palette('cube').hexes` here. That list is the colours *in* the
+palette — 255 entries starting at index 1, transparent omitted — so indexing it by
+a pixel value is off by one. The no-argument read is the index-aligned one.
 
 ## Presets, and your own
 
@@ -163,6 +182,74 @@ fs.palette(['#1a1c2c', '#f4f4f4', '#b13e53', '#38b764']);   // 'custom', 4 colou
 fs.palette('cube');                                          // back to all 256
 ```
 
+## Lighting it: the normal-map pass
+
+The same six poses, lit by a moving light, without drawing anything new:
+
+```js
+fs.normals_from_sprite('*');     // six maps, one per pose, named idle.n, crouch.n, ...
+fs.export_lit({ animation: 'jump', download: true });
+```
+
+`normals_from_sprite` reads the silhouette and writes a bevel: flat across the interior, turning
+outward at the edges. Read one back and the shape is legible as text, which is the point of storing
+directions as nine distinct labels rather than as real normals:
+
+```
+          NWN N N N NE
+        NWNWNWN N NENENE
+        W NWNWN N NENEE
+        W W W ....E E E        <- `..` is flat: facing straight at the camera
+        W W W ....E E E
+      NWNWNW........NENENE
+    W W NWNW........NENEE E
+      SWSWSW........SESESE
+        SWS S S S S S SE
+```
+
+**The stored pixels are labels, not normals.** The cube has no `0x80` channel level, so `#8080ff` —
+the canonical flat normal, and the most common colour in any normal map — is not a palette entry at
+all; asking for it lands on `#9999ff`, a normal tilted up and left. So each direction is stored as
+one cube-exact index and translated to true normal RGB once, at export. That is what keeps a normal
+map an ordinary sprite: `print_sprite`, `paint_map`, `reflect`, undo and `export_zip` all work on it
+with no special case.
+
+To hand-edit one, make the labels the working palette — step 1 paying for itself:
+
+```js
+fs.palette('normals');           // the nine directions as swatches
+```
+
+`export_zip()` then carries the pair an engine actually loads:
+
+```
+png/idle.png     png/idle_n.png
+sheet/jump.png   sheet/jump_n.png     same cols and scale, so frame i is the same cell in both
+sheet/jump.json  → { "image": "jump.png", "normalImage": "jump_n.png", "frames": [...] }
+```
+
+The frame map names its own normal sheet, so an importer reads the pair rather than inferring the
+`_n` suffix — and the key is simply absent for an animation that has no maps, which is the signal
+that there is nothing to light.
+
+Green is up (the OpenGL convention Godot and Unity URP 2D expect); `export_normal_map({ flipY: true })`
+gives the DirectX one.
+
+The lit page also carries **save sprite** and **save normal map** links, so the one file that proves
+the map is right is also the one that delivers it. They hand back what is embedded — one pixel per
+pixel, which is what an engine wants and *not* the `scale` `export_zip` bakes at, so the label beside
+them says the size rather than leaving it to be discovered.
+
+### Two things that are not obvious
+
+**A flip has to negate the direction, not just move the pixel.** `fx: { flipX: true }` mirrors the
+art for free, but a pixel that faced east must face *west* afterwards, and only the stored value
+carries that. Frame effects are re-applied to the labels themselves on the way out.
+
+**`strength` is a bevel threshold, not a depth.** Every direction the map can hold sits at the same
+tilt, so turning `strength` up bevels *more of the sprite* rather than steepening what is already
+bevelled. Widening the bevel is `blur`.
+
 ## If you are an LLM about to draw a character
 
 1. **`palette(...)` before the first `paint_map`.** It changes what hexes mean,
@@ -173,3 +260,6 @@ fs.palette('cube');                                          // back to all 256
    the same effort held for 140ms instead of 80.
 4. **Squash and stretch is the whole read.** `crouch` and `land` wide and low,
    `rise` tall and narrow, and a 16×16 jump works without a single shaded pixel.
+5. **Light it before you believe it.** A normal map PNG is purple noise to a human — "it exported"
+   and "it is correct" look identical. `export_lit()` and drag the light: the shading swings with it,
+   or the map is wrong.

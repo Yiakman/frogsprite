@@ -1,6 +1,7 @@
 import { compose, progress, steps } from '../core/fx.ts';
 import type { Pixels } from '../core/grid.ts';
 import { flatten } from '../core/layers.ts';
+import { normalColors, remapLabels } from '../core/normals.ts';
 import { PALETTE, TRANSPARENT } from '../core/palette.ts';
 import { setPayload } from './storage.ts';
 import { zip, type ZipEntry } from './zip.ts';
@@ -88,13 +89,19 @@ ${groups.join('\n')}
  * Draw a sprite onto a `size`×`size` context, transparent where the sprite is. `flat` overrides
  * every colour, which is the silhouette view. The editor's canvas renders through this too, so
  * what you see on screen and what you export come out of the same loop.
+ *
+ * `colors` swaps the index→colour table. It exists for normal maps, whose stored pixels are
+ * direction *labels* rather than colours: the cube has no `0x80` channel level, so the canonical
+ * flat normal `#8080ff` is not a palette entry and could not otherwise be written at all. Every
+ * other caller wants the palette and gets it by default.
  */
 export function paint(
 	ctx: CanvasRenderingContext2D,
 	pixels: Pixels,
 	grid: number,
 	size: number,
-	flat?: string
+	flat?: string,
+	colors: readonly string[] = PALETTE
 ): void {
 	ctx.clearRect(0, 0, size, size);
 	ctx.imageSmoothingEnabled = false;
@@ -103,16 +110,21 @@ export function paint(
 		for (let x = 0; x < grid; x++) {
 			const p = pixels[y * grid + x];
 			if (p === TRANSPARENT) continue;
-			ctx.fillStyle = flat ?? PALETTE[p];
+			ctx.fillStyle = flat ?? colors[p];
 			ctx.fillRect(x * s, y * s, s, s);
 		}
 	}
 }
 
-function draw(pixels: Pixels, grid: number, size: number): HTMLCanvasElement {
+function draw(
+	pixels: Pixels,
+	grid: number,
+	size: number,
+	colors: readonly string[] = PALETTE
+): HTMLCanvasElement {
 	const c = document.createElement('canvas');
 	c.width = c.height = size;
-	paint(c.getContext('2d')!, pixels, grid, size);
+	paint(c.getContext('2d')!, pixels, grid, size, undefined, colors);
 	return c;
 }
 
@@ -213,8 +225,18 @@ export function toSpritesheet(
 		scale = 8,
 		effects = true,
 		transitions = true,
-		image = 'spritesheet.png'
-	}: BakeOptions & { cols?: number; scale?: number; image?: string } = {}
+		image = 'spritesheet.png',
+		normalImage,
+		colors = PALETTE,
+		normals = false
+	}: BakeOptions & {
+		cols?: number;
+		scale?: number;
+		image?: string;
+		normalImage?: string;
+		colors?: readonly string[];
+		normals?: boolean;
+	} = {}
 ) {
 	const l = sheetLayout(frames.length, grid, { cols, scale });
 	const canvas = document.createElement('canvas');
@@ -228,7 +250,10 @@ export function toSpritesheet(
 	const map = frames.map((f, i) => {
 		const { x, y } = l.at(i);
 		// the last sub-step, so a frame with a transition lands finished rather than caught halfway
-		paint(tctx, compose(frames, i, sprites, grid, 1, { effects, transitions }), grid, l.cell);
+		// the remap has to happen per frame, between composing and painting: a flip moved the pixels,
+		// and only now can the directions they hold be turned to match
+		const composed = compose(frames, i, sprites, grid, 1, { effects, transitions });
+		paint(tctx, normals ? bakeNormals(composed, f.fx) : composed, grid, l.cell, undefined, colors);
 		ctx.drawImage(tile, x, y);
 		return { index: i, sprite: f.sprite, x, y, w: l.cell, h: l.cell, ms: f.ms };
 	});
@@ -236,6 +261,10 @@ export function toSpritesheet(
 		url: canvas.toDataURL('image/png'),
 		meta: {
 			image,
+			// named only when a normal sheet is actually written beside this one, so its absence is
+			// the honest signal that there is nothing to light rather than a name to go guessing at.
+			// Every frame rect below applies to both files unchanged — same cols, same scale.
+			...(normalImage ? { normalImage } : {}),
 			grid,
 			scale,
 			frameWidth: l.cell,
@@ -250,13 +279,89 @@ export function toSpritesheet(
 	};
 }
 
-export function toPNG(pixels: Pixels, grid: number, scale = 1): string {
-	return draw(pixels, grid, grid * scale).toDataURL('image/png');
+/** The `.n` sibling convention: a sprite's normal map is a sprite of the same name plus `.n`. */
+export const normalColorTable = normalColors;
+export const NORMAL_SUFFIX = '.n';
+export const normalNameOf = (name: string) => `${name}${NORMAL_SUFFIX}`;
+export const isNormalName = (name: string) => name.endsWith(NORMAL_SUFFIX);
+
+/**
+ * The frame list rewritten to drive a sprite's normal maps instead of its art.
+ *
+ * Three things have to happen at once, and all three are silent failures if missed:
+ *
+ * - **Point every frame at the `.n` sibling.** A missing one is checked here rather than left to
+ *   `compose`, which returns a *blank* buffer for a frame naming a sprite that does not exist — so
+ *   the cell would export transparent with nothing to say why.
+ * - **Drop the colour effects.** `hue`, `invert` and a `trail`'s dimming all map a label onto some
+ *   other palette entry that is not a label, which the export table cannot read back. Geometry
+ *   (`flipX`, `flipY`, `rotate`, `dx`, `dy`) is kept, because it must still match the art frame.
+ * - **Refuse a per-layer arrangement.** `normals_from_sprite` writes one flat layer, so a frame's
+ *   `layers` — keyed by the *art* sprite's layer names — would silently apply to nothing, and even a
+ *   plain `dx` parallax would put the map somewhere the art is not.
+ *
+ * ponytail: one normal map per sprite, so `layers` throws. Per-layer normals (one map per art layer,
+ * names preserved) is the upgrade if a layered sprite ever needs lighting.
+ */
+export function normalFrames(sprites: Sprite[], frames: Frame[]): Frame[] {
+	const have = new Set(sprites.map((s) => s.name));
+	const missing = [...new Set(frames.map((f) => f.sprite))].filter(
+		(n) => !have.has(normalNameOf(n))
+	);
+	if (missing.length)
+		throw new Error(
+			`no normal map for ${missing.map((n) => `"${n}"`).join(', ')} — ` +
+				`run normals_from_sprite(${JSON.stringify(missing[0])}) first`
+		);
+	return frames.map((f, i) => {
+		if (f.layers)
+			throw new Error(
+				`frame ${i} arranges layers, which a normal map cannot follow — ` +
+					'flatten_sprite() the art, or drop the arrangement for this export'
+			);
+		const { hue, invert, ...geometry } = f.fx ?? {};
+		// trail and transition are dropped, not carried: both blend pixels, and a blend of two
+		// direction labels is not a direction
+		return { sprite: normalNameOf(f.sprite), ms: f.ms, fx: geometry };
+	});
+}
+
+/**
+ * Bake one composed normal frame: the labels are stored values, so any flip or turn the frame
+ * applied has to be re-applied to the *directions* as well as to the positions.
+ */
+export function bakeNormals(pixels: Uint8Array, fx: Frame['fx']): Uint8Array {
+	const map = remapLabels(fx);
+	const out = new Uint8Array(pixels.length);
+	for (let i = 0; i < pixels.length; i++) out[i] = map[pixels[i]];
+	return out;
+}
+
+/** A normal map as a PNG: labels translated to true normal RGB, which is the only place that happens. */
+export function toNormalPNG(pixels: Pixels, grid: number, scale = 1, flipY = false): string {
+	if (!Number.isInteger(scale) || scale < 1)
+		throw new Error(`normal map scale must be a whole number, got ${scale} — ` +
+			'a fractional one antialiases, inventing colours between two directions');
+	return toPNG(pixels, grid, scale, normalColors(flipY));
+}
+
+export function toPNG(
+	pixels: Pixels,
+	grid: number,
+	scale = 1,
+	colors: readonly string[] = PALETTE
+): string {
+	return draw(pixels, grid, grid * scale, colors).toDataURL('image/png');
 }
 
 /** Raw PNG bytes, for packing into an archive rather than handing to an <img>. */
-export function toPNGBytes(pixels: Pixels, grid: number, scale = 1): Promise<Uint8Array> {
-	return pngBytes(draw(pixels, grid, grid * scale));
+export function toPNGBytes(
+	pixels: Pixels,
+	grid: number,
+	scale = 1,
+	colors: readonly string[] = PALETTE
+): Promise<Uint8Array> {
+	return pngBytes(draw(pixels, grid, grid * scale, colors));
 }
 
 const pngBytes = (canvas: HTMLCanvasElement): Promise<Uint8Array> =>
@@ -325,9 +430,20 @@ export async function setArchive(
 	const entries: ZipEntry[] = [
 		{ name: 'set.json', data: text.encode(JSON.stringify(setPayload(set), null, 2)) }
 	];
+	const normalRGB = normalColors();
 	for (const sprite of set.sprites) {
 		// the whole layer stack composited — a picture file has no layers to carry, and no links either
 		const pixels = flatten(sprite, set.grid, undefined, set.sprites);
+		if (isNormalName(sprite.name)) {
+			// a normal map holds direction labels, so shipping it through the ordinary path would
+			// write the *label* colours — a file that opens fine and lights wrongly. It also gets no
+			// .svg: nothing consumes a vector normal map.
+			entries.push({
+				name: `png/${safeFile(sprite.name.slice(0, -NORMAL_SUFFIX.length))}_n.png`,
+				data: await toPNGBytes(pixels, set.grid, scale, normalRGB)
+			});
+			continue;
+		}
 		entries.push({
 			name: `png/${safeFile(sprite.name)}.png`,
 			data: await toPNGBytes(pixels, set.grid, scale)
@@ -351,18 +467,39 @@ export async function setArchive(
 				toAnimatedSVG(set.sprites, anim.frames, set.grid, { effects, transitions })
 			)
 		});
+		// a set may light only some of its animations, so this is a silent skip rather than a throw —
+		// but it has to be settled *before* the albedo meta is built, because that meta names its
+		// sibling and an importer should not have to guess the `_n` convention
+		const lightable = anim.frames.every((f) =>
+			set.sprites.some((s) => s.name === normalNameOf(f.sprite))
+		);
 		// the packed strip an engine loads, and the map that carries the names and timing with it
 		const sheet = toSpritesheet(set.sprites, anim.frames, set.grid, {
 			scale,
 			effects,
 			transitions,
-			image: `${file}.png`
+			image: `${file}.png`,
+			...(lightable ? { normalImage: `${file}_n.png` } : {})
 		});
 		entries.push({ name: `sheet/${file}.png`, data: dataURLBytes(sheet.url) });
 		entries.push({
 			name: `sheet/${file}.json`,
 			data: text.encode(JSON.stringify(sheet.meta, null, 2))
 		});
+		// same cols and scale, so `sheetLayout` puts frame i in the same cell in both — which is why
+		// one meta can describe the pair and every frame rect serves both files
+		if (lightable) {
+			const lit = toSpritesheet(set.sprites, normalFrames(set.sprites, anim.frames), set.grid, {
+				cols: sheet.meta.cols,
+				scale,
+				effects,
+				transitions: false,
+				colors: normalRGB,
+				normals: true,
+				image: `${file}_n.png`
+			});
+			entries.push({ name: `sheet/${file}_n.png`, data: dataURLBytes(lit.url) });
+		}
 	}
 
 	return {
@@ -370,6 +507,124 @@ export async function setArchive(
 		filename: `${safeFile(set.name)}.zip`,
 		files: entries.map((e) => e.name)
 	};
+}
+
+/**
+ * A self-contained page that lights a sprite — or a whole animation — with its normal map, cursor as
+ * the light.
+ *
+ * This exists because a normal map PNG is unreadable: it is purple noise, and "it exported" and "it
+ * is correct" look identical. Drag the light and the shading has to swing with it; that is the only
+ * cheap proof the directions came out the right way round.
+ *
+ * A still sprite is passed as a one-frame animation rather than handled separately — the playing
+ * case has to exist anyway, and a frame count of 1 is already the still.
+ *
+ * The two save links make the page a delivery vehicle as well as a verifier: it is one self-contained
+ * file that both proves the map is right and carries the assets out of it. They hand back what is
+ * embedded — one pixel per pixel, which is the resolution an engine wants and *not* the `scale`
+ * `export_zip` bakes at, so the labels say the size rather than leaving it to be discovered.
+ *
+ * ponytail: both sheets go in at one pixel per pixel and CSS magnifies. Lighting a magnified sheet
+ * would be a million dot products per mousemove for a picture with a few hundred distinct pixels in
+ * it, and the data URIs would be ~64x larger for no more information. The links get their `href`
+ * from the loaded images rather than a second copy of the data URI, which would inflate the file by
+ * half again for nothing.
+ */
+export function toLitHTML(
+	albedo: string,
+	normal: string,
+	{
+		frames,
+		cell,
+		title = 'sprite',
+		file = 'sprite',
+		zoom = 12
+	}: {
+		frames: { x: number; y: number; ms: number }[];
+		cell: number;
+		title?: string;
+		file?: string;
+		zoom?: number;
+	}
+): string {
+	if (!frames.length) throw new Error('a lit preview needs at least one frame');
+	// more than one frame means the embedded images are packed strips, and saying so in the filename
+	// is the difference between a usable download and one the recipient has to guess at
+	const sheet = frames.length > 1;
+	const stem = sheet ? `${file}-sheet` : file;
+	const dims = sheet ? `${cell * frames.length}x${cell}, ${frames.length} frames` : `${cell}x${cell}`;
+	return `<!doctype html>
+<meta charset="utf-8"><title>${title} — lit</title>
+<style>
+ :root { color-scheme: dark }
+ body { margin:0; min-height:100vh; display:grid; place-items:center; gap:1.25rem; padding:2rem;
+        background:#141414; color:#777; font:13px/1.6 ui-sans-serif,system-ui,sans-serif }
+ canvas { image-rendering:pixelated; width:min(${cell * zoom}px, 80vw); aspect-ratio:1;
+          background:#0e0e0e; border-radius:8px; cursor:crosshair; touch-action:none }
+ .bar { display:flex; gap:1rem; align-items:center; flex-wrap:wrap; justify-content:center }
+ button, a.dl { font:inherit; color:#7cf; background:#1e1e1e; border:1px solid #333;
+          border-radius:5px; padding:.3rem .8rem; cursor:pointer; text-decoration:none }
+ a.dl:hover { background:#262626 }
+ .size { color:#555 }
+ b { color:#7cf; font-weight:600; font-variant-numeric:tabular-nums }
+</style>
+<canvas id=c width=${cell} height=${cell}></canvas>
+<div class=bar>
+  <span>move the pointer to move the light</span>
+  <b id=r>&nbsp;</b>
+  ${sheet ? '<button id=p>pause</button>' : ''}
+</div>
+<div class=bar>
+  <a class=dl id=da download="${stem}.png">save sprite</a>
+  <a class=dl id=dn download="${stem}_n.png">save normal map</a>
+  <span class=size>${dims}, as authored</span>
+</div>
+<script>
+const F=${JSON.stringify(frames)}, C=${cell};
+const A=new Image(), N=new Image(); let ready=0;
+const c=document.getElementById('c'), x=c.getContext('2d'), r=document.getElementById('r');
+let lx=-0.6, ly=0.5, lz=0.6, k=0, playing=true;
+function go(){
+  const g=(img)=>{ const t=document.createElement('canvas'); t.width=img.width; t.height=img.height;
+                   t.getContext('2d').drawImage(img,0,0);
+                   return t.getContext('2d').getImageData(0,0,img.width,img.height); };
+  const a=g(A), n=g(N), out=x.createImageData(C,C);
+  function draw(){
+    const f=F[k], m=Math.hypot(lx,ly,lz)||1, dx=lx/m, dy=ly/m, dz=lz/m;
+    for(let y=0;y<C;y++) for(let px=0;px<C;px++){
+      const si=((f.y+y)*a.width+(f.x+px))*4, di=(y*C+px)*4;
+      const al=a.data[si+3];
+      if(!al){ out.data[di+3]=0; continue }
+      // n = 2*rgb - 1, green is +Y up (OpenGL) — the same convention the PNG was written in
+      const nx=n.data[si]/127.5-1, ny=n.data[si+1]/127.5-1, nz=n.data[si+2]/127.5-1;
+      const d=Math.max(0, nx*dx+ny*dy+nz*dz);
+      const l=0.28+0.95*d;                        // a little ambient so unlit faces are not black
+      out.data[di]=Math.min(255,a.data[si]*l);
+      out.data[di+1]=Math.min(255,a.data[si+1]*l);
+      out.data[di+2]=Math.min(255,a.data[si+2]*l);
+      out.data[di+3]=al;
+    }
+    x.putImageData(out,0,0);
+    r.textContent='light '+dx.toFixed(2)+', '+dy.toFixed(2)+', '+dz.toFixed(2);
+  }
+  addEventListener('pointermove',e=>{
+    const b=c.getBoundingClientRect();
+    lx=((e.clientX-b.left)/b.width)*2-1;
+    ly=1-((e.clientY-b.top)/b.height)*2;         // page y is down, the normals are y up
+    draw();
+  });
+  const btn=document.getElementById('p');
+  if(btn) btn.onclick=()=>{ playing=!playing; btn.textContent=playing?'pause':'play'; if(playing)tick(); };
+  function tick(){ if(F.length<2||!playing) return;
+    setTimeout(()=>{ k=(k+1)%F.length; draw(); tick(); }, F[k].ms); }
+  document.getElementById('da').href=A.src;
+  document.getElementById('dn').href=N.src;
+  draw(); tick();
+}
+A.onload=N.onload=()=>{ if(++ready===2) go() };
+A.src=${JSON.stringify(albedo)}; N.src=${JSON.stringify(normal)};
+</script>`;
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

@@ -22,9 +22,10 @@ scripts are in the five case studies:
 - **[Fighting game — the hit-flash vocabulary](fighting-game-hit-flash.md)** —
   hand-drawn 32x32 poses, and the arcade damage flash with its relatives:
   inversion, palette swap, solarisation, flicker and a whole-screen flash.
-- **[Platformer — the jump arc](platformer-jump.md)** — a 16x16 jump cycle
-  painted inside PICO-8's sixteen colours: working palettes, squash and stretch,
-  and hang time carried by `ms` rather than by art.
+- **[Platformer — the jump arc, lit](platformer-jump.md)** — a 16x16 jump cycle
+  painted inside PICO-8's sixteen colours, then lit by normal maps derived from
+  its own silhouette: working palettes, squash and stretch, hang time carried by
+  `ms` rather than by art, and directions stored as labels the cube can hold.
 
 Final count: **5 packages, 11 sets, 44 sprites, 32 animations.**
 
