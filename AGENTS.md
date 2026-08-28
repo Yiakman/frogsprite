@@ -881,11 +881,14 @@ cannot. In the UI: **Project → Save all… / Load…**, or drop a `.json` / `.
   per-layer arrangement all applied. `i` defaults to the frame being held, so `view_frame(3)` then
   `print_frame()` reads what is on screen
 - `diff_frames(i, j, { animation, set, pkg, rect })` — which pixels differ between two composed frames:
-  `{ animation, frames, identical, pixels, rows }`. This is the check that catches a frozen layer
-  or a wrong pose, which no single frame, no return value and no contact sheet shows — and doing it by
-  eye across two ASCII dumps is where coordinate mis-reads come from. `identical: true` is the red flag:
-  an animation drawing exactly the same thing twice. Coordinates are grid coordinates, so `pixels` feeds
-  straight back into `paint_pixel`
+  `{ animation, frames, identical, count, truncated, pixels, rows }`. This is the check that catches a
+  frozen layer or a wrong pose, which no single frame, no return value and no contact sheet shows — and
+  doing it by eye across two ASCII dumps is where coordinate mis-reads come from. `identical: true` is
+  the red flag: an animation drawing exactly the same thing twice. Coordinates are grid coordinates, so
+  `pixels` feeds straight back into `paint_pixel`. `count` and `rows` are always whole, but `pixels`
+  stops at 200 and sets `truncated` — two different 64×64 poses differ in over a thousand, which is
+  hundreds of kilobytes of JSON nobody reads past the first screen. Narrow `rect` to see a region in
+  full
 
 **`print_sprite` cannot see a frame, and this is the mistake to get out of the way early.** A
 parallax scene is *one* sprite, and every `dx` and `hidden` that makes frame 4 differ from frame 3

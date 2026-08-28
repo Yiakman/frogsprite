@@ -322,6 +322,17 @@ const api = {
 	}),
 
 	select: ro(function (pkg?: string, set?: string, sprite?: string) {
+		// three names, not an options object: without this the object falls through to the package
+		// lookup and fails as `no package "[object Object]"`, which reads as a missing package
+		for (const [what, v] of [
+			['pkg', pkg],
+			['set', set],
+			['sprite', sprite]
+		] as const)
+			if (v !== undefined && typeof v !== 'string')
+				throw new Error(
+					`select takes names in order — select(pkg?, set?, sprite?). ${what} was ${JSON.stringify(v)}; for a sprite alone use select(undefined, undefined, 'idle').`
+				);
 		if (pkg !== undefined) {
 			if (!editor.packages.some((p) => p.name === pkg)) throw new Error(`no package "${pkg}"`);
 			editor.sel = { pkg, set: '', sprite: '', anim: '', layer: '' };
@@ -1586,7 +1597,8 @@ const api = {
 	 * Which pixels differ between two frames of an animation, as composed — the manual's own advice
 	 * ("only diffing two frames" reveals a frozen layer or a wrong pose) as a command, instead of
 	 * two ASCII dumps read side by side. `identical: true` is the red flag: an animation drawing
-	 * exactly the same thing twice.
+	 * exactly the same thing twice. `count` and `rows` are whole; `pixels` stops at 200 and says so
+	 * with `truncated` — narrow `rect` to see a region in full.
 	 *
 	 *   diff_frames(0, 1)                          // the active animation
 	 *   diff_frames(0, 3, { animation: 'fly' })    // by name
