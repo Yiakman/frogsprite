@@ -1,4 +1,5 @@
-import { PALETTE, ramp as rampOf, toIndex, TRANSPARENT } from '../core/palette.ts';
+import { activeSwatches, ALL, PALETTE, ramp as rampOf, resolveSwatches, setSwatches, toIndex, TRANSPARENT } from '../core/palette.ts';
+import { PRESET_NAMES, PRESETS } from '../core/presets.ts';
 import * as ex from '../io/export.ts';
 import { compose, patchEffects, readArrangement, readFx, readTrail, readTransition, TRANSITIONS, type EffectPatch } from '../core/fx.ts';
 import * as history from '../core/history.ts';
@@ -1643,7 +1644,73 @@ const api = {
 	 * palette does not have.
 	 */
 	ramp: ro((from: Color, to: Color, steps = 8) => rampOf(toIndex(from), toIndex(to), steps)),
-	palette: ro(() => PALETTE.slice()),
+	/**
+	 * The working palette: which colours snapping is allowed to pick.
+	 *
+	 *   palette()                    // read the active list, as hexes
+	 *   palette('pico8')             // a named preset
+	 *   palette(['#1a1c2c', ...])    // your own
+	 *   palette('cube')              // back to all 256
+	 *
+	 * This narrows what `'#rrggbb'` resolves to — everywhere, because every hex-to-index path in the
+	 * app goes through one `nearestIndex`. So `paint_map`, `shapes.*`, `ramp` and `import_image` all
+	 * land inside the set with no extra argument, and a whole sprite comes out coherent rather than
+	 * spread across thirty unrelated cube entries.
+	 *
+	 * Indices still reach past it: `paint_pixel(x, y, 42)` paints 42 whatever is active. The set is a
+	 * constraint on *choosing* a colour, not on storing one — pixels are the same indices into the
+	 * same 256 they always were, so nothing here is baked into a sprite, an export or localStorage.
+	 *
+	 * A preset is snapped onto the cube like anything else, and two of its colours can land on the
+	 * same entry: `colors` is what actually survived, which is why it is reported rather than assumed
+	 * to be the length of what you passed.
+	 */
+	palette: ro(function (which?: string | (string | number)[] | null) {
+		if (which === undefined) {
+			const active = activeSwatches();
+			return active ? active.map((i) => PALETTE[i]) : PALETTE.slice();
+		}
+		let name = '';
+		let list: number[] | null;
+		if (which === null || which === 'cube') {
+			list = null;
+		} else if (typeof which === 'string') {
+			const preset = PRESETS[which];
+			if (!preset)
+				throw new Error(`unknown palette "${which}" — try ${PRESET_NAMES.join(', ')} or 'cube'`);
+			name = which;
+			list = resolveSwatches(preset);
+		} else if (Array.isArray(which)) {
+			if (!which.length) throw new Error('a custom palette needs at least one colour');
+			name = 'custom';
+			list = resolveSwatches(which);
+		} else {
+			throw new Error(`palette takes a name, an array of colours, or 'cube' — got ${JSON.stringify(which)}`);
+		}
+		const applied = setSwatches(list);
+		editor.swatchSet = name;
+		// the pen may be holding a colour the new set cannot reach; re-snapping it through the set
+		// keeps what is selected and what is paintable the same thing
+		if (applied && editor.color && !applied.includes(editor.color))
+			editor.color = toIndex(PALETTE[editor.color]);
+		return {
+			palette: name || 'cube',
+			colors: applied ? applied.length : ALL.length,
+			hexes: (applied ?? ALL).map((i) => PALETTE[i])
+		};
+	}),
+
+	/**
+	 * Names `palette()` accepts, with the colour count of each — *after* snapping onto the cube, so
+	 * a preset whose two colours collide reports the number you would actually get, not the number
+	 * its author wrote.
+	 */
+	palettes: ro(() =>
+		Object.fromEntries([
+			['cube', ALL.length],
+			...PRESET_NAMES.map((n) => [n, new Set(resolveSwatches(PRESETS[n])).size])
+		])
+	),
 
 	reset: mut(function () {
 		editor.stop();
