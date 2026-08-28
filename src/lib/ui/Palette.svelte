@@ -1,10 +1,14 @@
 <script lang="ts">
-	import { GRAY_START, PALETTE } from '../core/palette';
+	import { activeSwatches, GRAY_START, PALETTE } from '../core/palette';
 	import { isLinked } from '../core/layers';
 	import { editor, pixelsOf } from '../state/store.svelte';
 
 	// The colours actually on the canvas — for pixel art that's the handful you keep reaching for,
 	// so they go on one always-visible row and the full 256 stay folded away.
+	// The active working set, if any. The list lives in palette.ts (framework-free), so the reactive
+	// dependency is the name on the store — read it first or this never re-runs.
+	const working = $derived.by(() => (editor.swatchSet ? activeSwatches() : null));
+
 	const used = $derived.by(() => {
 		const set = editor.set;
 		if (!set) return [];
@@ -47,7 +51,23 @@
 		{#if !used.length}<span class="hint">pick a colour below</span>{/if}
 	</div>
 
-	<details open={used.length === 0}>
+	{#if working}
+		<div class="set" data-testid="working-palette">
+			<span class="hint">{editor.swatchSet} · {working.length}</span>
+			{#each working as i (i)}
+				<button
+					class="sw"
+					class:sel={editor.color === i}
+					title="{i} · {PALETTE[i]}"
+					aria-label="colour {i} {PALETTE[i]}"
+					style:background={PALETTE[i]}
+					onclick={() => (editor.color = i)}
+				></button>
+			{/each}
+		</div>
+	{/if}
+
+	<details open={used.length === 0 && !working}>
 		<summary>All 256 colours</summary>
 		<div class="swatches" data-testid="palette">
 			{#each PALETTE as color, i (i)}
@@ -126,6 +146,21 @@
 	.hint {
 		font-size: 0.72rem;
 		color: #555;
+	}
+	/* the working set sits between the used row and the full cube: what you should be reaching for */
+	.set {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 3px;
+		align-items: center;
+		margin-top: 0.5rem;
+		padding-top: 0.5rem;
+		border-top: 1px solid #2a2a2a;
+	}
+	.set .hint {
+		width: 100%;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
 	}
 	details {
 		margin-top: 0.5rem;

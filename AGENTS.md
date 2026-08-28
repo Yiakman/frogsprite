@@ -87,6 +87,43 @@ Two consequences worth taking on faith rather than rediscovering:
   grey by definition, and the middle of your gradient snaps to it. Ramp within one hue and butt the
   segments together, rather than asking for one ramp across the whole sky.
 
+### Working palettes
+
+`palette(which)` narrows what a **hex string** resolves to. Every hex-to-index path in the editor
+funnels through one nearest-colour scan, so this reaches `paint_map`, `shapes.*`, `ramp` and
+`import_image` at once, without any of them taking a palette argument:
+
+```js
+frogsprite.palettes();          // { cube: 255, pico8: 16, gameboy: 4, sweetie16: 15, cga: 16 }
+frogsprite.palette('pico8');    // { palette: 'pico8', colors: 16, hexes: [...] }
+frogsprite.color('#7ab8e0');    // → #c6c6c6, inside the sixteen
+frogsprite.palette('cube');     // back to all 256
+frogsprite.color('#7ab8e0');    // → #66cccc
+frogsprite.palette(['#1a1c2c', '#f4f4f4', '#b13e53']);   // your own, no registration needed
+```
+
+Reach for it when a whole set should be colour-coherent — which is most of the time, and is the
+mechanical version of the cube-coordinate advice above.
+
+Three things it deliberately does **not** do:
+
+- **An index still paints itself.** `paint_pixel(x, y, 42)` paints 42 whatever is active. A working
+  palette constrains *choosing* a colour, never storing one.
+- **Nothing is persisted.** Pixels stay plain indices into the same 256, so no sprite, export or
+  `localStorage` entry is touched, and a reload comes back with `cube` active. It is a view setting,
+  in the family of `background()` and `silhouette()`.
+- **Effects are not confined to it.** `hue`, `invert` and a trail's dimming are colours the renderer
+  computes, not colours you picked, so they keep the whole 256 — otherwise a four-colour palette
+  would flatten every trail ghost into one flat shade.
+
+A preset is snapped onto the cube like any other hex, so two of its colours can land on the same
+entry: `sweetie16` reports **15**, not 16. `colors` is what survived.
+
+And a working palette does not repeal nearest-colour, it sharpens it. `#7ab8e0` above is a muted
+sky blue that resolves to a **grey** inside PICO-8 — the same trap as the cube, with a bigger miss,
+because sixteen colours leave almost nowhere to land. Name the palette's own hexes in your legend
+and there is nothing to round.
+
 ## Commands
 
 Every call throws a descriptive `Error` on bad input, and state is saved to `localStorage` after each
@@ -942,7 +979,10 @@ set.sprites[0].layers[0].pixels;   // a plain array, grid * grid long
 ```
 - `help()` — the command list, grouped, straight from the running build. Worth a call at the start of
   a session: if it names something this document does not, the build is ahead of the manual
-- `palette()` — all 256 colours
+- `palette(which?)` — the **working palette**: which colours snapping is allowed to pick.
+  `palette()` reads the active list as hexes, `palette('pico8')` sets a preset, `palette([...])`
+  takes your own, `palette('cube')` restores all 256. See [Colours](#colours)
+- `palettes()` — the preset names, with the colour count each one survives snapping with
 
 #### Reviewing what you drew
 

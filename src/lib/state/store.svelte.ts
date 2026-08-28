@@ -19,6 +19,12 @@ class Editor {
 	/** Show every painted pixel as this index instead of its own colour. 0 is off. Also a view setting. */
 	silhouette = $state(0);
 	/**
+	 * Name of the active working palette, or '' for all 256. The list itself lives in palette.ts,
+	 * which has to stay framework-free; this is the bump that tells Svelte to look again — the same
+	 * arrangement `revision` uses for pixel writes. Also a view setting: nothing is painted or saved.
+	 */
+	swatchSet = $state('');
+	/**
 	 * Canvas magnification, 1 = fit the pane. A view setting like the two above: not persisted, and
 	 * exports never see it. At 128 a fitted canvas is a few hundred CSS pixels, which is fine for
 	 * composition and hopeless for a two-pixel detail.
@@ -283,6 +289,7 @@ class Editor {
 				zoom: this.zoom,
 				background: this.background ? PALETTE[this.background] : 'checkerboard',
 				silhouette: this.silhouette ? PALETTE[this.silhouette] : 'off',
+				palette: this.swatchSet || 'cube',
 				raw: this.raw
 			},
 			packages: this.packages.map((p) => ({

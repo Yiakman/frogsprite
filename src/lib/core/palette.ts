@@ -20,11 +20,56 @@ export const PALETTE: string[] = (() => {
 
 export const GRAY_START = 217;
 
+/** Every opaque index, in order — the candidate pool when no working set is active. */
+export const ALL: number[] = Array.from({ length: 255 }, (_, i) => i + 1);
+
 const RGB: [number, number, number][] = PALETTE.map((c) =>
 	c === 'transparent'
 		? [0, 0, 0]
 		: [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)]
 );
+
+/**
+ * The subset of the palette that snapping is allowed to choose from — `null` for all 256. A *view*
+ * setting in the same sense as `background` and `silhouette`: it constrains what you paint, never
+ * what is stored, so every sprite stays a plain index into the same 256 and nothing needs migrating.
+ *
+ * It lives here rather than on the store because `nearestIndex` is the one choke point every
+ * hex-to-index path runs through — `toIndex`, `ramp` and the image importer all land on it — so
+ * constraining it here constrains all of them, and this module has to stay framework-free for
+ * `node --test`.
+ */
+let swatches: number[] | null = null;
+
+export const activeSwatches = (): number[] | null => swatches && swatches.slice();
+
+/**
+ * Hex strings (or bare indices) to the indices they occupy on the cube.
+ *
+ * Snapped against `ALL` on purpose: resolving a new working set through the *current* one would
+ * mean `palette('pico8')` then `palette('sweetie16')` quantised sweetie16 through pico8's sixteen
+ * colours. A palette is always chosen from the whole cube, whatever is active when you choose it.
+ */
+export function resolveSwatches(colors: readonly (string | number)[]): number[] {
+	return colors.map((c) => {
+		if (typeof c === 'number') return toIndex(c);
+		const rgb = parseHex(c);
+		if (!rgb) throw new Error(`bad colour in palette: ${JSON.stringify(c)}`);
+		return nearestIndex(rgb[0], rgb[1], rgb[2], ALL);
+	});
+}
+
+/** Indices only, TRANSPARENT dropped (it is always reachable) and duplicates collapsed. */
+export function setSwatches(list: readonly number[] | null) {
+	if (list == null) {
+		swatches = null;
+		return null;
+	}
+	const seen = [...new Set(list)].filter((i) => i !== TRANSPARENT).sort((a, b) => a - b);
+	if (!seen.length) throw new Error('a working palette needs at least one opaque colour');
+	swatches = seen;
+	return seen.slice();
+}
 
 /** '#rgb' / '#rrggbb' to a raw RGB triple, unsnapped — null if it is not a colour. */
 export function parseHex(s: string): [number, number, number] | null {
@@ -75,7 +120,12 @@ function table(key: string, map: (r: number, g: number, b: number) => [number, n
 	if (t) return t;
 	t = new Uint8Array(256);
 	// TRANSPARENT has no colour to map — it stays a hole, whatever the effect
-	for (let i = 1; i < 256; i++) t[i] = nearestIndex(...map(...RGB[i]));
+	//
+	// `ALL`, not the working set: these are colours the *renderer* computes (a dimmed trail ghost, a
+	// hue-tinted frame), not colours anyone painted. Confining them to the working set would both
+	// flatten a 4-colour palette's trails into nothing and make these memo tables — built once for
+	// the life of the page — go stale the moment the working set changed.
+	for (let i = 1; i < 256; i++) t[i] = nearestIndex(...map(...RGB[i]), ALL);
 	tables.set(key, t);
 	return t;
 }
@@ -104,12 +154,24 @@ export const tint = (i: number, hue: Hue): number =>
 		return [l * cr, l * cg, l * cb];
 	})[i];
 
-/** Closest opaque palette entry to an RGB triple. */
-export function nearestIndex(r: number, g: number, b: number): number {
-	// ponytail: 255-entry linear scan, not a k-d tree. ~260k comparisons for a full 32x32 import.
-	let best = 1;
+/**
+ * Closest opaque palette entry to an RGB triple, chosen from the active working set.
+ *
+ * `from` overrides that set: pass `ALL` to scan the whole palette regardless of what is active.
+ * Only the effect tables below do, and deliberately — see the note on `table`.
+ */
+export function nearestIndex(
+	r: number,
+	g: number,
+	b: number,
+	from: readonly number[] | null = swatches
+): number {
+	// ponytail: linear scan, not a k-d tree. ~260k comparisons for a full 32x32 import at all 256,
+	// and proportionally less inside a working set.
+	const pool = from ?? ALL;
+	let best = pool[0];
 	let bestD = Infinity;
-	for (let i = 1; i < 256; i++) {
+	for (const i of pool) {
 		const [pr, pg, pb] = RGB[i];
 		const d = (pr - r) ** 2 + (pg - g) ** 2 + (pb - b) ** 2;
 		if (d < bestD) {

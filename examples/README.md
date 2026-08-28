@@ -1,16 +1,16 @@
-# Four sprite packages, written entirely from JavaScript
+# Five sprite packages, written entirely from JavaScript
 
-> How four sprite packages were built entirely from JavaScript — what the API rewards, the palette and contrast traps, and how to verify animations `print_sprite` cannot see.
+> How five sprite packages were built entirely from JavaScript — what the API rewards, the palette and contrast traps, and how to verify animations `print_sprite` cannot see.
 
 frogsprite's pitch is that an agent can read [AGENTS.md](../AGENTS.md), open the
 page, and start drawing without ever touching the UI. This is the write-up of
-actually doing that four times over — a fantasy sword-and-sorcery package, a
-third-person racer, an arcade space shooter and a fighting game's reaction
-layer — and of what the API rewarded, what it punished, and the two places it
-pushed back.
+actually doing that five times over — a fantasy sword-and-sorcery package, a
+third-person racer, an arcade space shooter, a fighting game's reaction layer
+and a platformer jump cycle — and of what the API rewarded, what it punished,
+and the two places it pushed back.
 
 Everything below was built and verified in a running editor. The finished
-scripts are in the four case studies:
+scripts are in the five case studies:
 
 - **[Fantasy — elf, orc, sorcery](fantasy-elf-orc-sorcery.md)** — hand-drawn
   characters at 16x16. Half-maps and `reflect`, paint order as z-order, a hurt
@@ -22,29 +22,32 @@ scripts are in the four case studies:
 - **[Fighting game — the hit-flash vocabulary](fighting-game-hit-flash.md)** —
   hand-drawn 32x32 poses, and the arcade damage flash with its relatives:
   inversion, palette swap, solarisation, flicker and a whole-screen flash.
+- **[Platformer — the jump arc](platformer-jump.md)** — a 16x16 jump cycle
+  painted inside PICO-8's sixteen colours: working palettes, squash and stretch,
+  and hang time carried by `ms` rather than by art.
 
-Final count: **4 packages, 10 sets, 38 sprites, 31 animations.**
+Final count: **5 packages, 11 sets, 44 sprites, 32 animations.**
 
 ## The constraint that shaped the whole run
 
-The obvious way to build three packages is three agents at once. That does not
-work here, and the reason is worth stating because it applies to any agent
+The obvious way to build several packages is several agents at once. That does
+not work here, and the reason is worth stating because it applies to any agent
 driving this editor.
 
 `frogsprite` is a **single global cursor over a single document**. `select()`
 moves it; every painting command writes wherever it currently points; state
-persists to one `localStorage` key. Three agents painting concurrently would
+persists to one `localStorage` key. Agents painting concurrently would
 interleave their `select` calls and paint into each other's sets.
 
 So the parallelism went where it was actually free: **design in parallel, execute
-serially.** Three agents each read AGENTS.md and wrote one self-contained
-synchronous script plus process notes, touching nothing. Then each script ran on
-its own, in one page, and got verified before the next one started. The
+serially.** Each agent read AGENTS.md and wrote one self-contained synchronous
+script plus process notes, touching nothing. Then each script ran on its own, in
+one page, and got verified before the next one started. The
 expensive part — deciding what an orc looks like in 16 pixels — parallelises
 fine. The painting doesn't.
 
-Each script opens with `new_package(...)` and never calls `reset()`, so the three
-are isolated by construction and can run in any order.
+Each script opens with `new_package(...)` and never calls `reset()`, so they are
+isolated by construction and can run in any order.
 
 One practical note on getting a 15KB script into the page: rather than pasting it
 into a console call, stage it as a file the dev server already serves and fetch
@@ -60,8 +63,8 @@ build and reports what it made.
 
 ## The one idea the API keeps rewarding
 
-Three independent agents, three genres, and the same pattern came out of all
-three: **never store the same picture twice.** frogsprite gives you four
+Independent agents, unrelated genres, and the same pattern came out of every
+one: **never store the same picture twice.** frogsprite gives you four
 separate tools for this, and the whole difference between a 15-sprite package
 and a 40-sprite one is knowing which to reach for.
 
@@ -116,7 +119,13 @@ The rule that falls out of this: **pick colours that are already cube
 coordinates** — every channel from `00 33 66 99 cc ff` — whenever the hue
 matters. Then there is nothing to round.
 
-All three agents were told this up front, and all three followed it. It is worth
+`palette()` does this mechanically: set a working palette and every hex you pass
+resolves inside it, so a set comes out coherent without hand-checking each
+literal. It narrows the target rather than repealing nearest-colour — a muted hex
+can still choose grey over hue, and in a sixteen-colour set the miss is larger,
+not smaller. See [the jump arc](platformer-jump.md).
+
+Every agent was told this up front, and every one followed it. It is worth
 being blunt about how invisible the failure is: nothing throws, nothing warns,
 and a row-length assertion will not catch an orc that has quietly turned grey.
 
@@ -234,7 +243,7 @@ Two limits are worth knowing before you plan around them.
 
 **`scroll_layer` is horizontal only.** It writes `dx: speed * i`, and
 `tile_layer` repeats *columns* — `period()` probes
-`pixels[y*grid + ((x + p) % grid)]`. Two of the three packages wanted vertical
+`pixels[y*grid + ((x + p) % grid)]`. Two of the packages wanted vertical
 scroll for the most natural reason imaginable: a road rushing at a chase camera
 moves *down*, and a top-down shooter's stars fall *down*. Neither can use it.
 
