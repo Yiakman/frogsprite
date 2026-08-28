@@ -358,23 +358,18 @@
 			),
 			repeating-linear-gradient(to bottom, #ffffff12 0 1px, transparent 1px calc(100% / var(--n)));
 	}
-	/* 2:1 diamond lattice — period is one iso_to_grid step (2 cells wide, 1 cell tall) */
+	/* 2:1 diamond lattice, one diamond per iso_to_grid unit cell. The period is measured along the
+	   gradient line, which on a square box at this angle is 3/sqrt5 of a side rather than a side —
+	   so a step of 4/sqrt5 cells is 400% / 3n of it, not 100% / n. */
 	.grid.iso {
 		background-image: none;
 		background-color: #252525;
 	}
 	.grid.iso::after {
+		--iso-step: calc(400% / var(--n) / 3);
 		background-image:
-			repeating-linear-gradient(
-				26.565deg,
-				#ffffff18 0 1px,
-				transparent 1px calc(100% / var(--n))
-			),
-			repeating-linear-gradient(
-				-26.565deg,
-				#ffffff18 0 1px,
-				transparent 1px calc(100% / var(--n))
-			);
+			repeating-linear-gradient(26.565deg, #ffffff18 0 1px, transparent 1px var(--iso-step)),
+			repeating-linear-gradient(-26.565deg, #ffffff18 0 1px, transparent 1px var(--iso-step));
 	}
 	.cursor {
 		position: absolute;
