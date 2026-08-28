@@ -650,14 +650,15 @@ and `iso_box` are JS-only, like `rect`.
 #### Isometric
 
 2:1 dimetric: two pixels across per one pixel down. Draw with `iso_tile` / `iso_box`; place with
-`iso_to_grid`. `print_sprite` is still cartesian — it does not know about world `(x, y, z)`.
+`iso_to_grid`.
 
 ```js
-frogsprite.background('iso-grid');
-frogsprite.shapes.iso_box(16, 24, 12, 12, 8, {
-  top: '#999999', left: '#666666', right: '#333333', outline: '#000000'
+frogsprite.background('iso-grid');                          // a lattice to check vertices against
+frogsprite.shapes.iso_tile(64, 34, 8, '#666699');           // one floor tile, 16 across by 8 down
+frogsprite.shapes.iso_box(64, 42, 8, 8, 24, {
+  top: '#99cccc', left: '#669999', right: '#336666'
 });
-const { dx, dy } = frogsprite.iso_to_grid(0, 0, 4); // jump 4px up
+const { dx, dy } = frogsprite.iso_to_grid(0, 0, 4);         // jump 4px up
 ```
 
 - **`iso_tile(cx, cy, w)`** — diamond centred on `(cx, cy)`, width `2w`, height `w`. `w` even and ≥ 2.
@@ -667,6 +668,38 @@ const { dx, dy } = frogsprite.iso_to_grid(0, 0, 4); // jump 4px up
   ridges. Missing `left` / `right` / `outline` skips that face.
 - **`iso_to_grid(x, y, z = 0)`** → `{ dx: (x - y) * 2, dy: (x + y) - z }`. Integers only. A 1×1×1
   world cube is `iso_box(..., 2, 2, 1)` because one world-x step is 2px across.
+
+**The two ends of this count in different units, and neither signature says so.** `iso_to_grid` is
+in world units of **2px across**; `iso_tile` and `iso_box` are in **screen half-width**. A tile of
+half-width `w` sits `w` across and `w/2` down from its neighbour, which is `w/2` world units — so a
+floor of them is:
+
+```js
+const W = 8;                                                  // 16 x 8 tiles
+for (let i = 0; i < 10; i++) for (let j = 0; j < 10; j++) {
+  const { dx, dy } = frogsprite.iso_to_grid(i * W / 2, j * W / 2);
+  frogsprite.shapes.iso_tile(64 + dx, 20 + dy, W, (i + j) % 2 ? '#666699' : '#669999');
+}
+```
+
+Both ways of getting the scale wrong are silent, and they fail in opposite directions:
+`iso_to_grid(i * W, …)` doubles the step to `(16, 8)` and leaves a gap between every tile, while
+`iso_to_grid(i, …)` quarters it to `(2, 1)` and smears them through each other. Neither call has
+anything to check it against.
+
+**`background('iso-grid')` only shows through transparent pixels**, like every other backdrop — see
+[Reviewing what you drew](#reviewing-what-you-drew). A finished scene is opaque wall to wall, so it
+is a no-op exactly when you reach for it. It earns its keep laying out a *single* tile or box on an
+empty canvas, where the lattice is what tells you the vertices landed where you meant.
+
+**Reading one back is still cartesian.** `print_sprite` knows nothing about world `(x, y, z)`, and a
+128 grid dumps 128 lines of 128 characters. Window it with `rect`, and aim the canvas at the same
+place — both are in [Inspection](#inspection):
+
+```js
+frogsprite.print_sprite('scene', { rect: [24, 18, 72, 56] });   // just the character
+frogsprite.zoom(4, { x: 48, y: 36 });                           // and look at him
+```
 
 Draw the floor and the walls flat into one layer; give every **prop and character its own layer with
 a `base`** so they sort against each other as they move. See [Depth](#depth) — that is what lets
@@ -1119,8 +1152,14 @@ with your work, and none affects exports or `print_sprite()`.
   checkerboard. `background('iso-grid')` is a 2:1 diamond lattice instead
 - `silhouette(color?)` — draws every **painted** pixel in one colour, so only the shape is left;
   defaults to black, and `silhouette(null)` turns it off
-- `zoom(n = 1)` — magnify the canvas, 1 to 8; `zoom()` fits the pane again. At 128 a fitted canvas is
-  fine for composition and hopeless for a two-pixel detail. The stage scrolls once it outgrows the pane
+- `zoom(n = 1, { x, y })` — magnify the canvas, 1 to 8; `zoom()` fits the pane again. At 128 a fitted
+  canvas is fine for composition and hopeless for a two-pixel detail, so **aim it**: `x` and `y` are
+  grid coordinates and default to the centre of the *canvas*, which is rarely where your subject is —
+  a 30px character on a 128 grid is off-frame at `zoom(4)` unless you say where he is. The aim is
+  one-shot, so scrolling the stage by hand afterwards is not fought
+  ```js
+  frogsprite.zoom(4, { x: 40, y: 60 });   // magnify, and put (40, 60) in the middle of the pane
+  ```
 - `raw(on?)` — draw the sprite **as it is stored**, ignoring the held frame's `fx`, `trail` and
   `transition`. This is the answer to "is that shape mine, or did an effect do it?" — and to "what
   would a brush stroke here actually land on?"
