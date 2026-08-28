@@ -206,8 +206,12 @@ fs.palette('normals');           // the nine directions as swatches
 ```
 png/idle.png     png/idle_n.png
 sheet/jump.png   sheet/jump_n.png     same cols and scale, so frame i is the same cell in both
-sheet/jump.json
+sheet/jump.json  → { "image": "jump.png", "normalImage": "jump_n.png", "frames": [...] }
 ```
+
+The frame map names its own normal sheet, so an importer reads the pair rather than inferring the
+`_n` suffix — and the key is simply absent for an animation that has no maps, which is the signal
+that there is nothing to light.
 
 Green is up (the OpenGL convention Godot and Unity URP 2D expect); `export_normal_map({ flipY: true })`
 gives the DirectX one.

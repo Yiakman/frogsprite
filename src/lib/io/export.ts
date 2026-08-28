@@ -226,12 +226,14 @@ export function toSpritesheet(
 		effects = true,
 		transitions = true,
 		image = 'spritesheet.png',
+		normalImage,
 		colors = PALETTE,
 		normals = false
 	}: BakeOptions & {
 		cols?: number;
 		scale?: number;
 		image?: string;
+		normalImage?: string;
 		colors?: readonly string[];
 		normals?: boolean;
 	} = {}
@@ -259,6 +261,10 @@ export function toSpritesheet(
 		url: canvas.toDataURL('image/png'),
 		meta: {
 			image,
+			// named only when a normal sheet is actually written beside this one, so its absence is
+			// the honest signal that there is nothing to light rather than a name to go guessing at.
+			// Every frame rect below applies to both files unchanged — same cols, same scale.
+			...(normalImage ? { normalImage } : {}),
 			grid,
 			scale,
 			frameWidth: l.cell,
@@ -461,22 +467,28 @@ export async function setArchive(
 				toAnimatedSVG(set.sprites, anim.frames, set.grid, { effects, transitions })
 			)
 		});
+		// a set may light only some of its animations, so this is a silent skip rather than a throw —
+		// but it has to be settled *before* the albedo meta is built, because that meta names its
+		// sibling and an importer should not have to guess the `_n` convention
+		const lightable = anim.frames.every((f) =>
+			set.sprites.some((s) => s.name === normalNameOf(f.sprite))
+		);
 		// the packed strip an engine loads, and the map that carries the names and timing with it
 		const sheet = toSpritesheet(set.sprites, anim.frames, set.grid, {
 			scale,
 			effects,
 			transitions,
-			image: `${file}.png`
+			image: `${file}.png`,
+			...(lightable ? { normalImage: `${file}_n.png` } : {})
 		});
 		entries.push({ name: `sheet/${file}.png`, data: dataURLBytes(sheet.url) });
 		entries.push({
 			name: `sheet/${file}.json`,
 			data: text.encode(JSON.stringify(sheet.meta, null, 2))
 		});
-		// the matching normal sheet, when every sprite in this animation has a `.n` sibling. Same
-		// cols and scale, so `sheetLayout` puts frame i in the same cell in both — one meta describes
-		// the pair. Silently skipped rather than thrown: a set may light only some of its animations.
-		if (anim.frames.every((f) => set.sprites.some((s) => s.name === normalNameOf(f.sprite)))) {
+		// same cols and scale, so `sheetLayout` puts frame i in the same cell in both — which is why
+		// one meta can describe the pair and every frame rect serves both files
+		if (lightable) {
 			const lit = toSpritesheet(set.sprites, normalFrames(set.sprites, anim.frames), set.grid, {
 				cols: sheet.meta.cols,
 				scale,

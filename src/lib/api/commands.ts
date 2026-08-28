@@ -1409,12 +1409,16 @@ const api = {
 		const set = editor.requireSet();
 		const anim = animOf(animation);
 		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
-		const base = `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}-sheet${normals ? '_n' : ''}`;
+		const stem = `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}-sheet`;
+		const base = `${stem}${normals ? '_n' : ''}`;
+		// the albedo sheet names its normal sibling when one can be built, so the .json an engine
+		// reads is self-describing rather than leaving the `_n` suffix to be inferred
+		const lightable = anim.frames.every((f) => set.sprites.some((s) => s.name === `${f.sprite}.n`));
 		// same cols and scale either way, so frame i lands in the same cell in both sheets and one
 		// meta describes the pair — that alignment is the whole contract with the engine
 		const { url, meta } = normals
 			? ex.toSpritesheet(set.sprites, ex.normalFrames(set.sprites, anim.frames), set.grid, { cols, scale, effects, transitions: false, colors: ex.normalColorTable(), normals: true, image: `${base}.png` })
-			: ex.toSpritesheet(set.sprites, anim.frames, set.grid, { cols, scale, effects, transitions, image: `${base}.png` });
+			: ex.toSpritesheet(set.sprites, anim.frames, set.grid, { cols, scale, effects, transitions, image: `${base}.png`, ...(lightable ? { normalImage: `${stem}_n.png` } : {}) });
 		if (download) {
 			ex.download(url, `${base}.png`);
 			ex.downloadJSON(meta, `${base}.json`);

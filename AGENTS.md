@@ -872,7 +872,7 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   every frame as one numbered PNG grid. Playback shows one frame at a time and a screenshot catches
   whichever was up, so a fault in frame 9 stays invisible until it goes past; on a sheet it is
   obvious at a glance. Reach for it before believing an animation is finished
-- `export_spritesheet({ animation?, cols?, scale = 8, effects?, transitions?, download? })` → **one
+- `export_spritesheet({ animation?, cols?, scale = 8, effects?, transitions?, normals?, download? })` → **one
   animation as a packed strip PNG plus its frame map** — the hand-off to a game engine, which wants
   one image with uniform cells rather than the ZIP's one file per sprite. Cells are the same size,
   in reading order, gapless, on a transparent background, so anything that asks only for a frame
@@ -880,6 +880,12 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   `{ animation, image, grid, scale, frameWidth, frameHeight, cols, rows, width, height, duration,
   frames: [{ index, sprite, x, y, w, h, ms }], url }`, and `download` saves the `.png` and the
   `.json` frame map together.
+
+  `normals: true` packs the animation's normal maps instead of its art, at the same `cols` and
+  `scale` — so frame *i* is the same cell in both files and every rect in `frames` serves either one.
+  The art sheet's meta carries **`normalImage`** naming that file when the whole animation can be
+  lit, and omits the key when it cannot: an importer branches on its presence rather than guessing at
+  a `_n` suffix. See [Normal maps](#normal-maps).
 
   Without `cols` the frames go in one row. Pass it to fold them into a squarer sheet — and note the
   layout folds itself anyway rather than crossing the 16384px a canvas will actually draw, because
