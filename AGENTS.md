@@ -616,9 +616,12 @@ await frogsprite.import_image(sheet, { crop, transparent: '#ffffff', newSprite: 
 ```
 
 Dropping them early is what keeps the edge clean — an edge cell then averages the subject alone
-instead of blending it with the background into a pale fringe. `tolerance` (default 12, per channel)
-covers the ringing JPEG leaves around an edge; raise it for a heavily compressed source, lower it to
-protect a highlight that is close to the background colour.
+instead of blending it with the background into a pale fringe. `tolerance` covers the ringing a JPEG
+leaves around the art: `0` matches almost nothing on a lossy source and leaves most of the page
+behind, 20-30 suits a heavily compressed one, and going wider starts eating highlights that are close
+to the background colour. To pick a value, import at a few and count what survives —
+`read_sprite(name).flat().filter(v => v).length` drops steeply while it is still clearing background,
+then flattens.
 
 Every matching pixel goes, wherever it sits — white *inside* the art goes along with the white
 around it. Where that matters, import without `transparent` and knock the background out yourself
