@@ -9,7 +9,7 @@
 // touching the fill underneath. They are deliberately not per-frame — a `Frame` names a sprite, not
 // a layer set (see types.ts), so "same body, different arm per frame" is still separate sprites.
 import { applyFx, blank, rotate as spin, stamp, upscale, type GridSize, type Pixels } from './grid.ts';
-import type { Arrangement, Layer, Linked, Painted, Sprite } from './types.ts';
+import type { Arrangement, GroundRow, Layer, Linked, Painted, Sprite } from './types.ts';
 
 /** What a sprite's first layer is called, and what every pre-layers sprite migrates into. */
 export const BASE = 'layer-0';
@@ -58,6 +58,10 @@ export function paintable(layer: Layer): Uint8Array {
  * an allocation. That shortcut works right up until someone routes a write through here, at which
  * point it paints for a one-layer sprite and silently discards for a two-layer one — the worst kind
  * of bug to find. `applyFx` allocates on every path anyway, so the saving was never real.
+ *
+ * A layer carrying a `base` is an **entity** and is composited in depth order instead — see
+ * `sortForDepth` below. With no `base` anywhere, which is every stack written before that existed,
+ * this is exactly the bottom-to-top walk it always was.
  */
 export function flatten(
 	sprite: Sprite,
@@ -67,6 +71,10 @@ export function flatten(
 ): Uint8Array {
 	const out = new Uint8Array(grid * grid);
 	const layers = sprite.layers; // hoisted: the array is a $state proxy, the buffers inside are not
+	// Resolved first, painted second, because a `base: true` entity needs its own pixels to find its
+	// ground row and a link's pixels are the expensive part of this loop. Nothing extra is computed:
+	// the same buffers are produced, they are just all held at once rather than one at a time.
+	const placed: Placed[] = [];
 	for (const layer of layers) {
 		const v = view?.[layer.name];
 		// the frame's word beats the layer's own, so one frame can show a layer the sprite hides
@@ -76,8 +84,9 @@ export function flatten(
 		// whether `px` is a buffer someone else owns, since only then does a rotate have to copy.
 		let px: Uint8Array;
 		let live: boolean;
-		// a link's own placement, kept aside so the stamp below can add the frame's on top of it
-		const base = isLinked(layer) ? layer : undefined;
+		// a link's own placement, kept aside so the stamp below can add the frame's on top of it.
+		// Named `link`, not `base`: `layer.base` a few lines down is the ground row, a different thing.
+		const link = isLinked(layer) ? layer : undefined;
 		if (isLinked(layer)) {
 			const src = sprites.find((s) => s.name === layer.from);
 			// A name that resolves to nothing draws nothing, rather than throwing: same rule as an
@@ -124,18 +133,73 @@ export function flatten(
 		// cannot un-wrap a link that wraps by default. The fix is the tri-state `hidden` gets eleven
 		// lines below it in fx.ts; do it if anyone wants a link that wraps in most frames but not one.
 		//
-		// same blit as `stamp`, because it is the same operation: paint a buffer into another at an
-		// offset, transparent pixels leaving what is underneath alone
-		stamp(
-			out,
+		const dy = (link?.dy ?? 0) + (v?.dy ?? 0);
+		placed.push({
 			px,
-			grid,
-			(base?.dx ?? 0) + (v?.dx ?? 0),
-			(base?.dy ?? 0) + (v?.dy ?? 0),
-			v?.wrap ?? base?.wrap ?? false
-		);
+			dx: (link?.dx ?? 0) + (v?.dx ?? 0),
+			dy,
+			wrap: v?.wrap ?? link?.wrap ?? false,
+			// the frame's word beats the layer's, as it does for `hidden`, and for the same reason:
+			// one frame has to be able to say where the feet are when `dy` has stopped saying it
+			depth: groundDepth(v?.base ?? layer.base, px, grid, dy)
+		});
 	}
+	// same blit as `stamp`, because it is the same operation: paint a buffer into another at an
+	// offset, transparent pixels leaving what is underneath alone
+	for (const p of sortForDepth(placed)) stamp(out, p.px, grid, p.dx, p.dy, p.wrap);
 	return out;
+}
+
+/** One layer resolved to what it draws and where, before anything decides the order. */
+type Placed = { px: Pixels; dx: number; dy: number; wrap: boolean; depth: number | null };
+
+/**
+ * The lowest painted row, or `-1` for a layer with nothing on it. For a sprite drawn standing that
+ * is its feet — or the shadow beneath them, which is the better anchor and comes free.
+ */
+export function lowestRow(px: Pixels, grid: number): number {
+	for (let y = grid - 1; y >= 0; y--) for (let x = 0; x < grid; x++) if (px[y * grid + x]) return y;
+	return -1;
+}
+
+/**
+ * A ground row carried onto **baked** pixels — `unlink_layer`, and every copy that drops a link.
+ *
+ * `true` needs nothing: it re-derives from whatever the art became. A row does need moving, because
+ * baking folds a link's `dy` into the pixels and an upscale multiplies every row — so a ground row
+ * left alone would quietly stop pointing at the feet. Not collapsed to `true` instead: a number is
+ * there precisely when the lowest painted row is *not* the contact point, which is the one case
+ * re-deriving would get wrong.
+ */
+export const bakedBase = (base: GroundRow | undefined, dy: number, from: number, into: number) =>
+	base === undefined || base === true ? base : Math.round(((base + dy) * into) / from);
+
+/** Where a layer stands, in scene rows — `null` for scenery, which has no place in the sort. */
+function groundDepth(base: GroundRow | undefined, px: Pixels, grid: number, dy: number): number | null {
+	if (base === undefined) return null;
+	// derived from the *resolved* pixels, so a flipY or a rotate moves the feet with the art
+	return (base === true ? lowestRow(px, grid) : base) + dy;
+}
+
+/**
+ * Scenery first in stack order, then every entity by the row it stands on.
+ *
+ * Sorting on the ground row alone is exact here rather than a near-enough heuristic, and only
+ * because of the projection: in 2:1 a thing standing at world `(i, j)` sits at screen
+ * `y = OY + (i + j)·w/2`, which is strictly increasing in `i + j` — and `i + j` *is* iso depth. Two
+ * entities sharing a row therefore share an `i + j`, so they differ in `x` and cannot overlap; the
+ * tie costs nothing and a stable sort leaves them in stack order. That is what lets placement stay
+ * in screen pixels: nothing anywhere has to know `i` or `j`.
+ *
+ * Scenery going first is what keeps a floor underfoot — its own lowest painted row is the bottom of
+ * the canvas, so anything deriving a ground row from a ground *plane* would sort it in front of
+ * everything standing on it. One layer cannot be sorted against itself, either: a floor and the
+ * props on it have to be separate layers to take part.
+ */
+function sortForDepth(placed: Placed[]): Placed[] {
+	const entities = placed.filter((p) => p.depth !== null);
+	if (!entities.length) return placed; // the common case, and the pre-`base` one: nothing to do
+	return [...placed.filter((p) => p.depth === null), ...entities.sort((a, b) => a.depth! - b.depth!)];
 }
 
 /**
@@ -220,10 +284,12 @@ export function copyOfSprite(
 		layers: src.layers.map((l) => {
 			if (isLinked(l) && link) return { ...l };
 			const px = shownAs(l, from, sprites);
+			const base = bakedBase(l.base, isLinked(l) ? (l.dy ?? 0) : 0, from, into);
 			return {
 				name: l.name,
 				pixels: from === into ? px.slice() : upscale(px, from, into),
-				...(l.hidden && { hidden: true })
+				...(l.hidden && { hidden: true }),
+				...(base !== undefined && { base })
 			};
 		})
 	};

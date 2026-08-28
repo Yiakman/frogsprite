@@ -210,16 +210,19 @@ Where two layers overlap the higher one wins; transparent (index `0`) is the hol
 underneath show through. There is no opacity and no blend mode, and there cannot be: pixels are
 palette *indices*, so there is nothing meaningful to average between index 3 and index 9.
 
-- `new_layer(name?, { at, above, below })` — add a layer and select it. `at: 'top' | 'bottom'`, or
+- `new_layer(name?, { at, above, below, base })` — add a layer and select it. `at: 'top' | 'bottom'`, or
   `above: 'road'` / `below: 'fg'`. With none of them it lands above the *active* layer — which is a
-  cursor an earlier `select_layer` moved, so say where you mean when building a stack in several calls
+  cursor an earlier `select_layer` moved, so say where you mean when building a stack in several calls.
+  `base` makes it an entity sorted by depth rather than by stack position — see [Depth](#depth)
 - `select_layer(name)` — which layer painting lands on
 - `delete_layer(name)` — remove it and its pixels; a sprite must keep at least one
 - `hide_layer(name?, on = true)` — hide one layer, or show it again with `hide_layer(name, false)`.
   Defaults to the active layer. A hidden layer keeps its pixels: it is skipped when the sprite is
   composited, not erased
 - `set_layers([...])` — reorder, and show/hide several at once, bottom first. Every existing layer
-  must appear exactly once: this rearranges the stack, it never destroys part of it
+  must appear exactly once: this rearranges the stack, it never destroys part of it. Entries also
+  take `base`, which **merges** where `hidden` replaces — a plain reorder cannot quietly turn an
+  entity back into scenery
 - `tile_layer(name?, { period, from })` — repeat the layer's leftmost `period` columns across the
   grid. Draw one motif, get the rest; `period` must divide the grid. Use it before `scroll_layer`,
   because it makes the repeat a **guarantee** rather than a hope
@@ -238,7 +241,7 @@ palette *indices*, so there is nothing meaningful to average between index 3 and
   frogsprite.cycle_layers(['pose-0', 'pose-1', 'pose-2', 'pose-3']);   // one per frame, round and round
   frogsprite.cycle_layers(['step-a', 'step-b'], { every: 4 });         // held four frames each
   ```
-- `link_layer(from, { name, dx, dy, wrap, at, above, below, sprite })` — show another sprite as a
+- `link_layer(from, { name, dx, dy, wrap, at, above, below, sprite, base })` — show another sprite as a
   layer of this one, **live**. Repaint that sprite and every layer linked to it changes with it, which
   is the whole difference from `stamp`. `dx`/`dy` place it, so the same drawing appears as many times
   as you like at different offsets
@@ -296,6 +299,46 @@ The rules worth knowing:
 Reach for `stamp` instead when you want a one-off you will then paint over: it copies pixels once and
 the connection is gone. `link_layer` is for anything you will still edit, or repeat.
 
+
+#### Depth
+
+A stack composites bottom to top, which is the wrong order for a scene drawn in perspective: a
+character on a layer above the floor is in front of *everything*, so he can never walk behind a
+pillar. Give a layer a **`base`** — the row in its own art where it meets the ground, the shadow
+under a character or the foot of a post — and it stops being sorted by stack position:
+
+```js
+frogsprite.link_layer('hero', { dx: 40, dy: 24, base: true });   // derive it from the lowest painted row
+frogsprite.link_layer('pillar', { dx: 72, dy: 40, base: true });
+```
+
+- **No `base` is scenery.** It draws first, in stack order, exactly as every layer did before this
+  existed. A floor belongs here — its own lowest painted row is the bottom of the canvas, so a floor
+  that derived a ground row would sort in front of everything standing on it.
+- **A `base` makes it an entity**, drawn after all the scenery and ordered against the other
+  entities by `base + dy`. `true` derives the row from the lowest painted pixel, which is what a
+  sprite drawn standing already gives you; a number says it outright.
+- **A frame's `dy` moves it in depth**, which is the point: a walk cycle that already slides a
+  character across the floor now also reorders him against the props, with nothing added per frame.
+
+Sorting on the ground row alone is exact rather than nearly right, and only because of the
+projection: in 2:1 a thing standing at world `(i, j)` sits at screen `y = OY + (i + j)·w/2`, which
+rises strictly with `i + j` — and `i + j` **is** iso depth. Two entities on the same row therefore
+share an `i + j`, differ in `x`, and cannot overlap, so the tie is free and stable. Nothing anywhere
+needs to know `i` or `j`: placement stays in screen pixels.
+
+Two things it deliberately does not do:
+
+- **It cannot sort inside one layer.** A floor with its props painted into it is one layer and one
+  depth. Props have to be their own layers — usually `link_layer` per prop — to take part. Painting
+  a whole tiled floor flat is still right; a ground plane never sorts.
+- **A lift is not a step back.** `iso_to_grid` folds height into `dy` (`dy = (x + y) - z`), so a
+  jumping character would otherwise sort as though he had walked away from the camera. Override the
+  frame's `base` with where his feet still are:
+
+  ```js
+  layers: { hero: { dx, dy: dy - jump, base: 32 + jump } }   // rises, stays at the same depth
+  ```
 
 #### Moving layers per frame — parallax
 
@@ -382,6 +425,7 @@ speed turns into a refused one for reasons nothing on screen explains. `tile_lay
 
 `hidden` is a third override, and it beats the layer's own setting in both directions: a frame can
 show a layer the sprite hides, or hide one it shows. That is how one sprite carries two arm poses.
+`base` is a fourth, and beats the layer's own the same way — see [Depth](#depth).
 
 An arrangement also takes **the same geometry and colour keys `fx` does** — `invert`, `hue`,
 `rotate`, `flipX`, `flipY` — applied to that layer alone:
@@ -623,6 +667,11 @@ const { dx, dy } = frogsprite.iso_to_grid(0, 0, 4); // jump 4px up
   ridges. Missing `left` / `right` / `outline` skips that face.
 - **`iso_to_grid(x, y, z = 0)`** → `{ dx: (x - y) * 2, dy: (x + y) - z }`. Integers only. A 1×1×1
   world cube is `iso_box(..., 2, 2, 1)` because one world-x step is 2px across.
+
+Draw the floor and the walls flat into one layer; give every **prop and character its own layer with
+a `base`** so they sort against each other as they move. See [Depth](#depth) — that is what lets
+something walk behind a pillar, and the `z` above is exactly the lift the section's last note is
+about.
 
 ### Importing an image
 

@@ -9,7 +9,7 @@ import { diffPixels, GRIDS, put, reflect as reflectHalf, rotate as spin, shift a
 import { sha256 as hashOf } from '../io/hash.ts';
 import { freeName, taken } from '../core/names.ts';
 import { normalsOf } from '../core/normals.ts';
-import { BASE, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, period as periodOf, placeAt, poseAt, scrollStep, shownAs } from '../core/layers.ts';
+import { BASE, bakedBase, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, period as periodOf, placeAt, poseAt, scrollStep, shownAs } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
 import type { Point } from '../core/shapes.ts';
@@ -127,6 +127,21 @@ const ro = <T extends (...a: any[]) => any>(fn: T): T => wrap(false, fn) as unkn
  * next, reads its work back and sees only the outline. Each of the five is commented at the site.
  */
 type Target = { sprite: Sprite; layer: Layer; grid: GridSize; sprites: Sprite[] };
+
+/**
+ * A ground row as the API takes it: `true` to derive it from the lowest painted row, a row to say
+ * it outright, absent for scenery. Throws where storage's `readBase` quietly drops — a stored file
+ * has to survive being wrong, a command should say so.
+ *
+ * Deliberately not capped to the grid: a row past the bottom is how you say "always in front".
+ */
+function readGround(v: unknown): number | true | undefined {
+	if (v === undefined || v === null) return undefined;
+	if (v === true) return true;
+	if (!Number.isInteger(v) || (v as number) < 0)
+		throw new Error(`base must be true, or a whole row from 0 — got ${JSON.stringify(v)}`);
+	return v as number;
+}
 
 function target(name?: string, layer?: string): Target {
 	const set = editor.requireSet();
@@ -666,12 +681,15 @@ const api = {
 	// blend there can be is paint-over, where index 0 is the hole.
 
 	/** Add a layer above the active one and select it. Names itself `layer-1`, `layer-2`… if asked. */
-	new_layer: mut(function (name?: string, { at, above, below }: { at?: 'top' | 'bottom'; above?: string; below?: string } = {}) {
+	new_layer: mut(function (name?: string, { at, above, below, base }: { at?: 'top' | 'bottom'; above?: string; below?: string; base?: number | true } = {}) {
 		const t = target();
 		const sprite = t.sprite;
 		const named = name ?? freeName(sprite.layers, `layer-${sprite.layers.length}`);
 		taken(sprite.layers, named, 'layer');
-		sprite.layers.splice(placeAt(t.sprite, t.layer.name, { at, above, below }), 0, newLayer(named, t.grid));
+		const made = newLayer(named, t.grid);
+		const ground = readGround(base);
+		if (ground !== undefined) made.base = ground;
+		sprite.layers.splice(placeAt(t.sprite, t.layer.name, { at, above, below }), 0, made);
 		editor.sel = { ...editor.sel, layer: named };
 		return { sprite: sprite.name, layer: named, layers: sprite.layers.map((l) => l.name) };
 	}),
@@ -697,7 +715,8 @@ const api = {
 	 *
 	 * Same set only, so both sprites share a grid. `copy_sprite` brings art in from another set first.
 	 */
-	link_layer: mut(function (from: string, { name, dx = 0, dy = 0, wrap = false, at, above, below, sprite }: { name?: string; dx?: number; dy?: number; wrap?: boolean; at?: 'top' | 'bottom'; above?: string; below?: string; sprite?: string } = {}) {
+	link_layer: mut(function (from: string, { name, dx = 0, dy = 0, wrap = false, at, above, below, sprite, base }: { name?: string; dx?: number; dy?: number; wrap?: boolean; at?: 'top' | 'bottom'; above?: string; below?: string; sprite?: string; base?: number | true } = {}) {
+		const ground = readGround(base);
 		const t = target(sprite);
 		const src = t.sprites.find((sp) => sp.name === from);
 		// flatten draws a name it cannot resolve as nothing, on purpose. The *command* must not put
@@ -717,6 +736,7 @@ const api = {
 		// zeroes stay off the object: settle() charges no undo step when the document serialises
 		// unchanged, and a `dx: 0` written here would not survive the round-trip through storage
 		const geometry = {
+			...(ground !== undefined && { base: ground }),
 			...(Math.round(dx) && { dx: Math.round(dx) }),
 			...(Math.round(dy) && { dy: Math.round(dy) }),
 			...(wrap && { wrap: true as const })
@@ -754,10 +774,13 @@ const api = {
 			throw new Error(`"${t.layer.name}" is already a painted layer — there is no link to break`);
 		const was = t.layer.from;
 		const i = t.sprite.layers.findIndex((l) => l.name === t.layer.name);
+		// the bake folds the link's dy into the pixels, so a ground row has to move with them
+		const base = bakedBase(t.layer.base, t.layer.dy ?? 0, t.grid, t.grid);
 		t.sprite.layers[i] = {
 			name: t.layer.name,
 			pixels: shownAs(t.layer, t.grid, t.sprites),
-			...(t.layer.hidden && { hidden: true })
+			...(t.layer.hidden && { hidden: true }),
+			...(base !== undefined && { base })
 		};
 		return { sprite: t.sprite.name, layer: t.layer.name, was };
 	}),
@@ -815,7 +838,7 @@ const api = {
 	 * Every existing layer must appear exactly once: this rearranges a stack, it never destroys one.
 	 * Use `new_layer` / `delete_layer` to change what is in it.
 	 */
-	set_layers: mut(function (layers: (string | { name: string; hidden?: boolean })[]) {
+	set_layers: mut(function (layers: (string | { name: string; hidden?: boolean; base?: number | true })[]) {
 		const t = target();
 		const sprite = t.sprite;
 		if (!Array.isArray(layers) || !layers.length) throw new Error('layers must be a non-empty array');
@@ -838,7 +861,14 @@ const api = {
 			// Spread everything else — naming `pixels` here would silently unlink every linked layer
 			// the moment anyone reordered the stack.
 			const { hidden: _was, ...rest } = found;
-			return { ...rest, ...(l.hidden && { hidden: true as const }) };
+			// `base` merges where `hidden` replaces: an entry that says nothing about it keeps what the
+			// layer had, so a plain reorder cannot silently turn an entity back into scenery
+			const ground = readGround(l.base);
+			return {
+				...rest,
+				...(l.hidden && { hidden: true as const }),
+				...(ground !== undefined && { base: ground })
+			};
 		});
 		sprite.layers = next;
 		return { sprite: sprite.name, layers: next.map((l) => (l.hidden ? `${l.name} (hidden)` : l.name)) };

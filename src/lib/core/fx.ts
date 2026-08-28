@@ -167,7 +167,7 @@ export function compose(
 // so whatever survives here survives a reload.
 
 const FX_KEYS = ['invert', 'hue', 'rotate', 'dx', 'dy', 'flipX', 'flipY'] as const;
-const VIEW_KEYS = [...FX_KEYS, 'wrap', 'hidden', 'cx', 'cy'] as const;
+const VIEW_KEYS = [...FX_KEYS, 'wrap', 'hidden', 'cx', 'cy', 'base'] as const;
 
 const strayKeys = (v: object, allowed: readonly string[]) =>
 	Object.keys(v).filter((k) => !allowed.includes(k));
@@ -289,6 +289,10 @@ export function readArrangement(v: any, { strict = false }: { strict?: boolean }
 		// tri-state on purpose: absent leaves the layer's own `hidden` alone, where `false` overrides
 		// it to show a layer the sprite hides. `!!spec.hidden` would collapse those two.
 		if (typeof spec.hidden === 'boolean') view.hidden = spec.hidden;
+		// `typeof` rather than the Number() coercion the offsets above use, and not a truthiness test:
+		// row 0 is a real ground row, so `false` must stay "no override" instead of coercing to it
+		if (typeof spec.base === 'number' && Number.isFinite(spec.base) && spec.base >= 0)
+			view.base = Math.round(spec.base);
 		if (Object.keys(view).length) out[name] = view;
 	}
 	return Object.keys(out).length ? out : undefined;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BASE, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, period, placeAt, poseAt, scrollStep, shownAs } from './layers.ts';
+import { BASE, bakedBase, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, lowestRow, moves, newLayer, paintable, period, placeAt, poseAt, scrollStep, shownAs } from './layers.ts';
 import type { Linked, Painted, Sprite } from './types.ts';
 
 // typed as Painted rather than Layer so tests can reach `.pixels` — this factory only ever builds
@@ -537,4 +537,102 @@ test('copyOfSprite bakes a hidden link without erasing it', () => {
 	const baked = copyOfSprite(s, 'copy', 8, 8, [t, s], false);
 	assert.equal(baked.layers[0].hidden, true);
 	assert.deepEqual(Array.from((baked.layers[0] as Painted).pixels.slice(0, 3)), [0, 5, 0]);
+});
+
+// --- depth sorting -----------------------------------------------------------
+// A `base` makes a layer an entity, composited by the row it stands on rather than by where it
+// sits in the stack. Anything without one is scenery and behaves exactly as it always did.
+
+/** Two layers that both cover the whole 8x8, so whichever paints last is the one you see. */
+const pair = (aBase?: number | true, bBase?: number | true) => {
+	const s = sprite(['a', new Array(64).fill(1)], ['b', new Array(64).fill(2)]);
+	if (aBase !== undefined) s.layers[0].base = aBase;
+	if (bBase !== undefined) s.layers[1].base = bBase;
+	return s;
+};
+/** The colour at the middle of the grid, which every layer above still covers after a small dy. */
+const winner = (s: Sprite, view?: Parameters<typeof flatten>[2]) => flatten(s, 8, view)[27];
+
+test('with no base anywhere the stack is the plain bottom-to-top walk it always was', () => {
+	assert.equal(winner(pair()), 2, 'b sits above a, so b wins — unchanged');
+});
+
+test('entities sort by the row they stand on, not by stack position', () => {
+	assert.equal(winner(pair(3, 1)), 1, 'a is lower in the stack but stands nearer, so it paints last');
+	assert.equal(winner(pair(1, 3)), 2, 'and the other way round');
+});
+
+test('a frame dy moves an entity in depth, which is the whole point', () => {
+	const s = pair(1, 2);
+	assert.equal(winner(s), 2, 'b stands one row nearer');
+	assert.equal(winner(s, { b: { dy: -2 } }), 1, 'stepping b back puts a in front, no base touched');
+});
+
+test('a frame base overrides the layer own, which is how a jump keeps its footing', () => {
+	const s = pair(1, 2);
+	assert.equal(winner(s, { b: { dy: -2 } }), 1, 'the lift alone moves b in depth');
+	assert.equal(winner(s, { b: { dy: -2, base: 4 } }), 2, 'saying where the feet are makes it art only');
+});
+
+test('entities standing on the same row keep stack order', () => {
+	assert.equal(winner(pair(2, 2)), 2, 'b is higher in the stack, and the sort is stable');
+});
+
+test('lowestRow is the ground row a derived base uses', () => {
+	const px = new Uint8Array(16);
+	px[9] = 1;
+	assert.equal(lowestRow(px, 4), 2);
+	assert.equal(lowestRow(new Uint8Array(16), 4), -1, 'an empty layer stands nowhere');
+});
+
+test('a derived base follows the art through an fx, not the buffer it started as', () => {
+	// `ent` is painted down column 0 for rows 0..5, so upright it stands at row 5 and flipped at 7
+	const art = new Array(64).fill(0);
+	for (let y = 0; y <= 5; y++) art[y * 8] = 7;
+	const s = sprite(['ent', art], ['other', new Array(64).fill(3)]);
+	s.layers[0].base = true;
+	s.layers[1].base = 6;
+	const at = (view?: Parameters<typeof flatten>[2]) => flatten(s, 8, view)[24]; // row 3, covered both ways
+	assert.equal(at(), 3, 'upright ent stands at row 5, behind other at 6');
+	assert.equal(at({ ent: { flipY: true } }), 7, 'flipped it stands at row 7, so it comes forward');
+});
+
+test('scenery is drawn first however the stack is ordered, so a floor stays underfoot', () => {
+	// a floor's own lowest painted row is the bottom of the canvas — deriving a ground row from a
+	// ground *plane* would sort it in front of everything standing on it
+	const ent = new Array(64).fill(0);
+	ent[27] = 3;
+	const s = sprite(['ent', ent], ['floor', new Array(64).fill(8)]);
+	s.layers[0].base = true;
+	assert.equal(flatten(s, 8)[27], 3, 'the entity beats the floor that sits above it in the stack');
+});
+
+test('a linked entity stands where its placement puts it, so two copies sort against each other', () => {
+	const col = (v: number) => { const p = new Array(64).fill(0); for (let y = 0; y <= 3; y++) p[y * 8] = v; return p; };
+	const near: Sprite = { name: 'near', layers: [{ name: 'layer-0', pixels: Uint8Array.from(col(6)) }] };
+	const far: Sprite = { name: 'far', layers: [{ name: 'layer-0', pixels: Uint8Array.from(col(5)) }] };
+	// `near` is at the bottom of the stack but placed two rows down, so it stands in front of `far`
+	const scene = linked('scene', { from: 'near', dy: 2, base: true }, { from: 'far', base: true });
+	assert.equal(flatten(scene, 8, undefined, [near, far])[16], 6, 'row 2, where the two overlap');
+	// the same stack without the ground rows is the old behaviour: whatever is higher up wins
+	const flat = linked('scene', { from: 'near', dy: 2 }, { from: 'far' });
+	assert.equal(flatten(flat, 8, undefined, [near, far])[16], 5);
+});
+
+test('a baked ground row moves with the pixels it was measured against', () => {
+	assert.equal(bakedBase(true, 9, 16, 32), true, 'derive stays derive — the art speaks for itself');
+	assert.equal(bakedBase(undefined, 9, 16, 32), undefined, 'scenery stays scenery');
+	assert.equal(bakedBase(12, 4, 16, 16), 16, 'a link dy is folded in, as it is into the pixels');
+	assert.equal(bakedBase(12, 0, 16, 32), 24, 'and an upscale multiplies it');
+	assert.equal(bakedBase(12, 4, 16, 32), 32, 'both at once');
+});
+
+test('copyOfSprite carries a ground row across, baked or kept', () => {
+	const src: Sprite = { name: 'rock', layers: [{ name: 'layer-0', pixels: new Uint8Array(64).fill(2) }] };
+	const scene = linked('scene', { name: 'a', from: 'rock', dy: 1, base: 2 }, { name: 'b', from: 'rock', base: true });
+	const kept = copyOfSprite(scene, 'copy', 8, 8, [src], true);
+	assert.deepEqual(kept.layers.map((l) => l.base), [2, true], 'still links, so nothing moved');
+	const baked = copyOfSprite(scene, 'copy', 8, 8, [src], false);
+	assert.deepEqual(baked.layers.map((l) => l.base), [3, true], 'the dy went into the pixels and the row');
+	assert.equal(isLinked(baked.layers[0]), false, 'and it really did bake');
 });
