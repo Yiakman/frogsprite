@@ -669,6 +669,15 @@ frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
   extrudes screen-up. `w` and `d` even, ≥ 2, congruent modulo 4 (so the 2:1 vertices land on pixels).
   `h === 0` is just the top tile. Paint order is left, right, top, then outline — top wins on the
   ridges. Missing `left` / `right` / `outline` skips that face.
+  - **`outline` is for a lone box** — a crate, a pillar, a stalagmite. It draws the whole box: four
+    top edges, three verticals, two base edges. On a **tessellated run those internal edges are the
+    seams you do not want**: a wall of outlined boxes reads as a row of separate objects rather than
+    one mass, and if the outline colour happens to match what is behind the wall the seams read as
+    gaps instead of lines. Omit it on a run and the three face shades carry the form — which is what
+    the wall above does.
+  - The opposite is true of **`iso_tile`**, where the shared edges are the point: outlining every
+    floor tile in a darker shade (`{ fill: false }`, a second pass) reads as grout. A floor should
+    show its tiling; a wall should not show its blocks.
 - **`iso_to_grid(x, y, z?)`** or **`iso_to_grid(x, y, { w, z })`** → `{ dx, dy }`, a screen offset
   to add to wherever you put the origin. Integers only.
   - **`w` is the same tile half-width `iso_tile` takes**, so a lattice and the shapes standing on it

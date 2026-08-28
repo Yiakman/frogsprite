@@ -52,13 +52,32 @@ written down — the `iso_to_grid` one against the floor it claims to build.
    for rhombus lattices — `isoDiamond` handles `w != d`, so that case is drawable but not placeable,
    noted at the deferral in `shapes.ts`.
 
-3. **`iso_box`'s `outline` is unusable on a tessellated run.** It outlines the whole box — the four
-   top edges, the three verticals and the two base edges. On adjacent boxes those internal edges are
-   precisely the seams you do not want, so a wall built as a run of boxes comes out looking like a
-   row of separated teeth. Made worse when the outline colour matches what is behind the wall, at
-   which point the seams read as gaps rather than lines. Outlines were dropped from every wall and
-   stalagmite here and the three face shades carried it alone. Wants either a silhouette-only mode,
-   or per-edge control, or an honest note in the docs that outline is for a lone box.
+3. ~~**`iso_box`'s `outline` is unusable on a tessellated run.**~~ **Done — docs only.** The note
+   now lives in the `iso_box` bullet under [Isometric](AGENTS.md#isometric), mirrored in the JSDoc.
+   No code changed: `outline` is already optional, and omitting it is already the fix.
+
+   **Both code options were rejected, and the first one was measured rather than argued.** Three runs
+   of five identical boxes, counting *interior* seam pixels — dark pixels with lit rock on both
+   sides, so never the silhouette itself:
+
+   | | interior seam pixels |
+   | --- | --- |
+   | full outline (today) | 80 |
+   | no outline | **0** |
+   | silhouette-only (simulated) | 68 |
+
+   - **Silhouette-only** removes 15% of the seams and is visually indistinguishable from today. It
+     cannot win, and the reason is exact: adjacent boxes **share an edge**, endpoint for endpoint —
+     box A's south-east top edge *is* box B's north-west top edge. That edge is internal to A and
+     silhouette to B, so A skips it and B draws it anyway. For every internal seam there is a
+     neighbour holding it as an outer edge.
+   - **Per-edge flags** would make the caller derive which seams to suppress from adjacency — the
+     arithmetic `iso_to_grid` exists to remove. A wall would have to know "I am not the west end".
+   - A **composite silhouette tracer** (outline the painted blob after the whole run) would genuinely
+     wrap a wall, but it is a new primitive, and nothing has needed it: face shades were enough.
+
+   The docs also record the contrast that stops the correct technique going out with the bad one:
+   `iso_tile` **wants** its shared edges outlined — that is what reads as grout on a floor.
 
 4. **No 2D lattice repeat.** `tile_layer(name, { period })` repeats a **horizontal** period, which is
    the wrong shape for a diamond lattice. So the floor is ~1,200 `iso_tile` calls baked flat into one

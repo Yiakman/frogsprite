@@ -1948,6 +1948,10 @@ const shapes = {
 	/**
 	 * Isometric box. (cx, cy) is the ground-diamond centre; h extrudes screen-up.
 	 * `colors` is `{ top, left?, right?, outline? }` — missing sides are skipped.
+	 *
+	 * `outline` is for a lone box. It draws all nine edges, three of which are internal, so a
+	 * tessellated run of them reads as separate objects — omit it there and let the face shades
+	 * carry the form. See the Isometric section of AGENTS.md.
 	 */
 	iso_box: mut(function (
 		cx: number,
