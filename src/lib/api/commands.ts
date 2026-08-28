@@ -1356,6 +1356,7 @@ const api = {
 			frames: art.meta.frames.map((f) => ({ x: f.x, y: f.y, ms: f.ms })),
 			cell: art.meta.frameWidth,
 			title: `${set.name}/${name}`,
+			file: ex.safeFile(name),
 			zoom
 		});
 		if (download)

@@ -1033,7 +1033,8 @@ set.sprites[0].layers[0].pixels;   // a plain array, grid * grid long
   `'*'` does the whole set. See [Normal maps](#normal-maps)
 - `export_normal_map(opts?)` — a normal map as a PNG, labels translated to true normal RGB
 - `export_lit(opts?)` — a self-contained HTML page that lights a sprite or animation, cursor as the
-  light. The only cheap way to tell a correct normal map from a wrong one
+  light. The only cheap way to tell a correct normal map from a wrong one, and it carries save links
+  for both embedded images, so one file both proves the map and delivers it
 
 #### Reviewing what you drew
 

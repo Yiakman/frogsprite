@@ -235,6 +235,11 @@ that there is nothing to light.
 Green is up (the OpenGL convention Godot and Unity URP 2D expect); `export_normal_map({ flipY: true })`
 gives the DirectX one.
 
+The lit page also carries **save sprite** and **save normal map** links, so the one file that proves
+the map is right is also the one that delivers it. They hand back what is embedded — one pixel per
+pixel, which is what an engine wants and *not* the `scale` `export_zip` bakes at, so the label beside
+them says the size rather than leaving it to be discovered.
+
 ### Two things that are not obvious
 
 **A flip has to negate the direction, not just move the pixel.** `fx: { flipX: true }` mirrors the

@@ -520,9 +520,16 @@ export async function setArchive(
  * A still sprite is passed as a one-frame animation rather than handled separately — the playing
  * case has to exist anyway, and a frame count of 1 is already the still.
  *
+ * The two save links make the page a delivery vehicle as well as a verifier: it is one self-contained
+ * file that both proves the map is right and carries the assets out of it. They hand back what is
+ * embedded — one pixel per pixel, which is the resolution an engine wants and *not* the `scale`
+ * `export_zip` bakes at, so the labels say the size rather than leaving it to be discovered.
+ *
  * ponytail: both sheets go in at one pixel per pixel and CSS magnifies. Lighting a magnified sheet
  * would be a million dot products per mousemove for a picture with a few hundred distinct pixels in
- * it, and the data URIs would be ~64x larger for no more information.
+ * it, and the data URIs would be ~64x larger for no more information. The links get their `href`
+ * from the loaded images rather than a second copy of the data URI, which would inflate the file by
+ * half again for nothing.
  */
 export function toLitHTML(
 	albedo: string,
@@ -531,15 +538,22 @@ export function toLitHTML(
 		frames,
 		cell,
 		title = 'sprite',
+		file = 'sprite',
 		zoom = 12
 	}: {
 		frames: { x: number; y: number; ms: number }[];
 		cell: number;
 		title?: string;
+		file?: string;
 		zoom?: number;
 	}
 ): string {
 	if (!frames.length) throw new Error('a lit preview needs at least one frame');
+	// more than one frame means the embedded images are packed strips, and saying so in the filename
+	// is the difference between a usable download and one the recipient has to guess at
+	const sheet = frames.length > 1;
+	const stem = sheet ? `${file}-sheet` : file;
+	const dims = sheet ? `${cell * frames.length}x${cell}, ${frames.length} frames` : `${cell}x${cell}`;
 	return `<!doctype html>
 <meta charset="utf-8"><title>${title} — lit</title>
 <style>
@@ -549,15 +563,22 @@ export function toLitHTML(
  canvas { image-rendering:pixelated; width:min(${cell * zoom}px, 80vw); aspect-ratio:1;
           background:#0e0e0e; border-radius:8px; cursor:crosshair; touch-action:none }
  .bar { display:flex; gap:1rem; align-items:center; flex-wrap:wrap; justify-content:center }
- button { font:inherit; color:#7cf; background:#1e1e1e; border:1px solid #333; border-radius:5px;
-          padding:.3rem .8rem; cursor:pointer }
+ button, a.dl { font:inherit; color:#7cf; background:#1e1e1e; border:1px solid #333;
+          border-radius:5px; padding:.3rem .8rem; cursor:pointer; text-decoration:none }
+ a.dl:hover { background:#262626 }
+ .size { color:#555 }
  b { color:#7cf; font-weight:600; font-variant-numeric:tabular-nums }
 </style>
 <canvas id=c width=${cell} height=${cell}></canvas>
 <div class=bar>
   <span>move the pointer to move the light</span>
   <b id=r>&nbsp;</b>
-  ${frames.length > 1 ? '<button id=p>pause</button>' : ''}
+  ${sheet ? '<button id=p>pause</button>' : ''}
+</div>
+<div class=bar>
+  <a class=dl id=da download="${stem}.png">save sprite</a>
+  <a class=dl id=dn download="${stem}_n.png">save normal map</a>
+  <span class=size>${dims}, as authored</span>
 </div>
 <script>
 const F=${JSON.stringify(frames)}, C=${cell};
@@ -597,6 +618,8 @@ function go(){
   if(btn) btn.onclick=()=>{ playing=!playing; btn.textContent=playing?'pause':'play'; if(playing)tick(); };
   function tick(){ if(F.length<2||!playing) return;
     setTimeout(()=>{ k=(k+1)%F.length; draw(); tick(); }, F[k].ms); }
+  document.getElementById('da').href=A.src;
+  document.getElementById('dn').href=N.src;
   draw(); tick();
 }
 A.onload=N.onload=()=>{ if(++ready===2) go() };
