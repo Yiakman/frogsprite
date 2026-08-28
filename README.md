@@ -18,6 +18,14 @@ await frogsprite.export_zip({ download: true });
 
 ## Quick start
 
+Run directly without installing:
+
+```bash
+npx -y frogsprite
+```
+
+Or run from source:
+
 ```bash
 npm install
 npm run dev

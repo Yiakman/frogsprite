@@ -1,11 +1,20 @@
 {
   "name": "frogsprite",
-  "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
+  "bin": {
+    "frogsprite": "./bin/frogsprite.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "AGENTS.md"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "prepack": "npm run build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
     "test": "node --test 'src/lib/**/*.test.ts'"
