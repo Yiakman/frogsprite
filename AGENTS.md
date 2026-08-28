@@ -578,6 +578,8 @@ an image"*; and a random image URL off the web, which needs CORS headers and usu
 | `fit` | `'contain'` | `'contain'` keeps the whole image with transparent padding, `'cover'` centre-crops to fill, `'stretch'` distorts |
 | `trim` | `true` | crop a transparent (or uniform-colour) border first, so a padded logo fills the grid |
 | `crop` | — | `{ x, y, w, h }` in the source image's own pixels — import only that region, and skip `trim` |
+| `transparent` | — | `'#rrggbb'` to knock out of the source — the background colour of art that has no alpha |
+| `tolerance` | `12` | how far off `transparent` a channel may be and still count as background |
 | `alpha` | `128` | cells averaging below this alpha become transparent |
 | `contrast` | `0.15` | pre-quantize boost; `0` disables |
 | `saturation` | `1.2` | `1` disables, `0` is greyscale |
@@ -602,6 +604,25 @@ await frogsprite.import_image(sheet, { crop: { x: 64, y: 0, w: 32, h: 32 }, newS
 
 That is also how you slice a sprite sheet: one call per cell, same source, a different `crop` and
 `newSprite` each time.
+
+#### Art on a flat background
+
+A JPEG or a PNG saved without alpha has no transparency to read, so the page it was drawn on comes in
+as an opaque slab. `transparent` names that background colour and drops those source pixels *before*
+the averaging:
+
+```js
+await frogsprite.import_image(sheet, { crop, transparent: '#ffffff', newSprite: 'walk1' });
+```
+
+Dropping them early is what keeps the edge clean — an edge cell then averages the subject alone
+instead of blending it with the background into a pale fringe. `tolerance` (default 12, per channel)
+covers the ringing JPEG leaves around an edge; raise it for a heavily compressed source, lower it to
+protect a highlight that is close to the background colour.
+
+Every matching pixel goes, wherever it sits — white *inside* the art goes along with the white
+around it. Where that matters, import without `transparent` and knock the background out yourself
+with `read_sprite` and `paint_map`.
 
 Coming back from `export_png` — the supported way to move a sprite into a **smaller** grid — pass
 `{ pixel: true }`. Without it the photo treatment applies to art that is already palette-exact:

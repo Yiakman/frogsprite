@@ -417,7 +417,8 @@ const api = {
 	 * `alpha` (0-255 cutoff for a cell counting as transparent, default 128), `trim` (crop a
 	 * transparent or uniform border first, default true), `crop` ({ x, y, w, h } in the source
 	 * image's own pixels — import just that region, and skip `trim`; loop it to slice a sprite
-	 * sheet), `contrast` (default 0.15),
+	 * sheet), `transparent` ('#rrggbb' to knock out of the source, for art on a flat background)
+	 * with `tolerance` (per channel, default 12), `contrast` (default 0.15),
 	 * `saturation` (default 1.2), `pixel` (the source is already pixel art — turns the three photo
 	 * treatments off, which is what you want re-importing an `export_png`), plus `sprite` to target
 	 * one by name or `newSprite` to create one, and `layer` to land on one by name. Like every painting verb this replaces the *active layer*,

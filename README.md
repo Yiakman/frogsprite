@@ -144,6 +144,10 @@ Pass `crop: { x, y, w, h }` — in the source image's own pixels — to import o
 whole picture. It stands in for the auto-trim, and `fit` then applies to the region you named; the
 same option slices a sprite sheet, one call per cell.
 
+Art on a flat background — a JPEG sheet, a logo on white — imports as a slab unless you say what the
+background is: `transparent: '#ffffff'` drops those source pixels before the averaging, so the sprite
+comes in cut out and without a pale fringe around its edge.
+
 Expect a starting point rather than a finished sprite — it works best on high-contrast, simple,
 centred subjects, and smooth gradients will band visibly.
 
