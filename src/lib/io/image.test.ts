@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { nearestIndex, PALETTE } from '../core/palette.ts';
-import { adjust, contentBounds, layout, normalise, sampleInto } from './image.ts';
+import { adjust, contentBounds, cropRect, knockout, layout, normalise, sampleInto } from './image.ts';
 
 /** Build RGBA data from rows of [r,g,b,a] tuples. */
 const rgba = (rows: number[][][]) =>
 	new Uint8ClampedArray(rows.flat(2));
 
-const plain = { alpha: 128, contrast: 0, saturation: 1 };
+const plain = { alpha: 128, contrast: 0, saturation: 1, transparent: null, tolerance: 12 };
 const full = (w: number, h: number) => ({ x: 0, y: 0, w, h });
 
 test('sampleInto averages the source pixels under each cell', () => {
@@ -133,4 +133,54 @@ test('the palette survives a pixel round-trip that the photo defaults would shif
 	const pixel = normalise({ pixel: true });
 	assert.ok(drift(photo.contrast, photo.saturation) > 100, 'the photo defaults do move colours');
 	assert.equal(drift(pixel.contrast, pixel.saturation), 0, 'pixel: true moves none of them');
+});
+
+test('cropRect follows the MAX_SIDE reduction and clamps to the image', () => {
+	// a 2000px source reduced to 1000 halves every coordinate with it
+	assert.deepEqual(cropRect({ x: 100, y: 40, w: 256, h: 256 }, 0.5, 1000, 1000), {
+		x: 50,
+		y: 20,
+		w: 128,
+		h: 128
+	});
+	// over the edge is clamped, not refused
+	assert.deepEqual(cropRect({ x: 90, y: 90, w: 50, h: 50 }, 1, 100, 100), {
+		x: 90,
+		y: 90,
+		w: 10,
+		h: 10
+	});
+	assert.throws(() => cropRect({ x: 200, y: 0, w: 50, h: 50 }, 1, 100, 100), /outside the 100x100/);
+	assert.throws(() => normalise({ crop: { x: 0, y: 0, w: 0, h: 10 } }), /positive w and h/);
+	assert.equal(normalise({}).crop, null);
+});
+
+test('transparent knocks a background colour out before the averaging, fringe and all', () => {
+	const W = [255, 255, 255, 255];
+	const w = [250, 252, 255, 255]; // the same white after a JPEG has been at it
+	const R = [255, 0, 0, 255];
+	// each 2x2 cell: all background | one corner of background | all red
+	const data = rgba([
+		[W, w, W, R, R, R],
+		[w, W, R, R, R, R]
+	]);
+	const opts = { ...plain, transparent: [255, 255, 255] as [number, number, number] };
+	const out = new Array(3).fill(-1);
+	sampleInto(data, 6, 2, { x: 0, y: 0, w: 6, h: 2 }, out, 3, { x: 0, y: 0, w: 3, h: 1 }, opts);
+	assert.equal(out[0], 0, 'a cell of pure background goes transparent');
+	assert.equal(PALETTE[out[1]], '#ff0000', 'a part-covered cell takes the red alone, not a pink');
+	assert.equal(PALETTE[out[2]], '#ff0000');
+
+	// without it, the same sheet keeps its slab and fringes the edge
+	const kept = new Array(3).fill(-1);
+	sampleInto(data, 6, 2, { x: 0, y: 0, w: 6, h: 2 }, kept, 3, { x: 0, y: 0, w: 3, h: 1 }, plain);
+	assert.equal(PALETTE[kept[0]], '#ffffff');
+	assert.notEqual(PALETTE[kept[1]], '#ff0000');
+
+	// the tolerance is per channel, and normalise resolves the hex to raw RGB
+	assert.equal(knockout(rgba([[[250, 252, 255, 255]]]), 0, [255, 255, 255], 12), 0);
+	assert.equal(knockout(rgba([[[250, 252, 255, 255]]]), 0, [255, 255, 255], 2), 255);
+	assert.deepEqual(normalise({ transparent: '#fff' }).transparent, [255, 255, 255]);
+	assert.equal(normalise({}).transparent, null);
+	assert.throws(() => normalise({ transparent: 'white' }), /bad transparent colour/);
 });

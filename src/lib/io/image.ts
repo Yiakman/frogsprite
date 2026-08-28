@@ -5,7 +5,7 @@
 // is not a defined box average, and it aliases badly at the ratios involved here (a 1024px source
 // into a 16px grid is 64x). Only the coarse first reduction is left to the browser, where it is
 // both good and cheap.
-import { nearestIndex, TRANSPARENT } from '../core/palette.ts';
+import { nearestIndex, parseHex, TRANSPARENT } from '../core/palette.ts';
 
 export type Fit = 'contain' | 'cover' | 'stretch';
 export type Rect = { x: number; y: number; w: number; h: number };
@@ -17,6 +17,19 @@ export type ImportOptions = {
 	alpha?: number;
 	/** Crop away a transparent or uniform-colour border before fitting. */
 	trim?: boolean;
+	/**
+	 * Import only this region of the source, in the source image's own pixels. Takes the place of
+	 * `trim`: a region you chose by hand is not one an auto-trim should shrink further.
+	 */
+	crop?: Rect;
+	/**
+	 * Knock this colour out of the source: '#rrggbb' (or '#rgb'). Source pixels within `tolerance`
+	 * of it are dropped before the averaging, so a photo or a JPEG sheet on a flat background comes
+	 * in cut out rather than sitting on an opaque slab.
+	 */
+	transparent?: string;
+	/** How far off `transparent` a channel may be and still count as background. */
+	tolerance?: number;
 	/** Pre-quantize punch-up; 0 is untouched. Small grids plus a coarse palette look flat without it. */
 	contrast?: number;
 	/** 1 is untouched, 0 is greyscale. */
@@ -29,7 +42,11 @@ export type ImportOptions = {
 };
 
 /** Options with every default filled in. `pixel` is spent during that, so it does not survive. */
-export type Settings = Required<Omit<ImportOptions, 'pixel'>>;
+export type Settings = Required<Omit<ImportOptions, 'pixel' | 'crop' | 'transparent'>> & {
+	crop: Rect | null;
+	/** Resolved to raw RGB by `normalise`, so the sampling loop compares numbers. */
+	transparent: [number, number, number] | null;
+};
 
 export type ImageSource = Blob | string | ImageBitmap | HTMLImageElement | HTMLCanvasElement;
 
@@ -38,7 +55,11 @@ const DEFAULTS = {
 	alpha: 128,
 	trim: true,
 	contrast: 0.15,
-	saturation: 1.2
+	saturation: 1.2,
+	crop: null as Rect | null,
+	transparent: null as [number, number, number] | null,
+	// enough for the ringing JPEG puts around an edge, tight enough to leave real highlights alone
+	tolerance: 12
 };
 
 const FITS: Fit[] = ['contain', 'cover', 'stretch'];
@@ -73,6 +94,19 @@ export function normalise({ pixel, ...options }: ImportOptions): Settings {
 	// effects' job (`invert`, `tint`) rather than a pre-quantize touch-up gone very wrong
 	range('contrast', opts.contrast, -1, 1);
 	range('saturation', opts.saturation, 0, 4);
+	// the rest of the rectangle is clamped against the real image in `cropRect`, which is the
+	// first point that knows how big it is; an empty one cannot be salvaged there, so refuse here
+	if (opts.crop && !(opts.crop.w > 0 && opts.crop.h > 0))
+		throw new Error(`crop needs a positive w and h, got ${JSON.stringify(opts.crop)}`);
+	range('tolerance', opts.tolerance, 0, 255);
+	// resolve once, here: a palette index would be no use against source pixels, and snapping the
+	// hex through the palette first would compare against a colour the image does not contain
+	if (opts.transparent !== null) {
+		const rgb = parseHex(String(opts.transparent));
+		if (!rgb)
+			throw new Error(`bad transparent colour ${JSON.stringify(opts.transparent)} — use '#rrggbb'`);
+		opts.transparent = rgb;
+	}
 	opts.trim = !!opts.trim;
 	return opts;
 }
@@ -83,6 +117,28 @@ const MAX_SIDE = 1024;
 const BORDER_TOLERANCE = 24;
 
 const clamp8 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
+
+/**
+ * A source pixel's alpha, or 0 when it is the knocked-out colour. Per channel rather than summed:
+ * JPEG moves the three independently, so a cube around the colour catches the ringing that an
+ * equivalent sum would either miss or over-reach on.
+ *
+ * ponytail: every matching pixel goes, wherever it is — white inside the art goes with the white
+ * around it. Flood-fill from the border instead if holes in the subject ever become the problem.
+ */
+export function knockout(
+	data: Uint8ClampedArray,
+	o: number,
+	rgb: [number, number, number] | null,
+	tolerance: number
+): number {
+	if (!rgb) return data[o + 3];
+	return Math.abs(data[o] - rgb[0]) <= tolerance &&
+		Math.abs(data[o + 1] - rgb[1]) <= tolerance &&
+		Math.abs(data[o + 2] - rgb[2]) <= tolerance
+		? 0
+		: data[o + 3];
+}
 
 /** Saturation then contrast, both around the midpoint. */
 export function adjust(
@@ -177,6 +233,11 @@ export function layout(fit: Fit, src: Rect, grid: number): { src: Rect; dest: Re
  * Alpha-weighted box average of `src` into the `dest` region of a grid-sized index array.
  * Weighting by alpha matters: transparent pixels are usually stored as transparent *black*, so a
  * naive mean drags every edge of a cut-out image towards dark.
+ *
+ * `transparent` knocks its colour out here, by zeroing a source pixel's alpha rather than by
+ * testing the cell average afterwards. The averaging then ignores those pixels entirely, so an
+ * edge cell takes the colour of the subject alone instead of a blend with the background — the
+ * difference between a clean edge and a pale fringe all the way round the sprite.
  */
 export function sampleInto(
 	data: Uint8ClampedArray,
@@ -186,7 +247,7 @@ export function sampleInto(
 	out: number[],
 	grid: number,
 	dest: Rect,
-	opts: Omit<Settings, 'fit' | 'trim'>
+	opts: Omit<Settings, 'fit' | 'trim' | 'crop'>
 ) {
 	for (let cy = 0; cy < dest.h; cy++) {
 		const fy0 = src.y + (cy * src.h) / dest.h;
@@ -210,7 +271,7 @@ export function sampleInto(
 			for (let py = py0; py < py1; py++) {
 				for (let px = px0; px < px1; px++) {
 					const o = (py * srcW + px) * 4;
-					const a = data[o + 3];
+					const a = knockout(data, o, opts.transparent, opts.tolerance);
 					r += data[o] * a;
 					g += data[o + 1] * a;
 					b += data[o + 2] * a;
@@ -234,6 +295,22 @@ export function sampleInto(
 			out[i] = nearestIndex(ar, ag, ab);
 		}
 	}
+}
+
+/**
+ * A caller's crop is in the source image's own pixels; the buffer it will be read from may have
+ * been reduced to MAX_SIDE, so it has to travel by the same scale. Clamped to the image rather
+ * than refused, so a rectangle drawn slightly over an edge still imports.
+ */
+export function cropRect({ x, y, w, h }: Rect, scale: number, maxW: number, maxH: number): Rect {
+	const px = (v: number, max: number) => Math.max(0, Math.min(max, Math.round(v * scale)));
+	const x0 = px(x, maxW);
+	const y0 = px(y, maxH);
+	const x1 = Math.max(x0, px(x + w, maxW));
+	const y1 = Math.max(y0, px(y + h, maxH));
+	if (x1 === x0 || y1 === y0)
+		throw new Error(`crop ${JSON.stringify({ x, y, w, h })} lies outside the ${maxW}x${maxH} image`);
+	return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
 async function decode(source: ImageSource): Promise<ImageBitmap> {
@@ -338,7 +415,11 @@ export async function imageToPixels(
 		ctx.drawImage(bitmap, 0, 0, w, h);
 
 		const { data } = ctx.getImageData(0, 0, w, h);
-		const bounds = opts.trim ? contentBounds(data, w, h, opts.alpha) : { x: 0, y: 0, w, h };
+		const bounds = opts.crop
+			? cropRect(opts.crop, scale, w, h)
+			: opts.trim
+				? contentBounds(data, w, h, opts.alpha)
+				: { x: 0, y: 0, w, h };
 		const { src, dest } = layout(opts.fit, bounds, grid);
 		const out = new Array<number>(grid * grid).fill(TRANSPARENT);
 		sampleInto(data, w, h, src, out, grid, dest, opts);

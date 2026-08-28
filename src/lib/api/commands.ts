@@ -322,6 +322,17 @@ const api = {
 	}),
 
 	select: ro(function (pkg?: string, set?: string, sprite?: string) {
+		// three names, not an options object: without this the object falls through to the package
+		// lookup and fails as `no package "[object Object]"`, which reads as a missing package
+		for (const [what, v] of [
+			['pkg', pkg],
+			['set', set],
+			['sprite', sprite]
+		] as const)
+			if (v !== undefined && typeof v !== 'string')
+				throw new Error(
+					`select takes names in order — select(pkg?, set?, sprite?). ${what} was ${JSON.stringify(v)}; for a sprite alone use select(undefined, undefined, 'idle').`
+				);
 		if (pkg !== undefined) {
 			if (!editor.packages.some((p) => p.name === pkg)) throw new Error(`no package "${pkg}"`);
 			editor.sel = { pkg, set: '', sprite: '', anim: '', layer: '' };
@@ -415,7 +426,10 @@ const api = {
 	 * `source` is a File/Blob, a data: / blob: / http(s) URL, or an ImageBitmap. An agent with no
 	 * file picker should pass a data URL. Options: `fit` ('contain' default, 'cover', 'stretch'),
 	 * `alpha` (0-255 cutoff for a cell counting as transparent, default 128), `trim` (crop a
-	 * transparent or uniform border first, default true), `contrast` (default 0.15),
+	 * transparent or uniform border first, default true), `crop` ({ x, y, w, h } in the source
+	 * image's own pixels — import just that region, and skip `trim`; loop it to slice a sprite
+	 * sheet), `transparent` ('#rrggbb' to knock out of the source, for art on a flat background)
+	 * with `tolerance` (per channel, default 12), `contrast` (default 0.15),
 	 * `saturation` (default 1.2), `pixel` (the source is already pixel art — turns the three photo
 	 * treatments off, which is what you want re-importing an `export_png`), plus `sprite` to target
 	 * one by name or `newSprite` to create one, and `layer` to land on one by name. Like every painting verb this replaces the *active layer*,
@@ -1583,7 +1597,8 @@ const api = {
 	 * Which pixels differ between two frames of an animation, as composed — the manual's own advice
 	 * ("only diffing two frames" reveals a frozen layer or a wrong pose) as a command, instead of
 	 * two ASCII dumps read side by side. `identical: true` is the red flag: an animation drawing
-	 * exactly the same thing twice.
+	 * exactly the same thing twice. `count` and `rows` are whole; `pixels` stops at 200 and says so
+	 * with `truncated` — narrow `rect` to see a region in full.
 	 *
 	 *   diff_frames(0, 1)                          // the active animation
 	 *   diff_frames(0, 3, { animation: 'fly' })    // by name

@@ -26,7 +26,8 @@ const RGB: [number, number, number][] = PALETTE.map((c) =>
 		: [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)]
 );
 
-function parseHex(s: string): [number, number, number] | null {
+/** '#rgb' / '#rrggbb' to a raw RGB triple, unsnapped — null if it is not a colour. */
+export function parseHex(s: string): [number, number, number] | null {
 	let h = s.trim().replace(/^#/, '');
 	if (h.length === 3) h = [...h].map((c) => c + c).join('');
 	if (!/^[0-9a-f]{6}$/i.test(h)) return null;

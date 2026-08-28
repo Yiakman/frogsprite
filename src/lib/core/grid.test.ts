@@ -327,3 +327,25 @@ test('diffPixels honours a box but keeps grid coordinates', () => {
 	assert.equal(diffPixels(a, b, 4, [0, 0, 1, 1]).identical, true);
 	assert.equal(diffPixels(a, b, 4, [0, 3, 3, 3]).identical, false);
 });
+
+test('diffPixels caps the pixel list but never the count', () => {
+	// two 64x64 poses that share nothing — the case that used to serialise to hundreds of KB
+	const a = new Uint8Array(64 * 64).fill(1);
+	const b = new Uint8Array(64 * 64).fill(2);
+	const d = diffPixels(a, b, 64);
+	assert.equal(d.identical, false);
+	assert.equal(d.count, 4096, 'the total is the real one');
+	assert.equal(d.truncated, true);
+	assert.equal(d.pixels.length, 200);
+	assert.deepEqual(d.pixels[0], { x: 0, y: 0, from: 1, to: 2 });
+	assert.equal(Object.keys(d.rows).length, 64, 'the per-row counts stay whole');
+	assert.equal(d.rows[63], 64);
+
+	// under the cap nothing is held back, and `truncated` says so
+	const c = new Uint8Array(64 * 64).fill(1);
+	c[5] = 3;
+	const small = diffPixels(a, c, 64);
+	assert.equal(small.count, 1);
+	assert.equal(small.truncated, false);
+	assert.equal(small.pixels.length, 1);
+});

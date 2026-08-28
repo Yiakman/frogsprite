@@ -260,7 +260,17 @@ export function shift(pixels: Pixels, grid: number, dx: number, dy: number, wrap
  *
  * `identical` is the whole point: two frames of an animation that compose to the same picture is
  * the frozen-layer bug no single frame, no return value and no contact sheet can show.
+ *
+ * `pixels` stops at MAX_PIXELS, `count` is always the true total. Two different 64x64 poses differ
+ * in well over a thousand pixels, which serialises to hundreds of kilobytes — enough to break the
+ * transport of the agent that asked, for a list nobody reads past the first screen. The answers
+ * that matter (`identical`, `count`, `rows`) are small and always whole; narrow `box` to see every
+ * pixel of a region.
  */
+/** How many differing pixels come back in full. ponytail: one number, no option to raise it —
+ * `box` already narrows the window, and a caller who wants 4096 of them wants `read_frame`. */
+const MAX_PIXELS = 200;
+
 export function diffPixels(
 	a: Pixels,
 	b: Pixels,
@@ -268,20 +278,24 @@ export function diffPixels(
 	box: readonly [number, number, number, number] = [0, 0, grid - 1, grid - 1]
 ): {
 	identical: boolean;
+	count: number;
+	truncated: boolean;
 	pixels: { x: number; y: number; from: number; to: number }[];
 	rows: Record<number, number>;
 } {
 	const changed: { x: number; y: number; from: number; to: number }[] = [];
 	const rows: Record<number, number> = {};
+	let count = 0;
 	const [x0, y0, x1, y1] = box;
 	for (let y = y0; y <= y1; y++)
 		for (let x = x0; x <= x1; x++) {
 			const at = y * grid + x;
 			if (a[at] === b[at]) continue;
-			changed.push({ x, y, from: a[at], to: b[at] });
+			count++;
+			if (changed.length < MAX_PIXELS) changed.push({ x, y, from: a[at], to: b[at] });
 			rows[y] = (rows[y] ?? 0) + 1;
 		}
-	return { identical: !changed.length, pixels: changed, rows };
+	return { identical: !count, count, truncated: count > changed.length, pixels: changed, rows };
 }
 
 /**
