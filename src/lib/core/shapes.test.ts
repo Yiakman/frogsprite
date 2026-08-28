@@ -159,3 +159,49 @@ test('a thick line is clipped at the edge like everything else', () => {
 	assert.equal(px[0], 2, 'the line itself lands');
 	assert.equal(px.filter((v) => v).length, 10, 'two rows survive, the one above is dropped');
 });
+
+test('iso_tile is a 2:1 diamond, 4 wide × 2 tall at w=2', () => {
+	const px = new Array(64).fill(0);
+	const n = shapes.isoTile(px, 8, 4, 4, 2, 3);
+	const cells = drawn(px, 8);
+	assert.ok(n > 0);
+	assert.equal(px[3 * 8 + 4], 3, 'north vertex');
+	assert.equal(px[4 * 8 + 6], 3, 'east vertex');
+	assert.equal(px[5 * 8 + 4], 3, 'south vertex');
+	assert.equal(px[4 * 8 + 2], 3, 'west vertex');
+	const xs = cells.map(([x]) => x);
+	const ys = cells.map(([, y]) => y);
+	assert.equal(Math.max(...xs) - Math.min(...xs), 4, 'width 2w');
+	assert.equal(Math.max(...ys) - Math.min(...ys), 2, 'height w');
+	assert.throws(() => shapes.isoTile(new Array(64).fill(0), 8, 4, 4, 3, 3), /even/);
+	assert.throws(() => shapes.isoTile(new Array(64).fill(0), 8, 4, 4, 1, 3), /at least 2/);
+});
+
+test('iso_box paints left, then right, then top — top wins on the ridges', () => {
+	const px = new Array(32 * 32).fill(0);
+	shapes.isoBox(px, 32, 16, 20, 8, 8, 6, { top: 1, left: 2, right: 3 });
+	const topY = 20 - 6;
+	assert.equal(px[topY * 32 + 16], 1, 'centre of the top diamond');
+	assert.equal(px[(topY + 4) * 32 + 16], 1, 'south vertex of the top, where the sides meet');
+	assert.ok(px.includes(2) && px.includes(3), 'left and right faces painted');
+});
+
+test('iso_box with h=0 is the top tile alone', () => {
+	const tile = new Array(256).fill(0);
+	const box = new Array(256).fill(0);
+	shapes.isoTile(tile, 16, 8, 8, 4, 7);
+	shapes.isoBox(box, 16, 8, 8, 4, 4, 0, { top: 7, left: 2, right: 3 });
+	assert.deepEqual(tile, box, 'sides have zero height, so they paint nothing');
+	assert.throws(
+		() => shapes.isoBox(new Array(256).fill(0), 16, 8, 8, 6, 4, 2, { top: 1 }),
+		/modulo 4/
+	);
+});
+
+test('isoToGrid is the 2:1 lattice', () => {
+	assert.deepEqual(shapes.isoToGrid(1, 0, 0), { dx: 2, dy: 1 });
+	assert.deepEqual(shapes.isoToGrid(0, 1, 0), { dx: -2, dy: 1 });
+	assert.deepEqual(shapes.isoToGrid(0, 0, 4), { dx: 0, dy: -4 });
+	assert.deepEqual(shapes.isoToGrid(0, 0), { dx: 0, dy: 0 });
+	assert.throws(() => shapes.isoToGrid(0.5, 0, 0), /whole number/);
+});

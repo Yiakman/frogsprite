@@ -268,3 +268,124 @@ export const triangle = (
 	color: number,
 	fill = true
 ): number => polygon(pixels, grid, [[x0, y0], [x1, y1], [x2, y2]], color, fill);
+
+// ---- 2:1 isometric ---------------------------------------------------------
+// Two pixels across per one pixel down. The diamond and the box are polygons of
+// these vertices; isoToGrid is the same lattice as numbers.
+
+function isoEven(v: unknown, what: string): number {
+	const n = least(v, 2, what);
+	if (n % 2) throw new Error(`${what} must be even (got ${n})`);
+	return n;
+}
+
+/** N, E, S, W of a 2:1 diamond. w and d must already be even and congruent mod 4. */
+function isoDiamond(cx: number, cy: number, w: number, d: number): Point[] {
+	const halfH = (w + d) >> 2;
+	const skew = (w - d) >> 2;
+	return [
+		[cx, cy - halfH],
+		[cx + w, cy + skew],
+		[cx, cy + halfH],
+		[cx - d, cy - skew]
+	];
+}
+
+/** Diamond floor tile, width 2w × height w, centred on (cx, cy). `w` even. */
+export function isoTile(
+	pixels: Pixels,
+	grid: number,
+	cx: number,
+	cy: number,
+	w: number,
+	color: number,
+	fill = true
+): number {
+	const span = isoEven(w, 'w');
+	return polygon(
+		pixels,
+		grid,
+		isoDiamond(whole(cx, 'cx'), whole(cy, 'cy'), span, span),
+		color,
+		fill
+	);
+}
+
+export type IsoColors = {
+	top: number;
+	left?: number;
+	right?: number;
+	outline?: number;
+};
+
+/**
+ * Isometric box. (cx, cy) is the centre of the ground diamond; h extrudes screen-up.
+ * w and d even, ≥ 2, congruent modulo 4. h ≥ 0. Left, then right, then top, then outline.
+ */
+export function isoBox(
+	pixels: Pixels,
+	grid: number,
+	cx: number,
+	cy: number,
+	w: number,
+	d: number,
+	h: number,
+	colors: IsoColors
+): number {
+	if (colors == null || typeof colors.top !== 'number')
+		throw new Error('iso_box needs colors.top');
+	const ww = isoEven(w, 'w');
+	const dd = isoEven(d, 'd');
+	if ((ww - dd) % 4)
+		throw new Error(
+			`w and d must be congruent modulo 4 so 2:1 vertices land on pixels (got w=${ww}, d=${dd})`
+		);
+	const hh = least(h, 0, 'h');
+	const ox = whole(cx, 'cx');
+	const oy = whole(cy, 'cy');
+	const base = isoDiamond(ox, oy, ww, dd);
+	const top = isoDiamond(ox, oy - hh, ww, dd);
+	const all = new Set<number>();
+
+	const face = (pts: Point[], color: number | undefined) => {
+		if (color === undefined) return;
+		const cells = new Set<number>();
+		polygonCells(cells, grid, pts, true);
+		paint(pixels, cells, color);
+		for (const i of cells) all.add(i);
+	};
+
+	if (hh > 0) {
+		face([top[3], top[2], base[2], base[3]], colors.left); // west
+		face([top[2], top[1], base[1], base[2]], colors.right); // east
+	}
+	face(top, colors.top);
+
+	if (colors.outline !== undefined) {
+		const edges: Point[][] = [
+			[top[0], top[1]],
+			[top[1], top[2]],
+			[top[2], top[3]],
+			[top[3], top[0]]
+		];
+		if (hh > 0) {
+			edges.push([top[1], base[1]], [top[2], base[2]], [top[3], base[3]]);
+			edges.push([base[1], base[2]], [base[2], base[3]]);
+		}
+		for (const [a, b] of edges) {
+			const cells = new Set<number>();
+			lineCells(cells, grid, a[0], a[1], b[0], b[1]);
+			paint(pixels, cells, colors.outline);
+			for (const i of cells) all.add(i);
+		}
+	}
+	return all.size;
+}
+
+/** Screen offset of a 2:1 world point. One world-x is 2px across, 1px down. */
+export function isoToGrid(x: number, y: number, z = 0): { dx: number; dy: number } {
+	const xx = whole(x, 'x');
+	const yy = whole(y, 'y');
+	const zz = whole(z, 'z');
+	return { dx: (xx - yy) * 2, dy: xx + yy - zz };
+}

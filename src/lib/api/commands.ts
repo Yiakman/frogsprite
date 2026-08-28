@@ -1593,7 +1593,7 @@ const api = {
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_spritesheet', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico', 'sha256'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
-				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'diff_frames', 'contact_sheet', 'palette', 'color', 'background', 'silhouette', 'zoom', 'raw', 'help'],
+				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'diff_frames', 'contact_sheet', 'palette', 'color', 'iso_to_grid', 'background', 'silhouette', 'zoom', 'raw', 'help'],
 				history: ['undo', 'redo', 'history', 'batch'],
 				storage: ['flush', 'reset']
 			},
@@ -1648,8 +1648,12 @@ const api = {
 		return { zoom: editor.zoom, at: editor.zoomAt };
 	}),
 
-	/** Canvas backdrop for reviewing a sprite; `background()` restores the checkerboard. Paints nothing. */
-	background: ro(function (color: Color = null) {
+	/** Canvas backdrop for reviewing a sprite; `background()` restores the checkerboard. Paints nothing. `'iso-grid'` is a 2:1 diamond lattice. */
+	background: ro(function (color: Color | 'iso-grid' = null) {
+		if (color === 'iso-grid') {
+			editor.background = 'iso-grid';
+			return { background: 'iso-grid' as const };
+		}
 		editor.background = toIndex(color);
 		return { background: editor.background ? PALETTE[editor.background] : 'checkerboard' };
 	}),
@@ -1745,6 +1749,9 @@ const api = {
 
 	/** Palette index for a colour — color('#22aa33') → nearest index. */
 	color: ro((c: Color) => toIndex(c)),
+
+	/** Screen offset of a 2:1 world point: `dx = (x - y) * 2`, `dy = (x + y) - z`. Integers only. */
+	iso_to_grid: ro((x: number, y: number, z = 0) => shape.isoToGrid(x, y, z)),
 
 	/**
 	 * `steps` palette indices blending evenly between two colours, ends included — a sky gradient or
@@ -1888,6 +1895,38 @@ const shapes = {
 		const t = target(sprite);
 		const painted = shape.polygon(paintable(t.layer), t.grid, points, toIndex(color), fill);
 		return { sprite: t.sprite.name, shape: 'polygon', painted };
+	}),
+
+	/** 2:1 diamond floor tile, width 2w × height w, centred on (cx, cy). `w` even. */
+	iso_tile: mut(function (cx: number, cy: number, w: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
+		const t = target(sprite);
+		const painted = shape.isoTile(paintable(t.layer), t.grid, cx, cy, w, toIndex(color), fill);
+		return { sprite: t.sprite.name, shape: 'iso_tile', painted };
+	}),
+
+	/**
+	 * Isometric box. (cx, cy) is the ground-diamond centre; h extrudes screen-up.
+	 * `colors` is `{ top, left?, right?, outline? }` — missing sides are skipped.
+	 */
+	iso_box: mut(function (
+		cx: number,
+		cy: number,
+		w: number,
+		d: number,
+		h: number,
+		colors: { top: Color; left?: Color; right?: Color; outline?: Color },
+		{ sprite }: { sprite?: string } = {}
+	) {
+		if (!colors || !('top' in colors))
+			throw new Error('iso_box needs { top, left?, right?, outline? }');
+		const t = target(sprite);
+		const painted = shape.isoBox(paintable(t.layer), t.grid, cx, cy, w, d, h, {
+			top: toIndex(colors.top),
+			...('left' in colors ? { left: toIndex(colors.left) } : {}),
+			...('right' in colors ? { right: toIndex(colors.right) } : {}),
+			...('outline' in colors ? { outline: toIndex(colors.outline) } : {})
+		});
+		return { sprite: t.sprite.name, shape: 'iso_box', painted };
 	})
 };
 

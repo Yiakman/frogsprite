@@ -568,6 +568,8 @@ like every other painting command.
 | `shapes.ellipse(cx, cy, rx, ry, color, opts?)` | separate radii |
 | `shapes.triangle(x0, y0, x1, y1, x2, y2, color, opts?)` | three vertices |
 | `shapes.polygon(points, color, opts?)` | `points` is `[[x, y], …]`, three or more |
+| `shapes.iso_tile(cx, cy, w, color, opts?)` | 2:1 diamond floor tile, width `2w` × height `w`. `w` even |
+| `shapes.iso_box(cx, cy, w, d, h, colors, opts?)` | isometric block; `colors` is `{ top, left?, right?, outline? }` |
 
 Each returns `{ sprite, shape, painted }`, where `painted` counts the cells actually written —
 overlap is counted once, and anything clipped off the canvas is not counted at all.
@@ -598,7 +600,29 @@ plotting pixels by hand, and much easier to correct.
 
 In the UI these are the shape buttons in the tool rail (the icon column left of the sidebar): one
 dialog per shape, filled, in the current colour. Outlines are JS-only. The rail's **Rotate** button
-takes an angle, and optionally a `cx` and `cy` centre, and warns when a turn loses pixels.
+takes an angle, and optionally a `cx` and `cy` centre, and warns when a turn loses pixels. `iso_tile`
+and `iso_box` are JS-only, like `rect`.
+
+#### Isometric
+
+2:1 dimetric: two pixels across per one pixel down. Draw with `iso_tile` / `iso_box`; place with
+`iso_to_grid`. `print_sprite` is still cartesian — it does not know about world `(x, y, z)`.
+
+```js
+frogsprite.background('iso-grid');
+frogsprite.shapes.iso_box(16, 24, 12, 12, 8, {
+  top: '#999999', left: '#666666', right: '#333333', outline: '#000000'
+});
+const { dx, dy } = frogsprite.iso_to_grid(0, 0, 4); // jump 4px up
+```
+
+- **`iso_tile(cx, cy, w)`** — diamond centred on `(cx, cy)`, width `2w`, height `w`. `w` even and ≥ 2.
+- **`iso_box(cx, cy, w, d, h, colors)`** — `(cx, cy)` is the centre of the **ground** diamond; `h`
+  extrudes screen-up. `w` and `d` even, ≥ 2, congruent modulo 4 (so the 2:1 vertices land on pixels).
+  `h === 0` is just the top tile. Paint order is left, right, top, then outline — top wins on the
+  ridges. Missing `left` / `right` / `outline` skips that face.
+- **`iso_to_grid(x, y, z = 0)`** → `{ dx: (x - y) * 2, dy: (x + y) - z }`. Integers only. A 1×1×1
+  world cube is `iso_box(..., 2, 2, 1)` because one world-x step is 2px across.
 
 ### Importing an image
 
@@ -1029,6 +1053,7 @@ set.sprites[0].layers[0].pixels;   // a plain array, grid * grid long
   `palette()` reads the active list as hexes, `palette('pico8')` sets a preset, `palette([...])`
   takes your own, `palette('cube')` restores all 256. See [Colours](#colours)
 - `palettes()` — the preset names, with the colour count each one survives snapping with
+- `iso_to_grid(x, y, z?)` — 2:1 world `(x, y, z)` to screen `{ dx, dy }`. Integers only
 - `normals_from_sprite(sprite?, opts?)` — derive a normal map from the silhouette into `<name>.n`;
   `'*'` does the whole set. See [Normal maps](#normal-maps)
 - `export_normal_map(opts?)` — a normal map as a PNG, labels translated to true normal RGB
@@ -1042,7 +1067,7 @@ Three view settings change how the canvas *looks* without touching a single pixe
 with your work, and none affects exports or `print_sprite()`.
 
 - `background(color?)` — what shows through the **transparent** pixels; `background()` restores the
-  checkerboard
+  checkerboard. `background('iso-grid')` is a 2:1 diamond lattice instead
 - `silhouette(color?)` — draws every **painted** pixel in one colour, so only the shape is left;
   defaults to black, and `silhouette(null)` turns it off
 - `zoom(n = 1)` — magnify the canvas, 1 to 8; `zoom()` fits the pane again. At 128 a fitted canvas is
