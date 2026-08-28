@@ -163,6 +163,65 @@ fs.palette(['#1a1c2c', '#f4f4f4', '#b13e53', '#38b764']);   // 'custom', 4 colou
 fs.palette('cube');                                          // back to all 256
 ```
 
+## Lighting it: the normal-map pass
+
+The same six poses, lit by a moving light, without drawing anything new:
+
+```js
+fs.normals_from_sprite('*');     // six maps, one per pose, named idle.n, crouch.n, ...
+fs.export_lit({ animation: 'jump', download: true });
+```
+
+`normals_from_sprite` reads the silhouette and writes a bevel: flat across the interior, turning
+outward at the edges. Read one back and the shape is legible as text, which is the point of storing
+directions as nine distinct labels rather than as real normals:
+
+```
+          NWN N N N NE
+        NWNWNWN N NENENE
+        W NWNWN N NENEE
+        W W W ....E E E        <- `..` is flat: facing straight at the camera
+        W W W ....E E E
+      NWNWNW........NENENE
+    W W NWNW........NENEE E
+      SWSWSW........SESESE
+        SWS S S S S S SE
+```
+
+**The stored pixels are labels, not normals.** The cube has no `0x80` channel level, so `#8080ff` —
+the canonical flat normal, and the most common colour in any normal map — is not a palette entry at
+all; asking for it lands on `#9999ff`, a normal tilted up and left. So each direction is stored as
+one cube-exact index and translated to true normal RGB once, at export. That is what keeps a normal
+map an ordinary sprite: `print_sprite`, `paint_map`, `reflect`, undo and `export_zip` all work on it
+with no special case.
+
+To hand-edit one, make the labels the working palette — step 1 paying for itself:
+
+```js
+fs.palette('normals');           // the nine directions as swatches
+```
+
+`export_zip()` then carries the pair an engine actually loads:
+
+```
+png/idle.png     png/idle_n.png
+sheet/jump.png   sheet/jump_n.png     same cols and scale, so frame i is the same cell in both
+sheet/jump.json
+```
+
+Green is up (the OpenGL convention Godot and Unity URP 2D expect); `export_normal_map({ flipY: true })`
+gives the DirectX one.
+
+### Two things that are not obvious
+
+**A flip has to negate the direction, not just move the pixel.** `fx: { flipX: true }` mirrors the
+art for free, but a pixel that faced east must face *west* afterwards, and only the stored value
+carries that. Frame effects are re-applied to the labels themselves on the way out.
+
+**`strength` is a bevel threshold, not a depth.** Every direction the map can hold sits at the same
+tilt, so turning `strength` up bevels *more of the sprite* rather than steepening what is already
+bevelled. Widening the bevel is `blur`.
+
 ## If you are an LLM about to draw a character
 
 1. **`palette(...)` before the first `paint_map`.** It changes what hexes mean,
@@ -173,3 +232,6 @@ fs.palette('cube');                                          // back to all 256
    the same effort held for 140ms instead of 80.
 4. **Squash and stretch is the whole read.** `crouch` and `land` wide and low,
    `rise` tall and narrow, and a 16×16 jump works without a single shaded pixel.
+5. **Light it before you believe it.** A normal map PNG is purple noise to a human — "it exported"
+   and "it is correct" look identical. `export_lit()` and drag the light: the shading swings with it,
+   or the map is wrong.

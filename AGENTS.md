@@ -124,6 +124,46 @@ sky blue that resolves to a **grey** inside PICO-8 — the same trap as the cube
 because sixteen colours leave almost nowhere to land. Name the palette's own hexes in your legend
 and there is nothing to round.
 
+## Normal maps
+
+A normal map is a second image, pixel-aligned with the sprite, whose RGB says which way each pixel
+*faces*. An engine does `dot(n, lightDir)` per pixel at draw time, so one flat sprite reacts to a
+moving torch instead of needing a frame drawn per lighting condition.
+
+```js
+frogsprite.normals_from_sprite('*');                    // one `<name>.n` per sprite in the set
+frogsprite.export_lit({ animation: 'jump', download: true });
+frogsprite.export_zip();                                 // now carries png/<name>_n.png too
+```
+
+`normals_from_sprite` reads the silhouette and bevels it: flat across the interior, turning outward
+at the edges. `strength` is the **bevel threshold**, not a depth — every direction sits at the same
+tilt, so raising it bevels more of the sprite rather than steepening what is already bevelled; `blur`
+is how far in from the edge the bevel reaches.
+
+**Stored pixels are direction labels, not normals.** The cube has no `0x80` channel level, so
+`#8080ff` — the canonical flat normal, and the commonest colour in any normal map — is not a palette
+entry; `color('#8080ff')` lands on `#9999ff`, a normal tilted up and left, and every neutral pixel
+would be quietly wrong. So a direction is stored as one of nine cube-exact indices and translated to
+true normal RGB once, at export. The payoff is that a normal map is an ordinary sprite: `paint_map`,
+`reflect`, `print_sprite`, undo and every exporter work on it unchanged.
+
+`palette('normals')` makes those nine labels the working palette, which is what makes hand-editing a
+map land *on* a direction rather than near one.
+
+Green is up — the OpenGL convention Godot and Unity URP 2D both expect. `flipY: true` gives DirectX.
+
+Three limits, each of which throws rather than exporting something plausible and wrong:
+
+- a frame whose sprite has no `.n` sibling — `compose` would render it blank and say nothing
+- a frame carrying a per-layer `layers` arrangement, which a one-layer normal map cannot follow
+- a non-integer export `scale`, which antialiases and invents colours *between* two directions
+
+`hue`, `invert` and `trail` are dropped from a normal export rather than applied: all three map a
+label onto a palette entry that is not a label. Geometry (`flipX`, `flipY`, `rotate`, `dx`, `dy`) is
+kept and the labels are re-aimed to match — a pixel that faced east faces west after a `flipX`, and
+mirroring the picture alone would not do that.
+
 ## Commands
 
 Every call throws a descriptive `Error` on bad input, and state is saved to `localStorage` after each
@@ -983,6 +1023,11 @@ set.sprites[0].layers[0].pixels;   // a plain array, grid * grid long
   `palette()` reads the active list as hexes, `palette('pico8')` sets a preset, `palette([...])`
   takes your own, `palette('cube')` restores all 256. See [Colours](#colours)
 - `palettes()` — the preset names, with the colour count each one survives snapping with
+- `normals_from_sprite(sprite?, opts?)` — derive a normal map from the silhouette into `<name>.n`;
+  `'*'` does the whole set. See [Normal maps](#normal-maps)
+- `export_normal_map(opts?)` — a normal map as a PNG, labels translated to true normal RGB
+- `export_lit(opts?)` — a self-contained HTML page that lights a sprite or animation, cursor as the
+  light. The only cheap way to tell a correct normal map from a wrong one
 
 #### Reviewing what you drew
 
