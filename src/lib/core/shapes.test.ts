@@ -248,3 +248,31 @@ test('a floor placed with isoToGrid is exactly the lattice iso_tile tessellates'
 		if (!px[y * G + x] && Math.abs(x - 32) / 2 + Math.abs(y - 24) < 12) holes++;
 	assert.equal(holes, 0, 'neighbours share edges, so the field has no gaps');
 });
+
+test('isoFill covers the grid with no gaps', () => {
+	const W = 8, G = 64, OX = 32, OY = 8;
+	const px = new Array(G * G).fill(0);
+	const n = shapes.isoFill(px, G, OX, OY, W, 1);
+	assert.equal(px.filter((v) => v === 0).length, 0, 'the lattice covers the square');
+	assert.equal(n, G * G, 'overlap counted once');
+});
+
+test('isoFill checkerboard uses both colours', () => {
+	const W = 8, G = 32, OX = 16, OY = 8;
+	const px = new Array(G * G).fill(0);
+	shapes.isoFill(px, G, OX, OY, W, 1, 2);
+	assert.ok(px.includes(1) && px.includes(2));
+	assert.equal(px.filter((v) => v === 0).length, 0);
+	const { dx, dy } = shapes.isoToGrid(0, 0, { w: W });
+	assert.equal(px[(OY + dy) * G + (OX + dx)], 1, 'tile (0,0) is the even colour');
+	const next = shapes.isoToGrid(1, 0, { w: W });
+	assert.equal(px[(OY + next.dy) * G + (OX + next.dx)], 2, 'tile (1,0) is odd');
+});
+
+test('isoFill { fill: false } paints outline only', () => {
+	const W = 8, G = 32, OX = 16, OY = 16;
+	const px = new Array(G * G).fill(0);
+	shapes.isoFill(px, G, OX, OY, W, 3, undefined, false);
+	assert.equal(px[OY * G + OX], 0, 'centre of tile (0,0) is inside, not on the edge');
+	assert.ok(px.includes(3), 'edges are painted');
+});

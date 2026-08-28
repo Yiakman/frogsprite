@@ -317,6 +317,49 @@ export function isoTile(
 	);
 }
 
+/**
+ * Tessellate `isoTile` across the grid: every lattice point whose diamond touches the canvas.
+ * `odd` is the other checkerboard colour; omit it for a solid field. Recolour is clear then this.
+ */
+export function isoFill(
+	pixels: Pixels,
+	grid: number,
+	ox: number,
+	oy: number,
+	w: number,
+	color: number,
+	odd?: number,
+	fill = true
+): number {
+	const span = isoEven(w, 'w');
+	const originX = whole(ox, 'ox');
+	const originY = whole(oy, 'oy');
+	const hy = span / 2;
+	// u = i − j, v = i + j. Range is every diamond whose bbox can still hit [0, grid).
+	const uMin = Math.floor((-span - originX) / span) - 1;
+	const uMax = Math.ceil((grid + span - originX) / span) + 1;
+	const vMin = Math.floor((-hy - originY) / hy) - 1;
+	const vMax = Math.ceil((grid + hy - originY) / hy) + 1;
+	const all = new Set<number>();
+	for (let u = uMin; u <= uMax; u++) {
+		for (let v = vMin; v <= vMax; v++) {
+			if ((u + v) & 1) continue;
+			const i = (u + v) >> 1;
+			const j = (v - u) >> 1;
+			const { dx, dy } = isoToGrid(i, j, { w: span });
+			const cx = originX + dx;
+			const cy = originY + dy;
+			if (cx + span < 0 || cx - span >= grid || cy + hy < 0 || cy - hy >= grid) continue;
+			const c = odd !== undefined && (i + j) & 1 ? odd : color;
+			const cells = new Set<number>();
+			polygonCells(cells, grid, isoDiamond(cx, cy, span, span), fill);
+			paint(pixels, cells, c);
+			for (const k of cells) all.add(k);
+		}
+	}
+	return all.size;
+}
+
 export type IsoColors = {
 	top: number;
 	left?: number;

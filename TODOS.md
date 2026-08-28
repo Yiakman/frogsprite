@@ -37,7 +37,8 @@ written down — the `iso_to_grid` one against the floor it claims to build.
      height into `dy`, so a jump currently needs a frame `base` override to cancel it. Expressible,
      not elegant. Add when something actually jumps.
    - **Sorting inside a layer** is still not a thing, and should not be: a floor is one layer and one
-     depth. Props take part by becoming their own layers, which is what item 4 below is about.
+     depth. Props take part by becoming their own layers. A walking character in a scene is one link
+     per pose plus `cycle_layers` — see item 6.
 
 2. ~~**`iso_to_grid` does not compose with `iso_tile`.**~~ **Done** — `iso_to_grid(i, j, { w, z })`
    takes the same tile half-width `iso_tile` does, so the two ends of the API are in one unit and the
@@ -79,22 +80,33 @@ written down — the `iso_to_grid` one against the floor it claims to build.
    The docs also record the contrast that stops the correct technique going out with the bad one:
    `iso_tile` **wants** its shared edges outlined — that is what reads as grout on a floor.
 
-4. **No 2D lattice repeat.** `tile_layer(name, { period })` repeats a **horizontal** period, which is
-   the wrong shape for a diamond lattice. So the floor is ~1,200 `iso_tile` calls baked flat into one
-   layer, and recolouring it means redrawing all of it. A period in both axes — or an iso-aware
-   "repeat this tile across the field" — would make a floor editable instead of committed.
+4. ~~**No 2D lattice repeat.**~~ **Done — `iso_fill`, not a 2D `tile_layer`.** `shapes.iso_fill(ox, oy, w, color, { odd, fill, layer })`
+   is the documented floor loop in one undo step: every lattice point whose diamond touches the grid.
+   Recolour is `clear` then this. The floor is scenery, baked on purpose.
 
-5. **`shapes.*` cannot target a layer.** `ShapeOpts` is `{ fill, sprite }`, while `stamp`, `shift`
-   and `import_image` all take `layer`. So iso painting needs a `select_layer` first, and the
-   inconsistency is invisible until you trip on it mid-batch. Adding `layer` to `ShapeOpts` lines
-   them up with everything else that writes pixels.
+   Two things it left out, deliberately:
+   - **`tile_layer` stays 1D.** A cartesian `periodY` is the wrong shape for a 2:1 diamond — the next
+     tile sits at `(w, w/2)`, not `(2w, 0)`. `scroll_layer` measures that same horizontal period.
+   - **No live tiled layer.** One link per cell is worse than baking; a new layer kind would be a
+     compositor. Add when a floor is a motif you still edit, not two flat colours.
 
-6. **Nested links are opaque to a frame's arrangement.** Not iso-specific, but it is what stopped
-   the character here from being one object. The tidy build is a `skel` sprite owning its body and
-   leg layers, linked once into `scene` — but a frame's `layers` cannot reach inside a linked
-   sprite's own layers, so the leg cycle could not be driven from the scene's animation. All seven
-   character layers had to stay flat in `scene` instead. This is the gap between a scene that
-   composes and one that has to be assembled by hand every time.
+5. ~~**`shapes.*` cannot target a layer.**~~ **Done.** `ShapeOpts` is `{ fill, sprite, layer }`, same
+   funnel as `stamp` / `shift` / `import_image`. `iso_box` takes it too. Linked layers still refuse
+   via `paintable()`. `rotate` takes it too — it already had an opts bag. `paint_map` / `clear` /
+   `reflect` still take a trailing sprite name, not an opts object — add when that path trips
+   someone; the iso path is shapes.
+
+6. ~~**Nested links are opaque to a frame's arrangement.**~~ **Won't do.** A link is a still: nested
+   links draw, but `flatten` resolves a link with `view: undefined`, and a linked sprite's animation
+   is never consulted. Closing it is nested `LayerView.layers`, `readArrangement` recursion,
+   `cycle_layers({ through })`, and the effect tray — a compositor.
+
+   The pattern that already composes: one link per pose into the scene, `cycle_layers` those links.
+   They share `dx` / `base`; recolour the source poses and every instance follows. Two characters are
+   two rings. Painting seven layers flat onto `scene` was the weak workaround; wrapping them in one
+   `skel` link is the one that does not work. Upgrade path if a later scene actually needs one
+   grouped object: pass `v?.layers` into the recursive `flatten`. Leave it until the pose-link loop
+   is the thing that costs time.
 
 ## Extras — normals from `iso_box`
 

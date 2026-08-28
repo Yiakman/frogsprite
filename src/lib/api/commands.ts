@@ -17,10 +17,10 @@ import type { Animation, Frame, Layer, Sprite, SpriteSet } from '../core/types.t
 import { editor } from '../state/store.svelte.ts';
 
 type Color = number | string | null;
-/** Trailing options every shape shares: `fill` (ignored by `line`) and the usual sprite override. */
-type ShapeOpts = { fill?: boolean; sprite?: string };
+/** Trailing options every shape shares: `fill` (ignored by `line`), and the usual sprite / layer overrides. */
+type ShapeOpts = { fill?: boolean; sprite?: string; layer?: string };
 /** Centre of rotation, in pixel coordinates: whole for a pixel, `.5` for the corner between two. */
-type RotateOpts = { cx?: number; cy?: number; sprite?: string };
+type RotateOpts = { cx?: number; cy?: number; sprite?: string; layer?: string };
 
 /** Everything a frame may carry. `set_animation` refuses anything else rather than dropping it. */
 const FRAME_KEYS = new Set(['sprite', 'ms', 'fx', 'trail', 'transition', 'layers']);
@@ -547,13 +547,14 @@ const api = {
 	}),
 
 	/** Turn a sprite in steps of 30°, positive clockwise. See AGENTS.md §Painting. */
-	rotate: mut(function (angle: number, { cx, cy, sprite }: RotateOpts = {}) {
-		const t = target(sprite);
+	rotate: mut(function (angle: number, { cx, cy, sprite, layer }: RotateOpts = {}) {
+		const t = target(sprite, layer);
 		const px = paintable(t.layer);
 		const lost = spin(px, t.grid, angle, cx, cy);
 		const mid = (t.grid - 1) / 2;
 		return {
 			sprite: t.sprite.name,
+			layer: t.layer.name,
 			angle,
 			center: [cx ?? mid, cy ?? mid],
 			solid: px.reduce((n, p) => n + (p === TRANSPARENT ? 0 : 1), 0),
@@ -1781,7 +1782,7 @@ const api = {
 	color: ro((c: Color) => toIndex(c)),
 
 	/**
-	 * Screen offset of a 2:1 world point, in the units `shapes.iso_tile` and `shapes.iso_box` take.
+	 * Screen offset of a 2:1 world point, in the units `shapes.iso_tile` / `iso_fill` / `iso_box` take.
 	 *
 	 *   iso_to_grid(i, j, { w: 8 })   // tile (i, j) of a floor of 16 x 8 diamonds
 	 *   iso_to_grid(0, 0, 4)          // 4px straight up, on any size of tile
@@ -1892,57 +1893,84 @@ const shapes = {
 	 * Straight line between two points, endpoints included. No fill — a line has no inside. `width`
 	 * thickens it, with square caps and joins.
 	 */
-	line: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { width = 1, sprite }: ShapeOpts & { width?: number } = {}) {
-		const t = target(sprite);
+	line: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { width = 1, sprite, layer }: ShapeOpts & { width?: number } = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.line(paintable(t.layer), t.grid, x0, y0, x1, y1, toIndex(color), width);
-		return { sprite: t.sprite.name, shape: 'line', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'line', painted };
 	}),
 
 	/** Rectangle between two opposite corners, given in either order — the non-square one. */
-	rect: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	rect: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.rect(paintable(t.layer), t.grid, x0, y0, x1, y1, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'rect', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'rect', painted };
 	}),
 
 	/** Axis-aligned square from its top-left corner. */
-	square: mut(function (x: number, y: number, size: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	square: mut(function (x: number, y: number, size: number, color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.square(paintable(t.layer), t.grid, x, y, size, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'square', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'square', painted };
 	}),
 
-	circle: mut(function (cx: number, cy: number, r: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	circle: mut(function (cx: number, cy: number, r: number, color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.circle(paintable(t.layer), t.grid, cx, cy, r, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'circle', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'circle', painted };
 	}),
 
 	/** Circle with separate radii — the way to draw a body, a head or an eye that isn't round. */
-	ellipse: mut(function (cx: number, cy: number, rx: number, ry: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	ellipse: mut(function (cx: number, cy: number, rx: number, ry: number, color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.ellipse(paintable(t.layer), t.grid, cx, cy, rx, ry, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'ellipse', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'ellipse', painted };
 	}),
 
-	triangle: mut(function (x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	triangle: mut(function (x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.triangle(paintable(t.layer), t.grid, x0, y0, x1, y1, x2, y2, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'triangle', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'triangle', painted };
 	}),
 
 	/** Any closed shape: `polygon([[2, 1], [13, 6], [7, 14]], '#22aa33')`. Three points or more. */
-	polygon: mut(function (points: Point[], color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	polygon: mut(function (points: Point[], color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.polygon(paintable(t.layer), t.grid, points, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'polygon', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'polygon', painted };
 	}),
 
 	/** 2:1 diamond floor tile, width 2w × height w, centred on (cx, cy). `w` even. */
-	iso_tile: mut(function (cx: number, cy: number, w: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	iso_tile: mut(function (cx: number, cy: number, w: number, color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.isoTile(paintable(t.layer), t.grid, cx, cy, w, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'iso_tile', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_tile', painted };
+	}),
+
+	/**
+	 * Tessellate `iso_tile` across the grid from origin (ox, oy). One call, one undo step —
+	 * the floor loop, not 1,200 of them. `odd` is the other checkerboard colour; omit it for a
+	 * solid field. `{ fill: false }` is grout, same as `iso_tile`. Recolour is `clear` then this.
+	 * `tile_layer` stays 1D: a cartesian period is the wrong shape for a diamond lattice.
+	 */
+	iso_fill: mut(function (
+		ox: number,
+		oy: number,
+		w: number,
+		color: Color,
+		{ fill = true, odd, sprite, layer }: ShapeOpts & { odd?: Color } = {}
+	) {
+		const t = target(sprite, layer);
+		const painted = shape.isoFill(
+			paintable(t.layer),
+			t.grid,
+			ox,
+			oy,
+			w,
+			toIndex(color),
+			odd === undefined ? undefined : toIndex(odd),
+			fill
+		);
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_fill', painted };
 	}),
 
 	/**
@@ -1960,18 +1988,20 @@ const shapes = {
 		d: number,
 		h: number,
 		colors: { top: Color; left?: Color; right?: Color; outline?: Color },
-		{ sprite }: { sprite?: string } = {}
+		// no `fill`: a box is three filled faces and an optional outline, so there is nothing for it
+		// to mean here — and silently accepting it is worse than refusing it
+		{ sprite, layer }: Omit<ShapeOpts, 'fill'> = {}
 	) {
 		if (!colors || !('top' in colors))
 			throw new Error('iso_box needs { top, left?, right?, outline? }');
-		const t = target(sprite);
+		const t = target(sprite, layer);
 		const painted = shape.isoBox(paintable(t.layer), t.grid, cx, cy, w, d, h, {
 			top: toIndex(colors.top),
 			...('left' in colors ? { left: toIndex(colors.left) } : {}),
 			...('right' in colors ? { right: toIndex(colors.right) } : {}),
 			...('outline' in colors ? { outline: toIndex(colors.outline) } : {})
 		});
-		return { sprite: t.sprite.name, shape: 'iso_box', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_box', painted };
 	})
 };
 

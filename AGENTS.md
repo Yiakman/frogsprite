@@ -293,8 +293,23 @@ The rules worth knowing:
   a frame's value replaces the link's rather than adding to it.)
 - **Links can nest** — a wheel linked into a cart, the cart linked into a scene. A loop is refused
   when you make it, and drawn as nothing if one ever reaches the canvas.
+- **A link is a still.** Nested links draw, but a frame's `layers` cannot reach inside the linked
+  sprite — `cycle_layers` on `skel` does not show through a link into `scene`. To animate a character
+  in a scene, link each pose and `cycle_layers` those links (they share `dx` / `base`; recolour the
+  source poses and every instance follows). Two characters are two rings; a second `cycle_layers`
+  merges. Keeping the pose layers on the scene sprite also works; wrapping them in one `skel` link
+  does not.
 - **`delete_sprite` refuses** while a link still shows it, naming them. `{ force: true }` bakes those
   layers rather than deleting them, so the picture survives.
+
+```js
+// a walking character in a scene — one link per pose, not one skel wrapping them
+frogsprite.link_layer('skel-0', { name: 'hero',   dx: 40, dy: 24, base: true });
+frogsprite.link_layer('skel-1', { name: 'hero-1', dx: 40, dy: 24, base: true });
+frogsprite.link_layer('skel-2', { name: 'hero-2', dx: 40, dy: 24, base: true });
+frogsprite.link_layer('skel-3', { name: 'hero-3', dx: 40, dy: 24, base: true });
+frogsprite.cycle_layers(['hero', 'hero-1', 'hero-2', 'hero-3']);
+```
 
 Reach for `stamp` instead when you want a one-off you will then paint over: it copies pixels once and
 the connection is gone. `link_layer` is for anything you will still edit, or repeat.
@@ -551,8 +566,8 @@ All painting commands take an optional trailing `sprite` name and default to the
   hand-drawing a symmetric character twice, and it guarantees an exact silhouette. Stamp asymmetric
   detail (spots, highlights, a turned head) *after* reflecting.
 - `rotate(angle, opts?)` — turn the sprite. `angle` is in degrees and must be a **multiple of 30**
-  (`45` throws); **positive is clockwise**, like CSS. `opts` is `{ cx, cy, sprite }`. Returns
-  `{ sprite, angle, center, solid, lost }`: `solid` is how many non-transparent cells the sprite has
+  (`45` throws); **positive is clockwise**, like CSS. `opts` is `{ cx, cy, sprite, layer }`. Returns
+  `{ sprite, layer, angle, center, solid, lost }`: `solid` is how many non-transparent cells the sprite has
   now, and `lost` is how many non-transparent cells **no destination sampled** — clipped at the edge,
   or dropped in the resample. `lost` is never negative, and it is not a net change: nearest-neighbour
   resampling *duplicates* cells as well as dropping them, so `solid` can go up and `lost` be non-zero
@@ -600,8 +615,8 @@ All painting commands take an optional trailing `sprite` name and default to the
 #### Shapes
 
 `frogsprite.shapes.*` fills a whole form in one call. Each takes the colour, then an options object
-`{ fill = true, sprite }` — so `fill: false` draws the outline only, and `sprite` targets one by name
-like every other painting command.
+`{ fill = true, sprite, layer }` — so `fill: false` draws the outline only, and `sprite` / `layer`
+target one by name like `stamp` and `shift`. Without `layer` it still paints the selected layer.
 
 | call | |
 | --- | --- |
@@ -613,10 +628,12 @@ like every other painting command.
 | `shapes.triangle(x0, y0, x1, y1, x2, y2, color, opts?)` | three vertices |
 | `shapes.polygon(points, color, opts?)` | `points` is `[[x, y], …]`, three or more |
 | `shapes.iso_tile(cx, cy, w, color, opts?)` | 2:1 diamond floor tile, width `2w` × height `w`. `w` even |
+| `shapes.iso_fill(ox, oy, w, color, opts?)` | tessellate `iso_tile` across the grid from origin `(ox, oy)`. `{ odd }` is the other checkerboard colour |
 | `shapes.iso_box(cx, cy, w, d, h, colors, opts?)` | isometric block; `colors` is `{ top, left?, right?, outline? }` |
 
-Each returns `{ sprite, shape, painted }`, where `painted` counts the cells actually written —
-overlap is counted once, and anything clipped off the canvas is not counted at all.
+Each returns `{ sprite, layer, shape, painted }` — `layer` is the one it landed on, which is worth
+reading back when you did not name it — and `painted` counts the cells actually written: overlap is
+counted once, and anything clipped off the canvas is not counted at all.
 
 ```js
 frogsprite.shapes.ellipse(8, 10, 6, 4, '#22aa33');        // body
@@ -644,26 +661,29 @@ plotting pixels by hand, and much easier to correct.
 
 In the UI these are the shape buttons in the tool rail (the icon column left of the sidebar): one
 dialog per shape, filled, in the current colour. Outlines are JS-only. The rail's **Rotate** button
-takes an angle, and optionally a `cx` and `cy` centre, and warns when a turn loses pixels. `iso_tile`
-and `iso_box` are JS-only, like `rect`.
+takes an angle, and optionally a `cx` and `cy` centre, and warns when a turn loses pixels. `iso_tile`,
+`iso_fill` and `iso_box` are JS-only, like `rect`.
 
 #### Isometric
 
-2:1 dimetric: two pixels across per one pixel down. Draw with `iso_tile` / `iso_box`; place with
-`iso_to_grid`.
+2:1 dimetric: two pixels across per one pixel down. Draw a floor with `iso_fill`; a single diamond
+or a box with `iso_tile` / `iso_box`; place with `iso_to_grid`.
 
 ```js
 const W = 8, OX = 64, OY = 20;                     // 16 x 8 tiles, and where (0, 0) sits
-for (let i = 0; i < 10; i++) for (let j = 0; j < 10; j++) {
-  const { dx, dy } = frogsprite.iso_to_grid(i, j, { w: W });
-  frogsprite.shapes.iso_tile(OX + dx, OY + dy, W, (i + j) % 2 ? '#666699' : '#669999');
-}
+frogsprite.new_layer('floor', { at: 'bottom' });   // scenery: no `base`, so it stays underfoot
+frogsprite.shapes.iso_fill(OX, OY, W, '#666699', { odd: '#669999', layer: 'floor' });
 const wall = frogsprite.iso_to_grid(3, -1, { w: W });        // the same lattice holds boxes
 frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
   top: '#99cccc', left: '#669999', right: '#336666'
 });
 ```
 
+- **`iso_fill(ox, oy, w, color)`** — every lattice point whose diamond touches the grid, in one undo
+  step. `{ odd }` is the other checkerboard colour; omit it for a solid field. `{ fill: false }` is
+  grout, same as `iso_tile`. Recolour is `clear` then this — the floor is scenery, baked on purpose.
+  `tile_layer` stays 1D: a cartesian period is the wrong shape for a diamond lattice, and a live
+  tiled layer would be one link per cell.
 - **`iso_tile(cx, cy, w)`** — diamond centred on `(cx, cy)`, width `2w`, height `w`. `w` even and ≥ 2.
 - **`iso_box(cx, cy, w, d, h, colors)`** — `(cx, cy)` is the centre of the **ground** diamond; `h`
   extrudes screen-up. `w` and `d` even, ≥ 2, congruent modulo 4 (so the 2:1 vertices land on pixels).
@@ -682,7 +702,7 @@ frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
   to add to wherever you put the origin. Integers only.
   - **`w` is the same tile half-width `iso_tile` takes**, so a lattice and the shapes standing on it
     are said in one unit: `iso_to_grid(i, j, { w: 8 })` steps one 16×8 tile per `i`, and feeding
-    `dx`/`dy` straight to `iso_tile(…, 8)` tessellates with no arithmetic in between. Even and ≥ 2,
+    `dx`/`dy` straight to `iso_tile` / `iso_box` places them with no arithmetic in between. Even and ≥ 2,
     the constraint `iso_tile` already has — `dy` multiplies by `w / 2`, and an odd `w` would put
     every other row of the lattice on a half pixel.
   - **It defaults to `2`**, the unit cell, which is what this returned before it took one:
@@ -705,8 +725,10 @@ frogsprite.print_sprite('scene', { rect: [24, 18, 72, 56] });   // just the char
 frogsprite.zoom(4, { x: 48, y: 36 });                           // and look at him
 ```
 
-Draw the floor and the walls flat into one layer; give every **prop and character its own layer with
-a `base`** so they sort against each other as they move. See [Depth](#depth) — that is what lets
+Draw the floor with `iso_fill` and the walls flat into scenery layers; give every **prop and
+character pose its own layer with a `base`** so they sort against each other as they move. A walking
+character is one link per pose plus `cycle_layers` — a single `skel` link is a still, see
+[Linked layers](#linked-layers--one-drawing-many-places). See [Depth](#depth) — that is what lets
 something walk behind a pillar, and the `z` above is exactly the lift the section's last note is
 about.
 
