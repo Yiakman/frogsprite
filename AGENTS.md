@@ -50,6 +50,7 @@ clip (`fx` and layer arrangements are invisible to `print_sprite`).
 | Put a logo on a crate | `project_face` | `stamp` of the flat motif |
 | The same tree four times | `link_layer` | four `stamp`s — you would redraw all four by hand |
 | Scrolling background | layers + `scroll_layer` | one sprite per frame, or `fx.dx` |
+| A camera pan, or a route with corners | `move_layers` | `scroll_layer` — it loops; a pan arrives |
 | Check art | `print_sprite` | — |
 | Check a clip | `print_frame` / `contact_sheet` | `print_sprite` |
 
@@ -235,6 +236,18 @@ palette *indices*, so there is nothing meaningful to average between index 3 and
 - `scroll_layer(name, { speed, animation, wrap, seamless })` — scroll one layer across an animation,
   `speed` px per frame and signed. Writes the offsets into every frame for you, and **refuses a
   scroll that would not loop** (see below)
+- `move_layers(names, { path, unit, animation, wrap, seamless })` — walk one layer, or a whole group
+  of them, along a path across an animation: a camera over a scene bigger than the canvas, or a prop
+  with corners in its route. Takes waypoints rather than a speed, moves every layer named as one, and
+  is the only one of these that writes **`dy`**. `unit` scales the path, so a route can be said in map
+  sections rather than pixels. A **closed** path (last waypoint === first) stops one step short of
+  home so the loop closes instead of holding frame 0 twice; an **open** one lands on its last waypoint
+  and comes back `closed: false`. Repeat a waypoint to hold there. It refuses a path that never moves,
+  for the reason `scroll_layer` refuses a frozen scroll
+  ```js
+  frogsprite.move_layers(cells, { path: [[0,0],[1,0],[1,1],[0,1],[0,0]], unit: 128 });  // a tour of a 2x2 map
+  frogsprite.move_layers('skel', { path: [[8,8],[40,8],[40,48]], animation: 'patrol' });
+  ```
 - `cycle_layers(names, { animation, every, sprite, seamless })` — show one of a ring of layers per
   frame: a pedal stroke, a walk cycle, a flame. The pose counterpart to `scroll_layer`, and the other
   half of what an animation needs — reach for it instead of hand-writing an `i % n` of `hidden`
@@ -493,6 +506,16 @@ Merging goes all the way down: patching `{ pose: { dy: -1 } }` keeps the `hidden
 
 The pixels still live on the *sprite* — what a frame carries is only an arrangement of them. So two
 animations over the same sprite can scroll it at different speeds, and neither touches the art.
+
+**A camera is not a scroll.** `scroll_layer` is for art that *repeats* and must loop, which is why it
+measures the period and refuses a speed that would jump or freeze. A pan across a scene, or a prop
+walking a route with corners in it, has no repeat to land on and a destination to reach instead —
+that is `move_layers`. The sign is the trap worth naming: `path` says where the **layers** go, so a
+camera moving east is a path going west.
+
+```js
+frogsprite.move_layers(cells, { path: [[0, 0], [-1, 0]], unit: 128 });   // the view travels east
+```
 
 #### Stamping vs. arranging
 

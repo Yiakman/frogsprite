@@ -375,6 +375,44 @@ export const poseAt = (i: number, count: number, every = 1): number =>
 export const cycles = (frames: number, count: number, every = 1): boolean =>
 	frames % (count * Math.max(1, Math.trunc(every))) === 0;
 
+// --- paths -------------------------------------------------------------------
+// A scroll is one speed forever; a camera or a patrol is a route with corners in it. Same output —
+// a `dx`/`dy` per frame — so this lives beside the scrolling arithmetic rather than apart from it.
+
+/** One point on a `move_layers` path: where the art sits, in whatever unit the caller counts in. */
+export type Waypoint = readonly [number, number];
+
+/** Whether a path returns to where it began — a tour that loops, rather than a pan that arrives. */
+export const closes = (path: readonly Waypoint[]): boolean =>
+	path.length > 1 &&
+	path[0][0] === path[path.length - 1][0] &&
+	path[0][1] === path[path.length - 1][1];
+
+/**
+ * Where a path has reached by frame `i`, interpolated along its segments at a constant rate.
+ *
+ * The span differs by whether the path closes, and getting it wrong costs one frame at each end. An
+ * **open** path has to *land* on its last waypoint, so `frames - 1` steps sit between `frames`
+ * positions and the final frame is the destination. A **closed** one must not draw its start twice:
+ * frame 0 and the frame after the last are the same place, so its span is the whole `frames` and the
+ * last frame stops one step short — which is exactly what makes the loop close instead of stutter.
+ *
+ * Stays in the caller's own units, fractions and all; `move_layers` multiplies by `unit` and rounds
+ * once, at the end, so a route said in tiles or in fractions of one does not drift.
+ */
+export function pathAt(path: readonly Waypoint[], i: number, frames: number): [number, number] {
+	const segments = path.length - 1;
+	if (segments < 1) return [path[0][0], path[0][1]];
+	const span = (closes(path) ? frames : frames - 1) || 1;
+	const t = Math.max(0, Math.min(segments, (i / span) * segments));
+	const k = Math.min(segments - 1, Math.floor(t));
+	const f = t - k;
+	return [
+		path[k][0] + (path[k + 1][0] - path[k][0]) * f,
+		path[k][1] + (path[k + 1][1] - path[k][1]) * f
+	];
+}
+
 /** A layer by name, or the sprite's top one. Throws with the stack, since the name is user input. */
 export function layerOf(sprite: Sprite, name?: string): Layer {
 	if (!name) return sprite.layers[sprite.layers.length - 1];

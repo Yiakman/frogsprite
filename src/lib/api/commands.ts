@@ -9,7 +9,7 @@ import { diffPixels, GRIDS, ISO_FACES, projectFace, put, reflect as reflectHalf,
 import { sha256 as hashOf } from '../io/hash.ts';
 import { freeName, taken } from '../core/names.ts';
 import { ISO_FACE, normalsOf } from '../core/normals.ts';
-import { BASE, bakedBase, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, period as periodOf, placeAt, poseAt, scrollStep, shownAs } from '../core/layers.ts';
+import { BASE, bakedBase, closes, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, pathAt, period as periodOf, placeAt, poseAt, scrollStep, shownAs, type Waypoint } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
 import type { Point } from '../core/shapes.ts';
@@ -989,6 +989,86 @@ const api = {
 	}),
 
 	/**
+	 * Walk one layer, or a whole group of them, along a path across an animation — a camera over a
+	 * scene bigger than the canvas, or a prop with corners in its route.
+	 *
+	 *   move_layers(cells, { path: [[0,0], [1,0], [1,1], [0,1], [0,0]], unit: 128 })   // a tour of a 2x2 map
+	 *   move_layers('skel', { path: [[8,8], [40,8], [40,48]], animation: 'patrol' })   // one prop, three legs
+	 *
+	 * `scroll_layer` is for a layer that repeats and must loop; this is for one that does not and has
+	 * to *arrive*. It writes `dx` **and `dy`** — the axis a scroll never had — into every frame for
+	 * every layer named, so a rig of section links all carrying the same offset moves as one camera.
+	 *
+	 * `unit` scales the whole path, so a route can be said in sections rather than pixels: at
+	 * `unit: 128`, `[0.5, 0]` is half a section east. Rounding happens once, at the end, so fractions
+	 * do not drift. `path` is where the **layers** go — a camera is the negative of where the camera
+	 * goes, since moving the view east slides the map west.
+	 *
+	 * A **closed** path (last waypoint === first) stops one step short of home, so the loop closes
+	 * instead of holding frame 0 twice. An **open** one lands on its last waypoint at the last frame
+	 * and comes back `closed: false`, which is the tour that visibly snaps back on playback. Repeat a
+	 * waypoint to hold there — a duplicate is a segment with nowhere to go, which is what makes a
+	 * cell-by-cell hop rather than a glide.
+	 *
+	 * It refuses a path that never moves, for the reason `scroll_layer` refuses a frozen scroll: every
+	 * frame identical is invisible in a still, invisible in the return value, and reads on playback as
+	 * an animation nobody wired up. Usually it means `unit` was left at 1.
+	 *
+	 * `wrap` is off unless asked, because a rig of map sections must not wrap — each one would repeat
+	 * its own copy instead of yielding to its neighbour. It cannot be turned *off* here either: a
+	 * frame's `wrap: false` is dropped, so clear it on the link.
+	 */
+	move_layers: mut(function (names: string | string[], { path, unit = 1, animation, sprite, wrap = false, seamless = true }: { path: [number, number][]; unit?: number; animation?: string; sprite?: string; wrap?: boolean; seamless?: boolean }) {
+		const list = Array.isArray(names) ? names : [names];
+		if (!list.length || list.some((n) => typeof n !== 'string' || !n))
+			throw new Error('move_layers needs a layer name, or a list of them');
+		if (!Array.isArray(path) || !path.length)
+			throw new Error('move_layers needs a path: [[x, y], [x, y]…], in whatever unit you count in');
+		const route: Waypoint[] = path.map((p, i) => {
+			if (!Array.isArray(p) || p.length !== 2 || !p.every((n) => Number.isFinite(n)))
+				throw new Error(`waypoint ${i} of the path is not an [x, y] pair of numbers`);
+			return [Number(p[0]), Number(p[1])] as Waypoint;
+		});
+		if (!Number.isFinite(unit)) throw new Error('move_layers unit must be a number of pixels per path step');
+		const anim = animOf(animation);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames to move over`);
+		const t = target(sprite);
+		for (const n of list) layerOf(t.sprite, n); // throws with the stack before anything is written
+		const n = anim.frames.length;
+		// every frame's offset resolved first, so the still check below reads the pixels that will
+		// actually be written rather than the waypoints they came from — a path can move and still round
+		// to one offset, which is the failure that looks like a layer nobody animated
+		const at = anim.frames.map((_, i) => {
+			const [x, y] = pathAt(route, i, n);
+			return { dx: Math.round(x * unit), dy: Math.round(y * unit) };
+		});
+		if (n > 1 && seamless && at.every((p) => p.dx === at[0].dx && p.dy === at[0].dy))
+			throw new Error(
+				`this path writes the same offset (${at[0].dx}, ${at[0].dy}) into all ${n} frames, so the ` +
+					`layer(s) would sit perfectly still. At unit ${unit} the whole route spans less than a pixel — ` +
+					`either spread the waypoints, or raise unit (a path counted in map sections wants the grid ` +
+					`size, unit: ${t.grid}). { seamless: false } allows it.`
+			);
+		anim.frames = anim.frames.map((f, i) =>
+			patchEffects(f, {
+				layers: Object.fromEntries(list.map((nm) => [nm, { ...at[i], ...(wrap && { wrap: true }) }]))
+			})
+		);
+		editor.stop();
+		return {
+			animation: anim.name,
+			layers: list.length,
+			frames: n,
+			unit,
+			from: at[0],
+			to: at[n - 1],
+			// false is the tour that cuts back to the start on loop. Reported rather than refused: unlike a
+			// parallax scroll, a one-way pan is a finished thing you may well be exporting as a sheet
+			closed: closes(route)
+		};
+	}),
+
+	/**
 	 * Show one of a ring of layers per frame — a pedal stroke, a walk cycle, a flame. The pose
 	 * counterpart to `scroll_layer`, and the other half of what an animation needs.
 	 *
@@ -1648,7 +1728,7 @@ const api = {
 			],
 			groups: {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select', 'delete_sprite', 'delete_set', 'delete_package'],
-				layers: ['new_layer', 'link_layer', 'unlink_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'tile_layer', 'scroll_layer', 'cycle_layers', 'flatten_sprite'],
+				layers: ['new_layer', 'link_layer', 'unlink_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'tile_layer', 'scroll_layer', 'move_layers', 'cycle_layers', 'flatten_sprite'],
 				copying: ['copy_set', 'copy_sprite', 'copy_animation', 'copy_frames', 'copy_layer'],
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'project_face', 'reflect', 'rotate', 'shift', 'clear', 'ramp', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
