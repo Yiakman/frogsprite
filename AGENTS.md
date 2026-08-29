@@ -141,6 +141,11 @@ at the edges. `strength` is the **bevel threshold**, not a depth — every direc
 tilt, so raising it bevels more of the sprite rather than steepening what is already bevelled; `blur`
 is how far in from the edge the bevel reaches.
 
+That bevel is the wrong tool for an `iso_box`. A box is three flat facets, and silhouette-bevelling
+returns a rounded pillow. `{ normals: true }` on `iso_box` / `iso_tile` / `iso_fill` writes the `.n`
+sibling as the shape paints — see [Isometric](#isometric). A transparent face is a hole, the same
+invariant `normals_from_sprite` keeps.
+
 **Stored pixels are direction labels, not normals.** The cube has no `0x80` channel level, so
 `#8080ff` — the canonical flat normal, and the commonest colour in any normal map — is not a palette
 entry; `color('#8080ff')` lands on `#9999ff`, a normal tilted up and left, and every neutral pixel
@@ -672,11 +677,11 @@ or a box with `iso_tile` / `iso_box`; place with `iso_to_grid`.
 ```js
 const W = 8, OX = 64, OY = 20;                     // 16 x 8 tiles, and where (0, 0) sits
 frogsprite.new_layer('floor', { at: 'bottom' });   // scenery: no `base`, so it stays underfoot
-frogsprite.shapes.iso_fill(OX, OY, W, '#666699', { odd: '#669999', layer: 'floor' });
+frogsprite.shapes.iso_fill(OX, OY, W, '#666699', { odd: '#669999', layer: 'floor', normals: true });
 const wall = frogsprite.iso_to_grid(3, -1, { w: W });        // the same lattice holds boxes
 frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
   top: '#99cccc', left: '#669999', right: '#336666'
-});
+}, { normals: true });
 ```
 
 - **`iso_fill(ox, oy, w, color)`** — every lattice point whose diamond touches the grid, in one undo
@@ -689,6 +694,16 @@ frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
   extrudes screen-up. `w` and `d` even, ≥ 2, congruent modulo 4 (so the 2:1 vertices land on pixels).
   `h === 0` is just the top tile. Paint order is left, right, top, then outline — top wins on the
   ridges. Missing `left` / `right` / `outline` skips that face.
+  - **`{ normals: true }`** writes the `.n` sibling as the box paints, so it lights as three facets
+    instead of a bevelled pillow. Top is `flat`; the sides are `SW` / `SE` because world `+Y` / `+X`
+    point screen-left-and-down / screen-right-and-down on this lattice, not due west / east. Outline
+    is a colour, not a surface, and is skipped on the map. A transparent face punches a hole, same
+    as the art. The sibling is one flat layer: **last write wins, in call order**, not stack order
+    and not depth order. The albedo composites floor-then-walls by stack; if you paint the walls
+    first then the floor, the map has floor over walls. Paint in composite order, or flatten first.
+    An entity with a `base` has no single composite at paint time — that is why a per-layer
+    arrangement already cannot export a normal map. `iso_tile` / `iso_fill` take the same flag: the
+    whole floor is `flat`.
   - **`outline` is for a lone box** — a crate, a pillar, a stalagmite. It draws the whole box: four
     top edges, three verticals, two base edges. On a **tessellated run those internal edges are the
     seams you do not want**: a wall of outlined boxes reads as a row of separate objects rather than

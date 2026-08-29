@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { ISO_FACE } from './normals.ts';
 import * as shapes from './shapes.ts';
 
 /** Painted cells as (x,y) pairs, so an assertion reads like the picture. */
@@ -184,6 +185,44 @@ test('iso_box paints left, then right, then top — top wins on the ridges', () 
 	assert.equal(px[topY * 32 + 16], 1, 'centre of the top diamond');
 	assert.equal(px[(topY + 4) * 32 + 16], 1, 'south vertex of the top, where the sides meet');
 	assert.ok(px.includes(2) && px.includes(3), 'left and right faces painted');
+});
+
+test('iso_box face labels follow the same paint order — the ridge is the top, not a side', () => {
+	const albedo = new Array(32 * 32).fill(0);
+	const nrm = new Array(32 * 32).fill(0);
+	const geom = [32, 16, 20, 8, 8, 6] as const;
+	shapes.isoBox(albedo, ...geom, { top: 1, left: 2, right: 3 });
+	shapes.isoBox(nrm, ...geom, { top: ISO_FACE.top, left: ISO_FACE.left, right: ISO_FACE.right });
+	const topY = 20 - 6;
+	assert.equal(nrm[topY * 32 + 16], ISO_FACE.top, 'centre of the top is flat');
+	assert.equal(nrm[(topY + 4) * 32 + 16], ISO_FACE.top, 'south ridge is the top, not a side');
+	const left = albedo.findIndex((v) => v === 2);
+	assert.ok(left >= 0, 'left face has pixels');
+	assert.equal(nrm[left], ISO_FACE.left, 'a left-face interior pixel is SW');
+	const right = albedo.findIndex((v) => v === 3);
+	assert.ok(right >= 0);
+	assert.equal(nrm[right], ISO_FACE.right, 'a right-face interior pixel is SE');
+});
+
+test('iso_box skipped faces write no labels', () => {
+	const nrm = new Array(32 * 32).fill(0);
+	shapes.isoBox(nrm, 32, 16, 20, 8, 8, 6, { top: ISO_FACE.top, right: ISO_FACE.right });
+	assert.ok(!nrm.includes(ISO_FACE.left), 'omitting left paints no SW');
+	assert.ok(nrm.includes(ISO_FACE.top) && nrm.includes(ISO_FACE.right));
+});
+
+test('a transparent iso_box face leaves a hole in the map too', () => {
+	const albedo = new Array(32 * 32).fill(0);
+	const nrm = new Array(32 * 32).fill(0);
+	const geom = [32, 16, 20, 8, 8, 6] as const;
+	shapes.isoBox(albedo, ...geom, { top: 0, left: 2, right: 3 });
+	shapes.isoBox(nrm, ...geom, { top: 0, left: ISO_FACE.left, right: ISO_FACE.right });
+	const topY = 20 - 6;
+	assert.equal(albedo[topY * 32 + 16], 0, 'the art has a hole');
+	assert.equal(nrm[topY * 32 + 16], 0, 'the map has a hole where the art does');
+	const left = albedo.findIndex((v) => v === 2);
+	assert.ok(left >= 0);
+	assert.equal(nrm[left], ISO_FACE.left, 'an opaque face is still labelled');
 });
 
 test('iso_box with h=0 is the top tile alone', () => {

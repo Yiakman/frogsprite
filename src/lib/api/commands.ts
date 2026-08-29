@@ -8,7 +8,7 @@ import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image
 import { diffPixels, GRIDS, put, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
 import { sha256 as hashOf } from '../io/hash.ts';
 import { freeName, taken } from '../core/names.ts';
-import { normalsOf } from '../core/normals.ts';
+import { ISO_FACE, normalsOf } from '../core/normals.ts';
 import { BASE, bakedBase, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, period as periodOf, placeAt, poseAt, scrollStep, shownAs } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
@@ -1882,6 +1882,26 @@ const api = {
 	})
 };
 
+/** `{ normals: true }` writes the `.n` sibling — refuse if this sprite already is one. */
+function assertAlbedo(t: Target, normals?: boolean) {
+	if (normals && t.sprite.name.endsWith('.n'))
+		throw new Error('normals: true writes the .n sibling — this sprite already is one');
+}
+
+/**
+ * Find-or-create `<name>.n` and paint labels into its first layer. One flat sibling, same as
+ * `normals_from_sprite` — per-layer maps are the export.ts upgrade. Stay on the albedo sprite.
+ */
+function paintNormals(t: Target, paint: (pixels: Uint8Array) => void) {
+	const named = `${t.sprite.name}.n`;
+	let sib = t.sprites.find((s) => s.name === named);
+	if (!sib) {
+		sib = { name: named, layers: [newLayer(BASE, t.grid)] };
+		t.sprites.push(sib);
+	}
+	paint(paintable(sib.layers[0]));
+}
+
 /**
  * Geometry, one call per shape. Kept off the flat `api` map because they live a level down as
  * `frogsprite.shapes.*` — the maths is all in shapes.ts, so these are argument plumbing only.
@@ -1940,9 +1960,19 @@ const shapes = {
 	}),
 
 	/** 2:1 diamond floor tile, width 2w × height w, centred on (cx, cy). `w` even. */
-	iso_tile: mut(function (cx: number, cy: number, w: number, color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+	iso_tile: mut(function (
+		cx: number,
+		cy: number,
+		w: number,
+		color: Color,
+		{ fill = true, sprite, layer, normals }: ShapeOpts & { normals?: boolean } = {}
+	) {
 		const t = target(sprite, layer);
-		const painted = shape.isoTile(paintable(t.layer), t.grid, cx, cy, w, toIndex(color), fill);
+		const px = paintable(t.layer);
+		assertAlbedo(t, normals);
+		const c = toIndex(color);
+		const painted = shape.isoTile(px, t.grid, cx, cy, w, c, fill);
+		if (normals) paintNormals(t, (n) => shape.isoTile(n, t.grid, cx, cy, w, c ? ISO_FACE.top : 0, fill));
 		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_tile', painted };
 	}),
 
@@ -1957,19 +1987,18 @@ const shapes = {
 		oy: number,
 		w: number,
 		color: Color,
-		{ fill = true, odd, sprite, layer }: ShapeOpts & { odd?: Color } = {}
+		{ fill = true, odd, sprite, layer, normals }: ShapeOpts & { odd?: Color; normals?: boolean } = {}
 	) {
 		const t = target(sprite, layer);
-		const painted = shape.isoFill(
-			paintable(t.layer),
-			t.grid,
-			ox,
-			oy,
-			w,
-			toIndex(color),
-			odd === undefined ? undefined : toIndex(odd),
-			fill
-		);
+		const px = paintable(t.layer);
+		assertAlbedo(t, normals);
+		const c = toIndex(color);
+		const o = odd === undefined ? undefined : toIndex(odd);
+		const painted = shape.isoFill(px, t.grid, ox, oy, w, c, o, fill);
+		if (normals)
+			paintNormals(t, (n) =>
+				shape.isoFill(n, t.grid, ox, oy, w, c ? ISO_FACE.top : 0, o === undefined ? undefined : o ? ISO_FACE.top : 0, fill)
+			);
 		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_fill', painted };
 	}),
 
@@ -1979,7 +2008,9 @@ const shapes = {
 	 *
 	 * `outline` is for a lone box. It draws all nine edges, three of which are internal, so a
 	 * tessellated run of them reads as separate objects — omit it there and let the face shades
-	 * carry the form. See the Isometric section of AGENTS.md.
+	 * carry the form. `{ normals: true }` writes the `.n` sibling as three facets (`flat` / `SW` /
+	 * `SE`); a transparent face punches a hole, same as the art. `normals_from_sprite` would bevel
+	 * the silhouette into a pillow. See Isometric in AGENTS.md.
 	 */
 	iso_box: mut(function (
 		cx: number,
@@ -1990,17 +2021,27 @@ const shapes = {
 		colors: { top: Color; left?: Color; right?: Color; outline?: Color },
 		// no `fill`: a box is three filled faces and an optional outline, so there is nothing for it
 		// to mean here — and silently accepting it is worse than refusing it
-		{ sprite, layer }: Omit<ShapeOpts, 'fill'> = {}
+		{ sprite, layer, normals }: Omit<ShapeOpts, 'fill'> & { normals?: boolean } = {}
 	) {
 		if (!colors || !('top' in colors))
 			throw new Error('iso_box needs { top, left?, right?, outline? }');
 		const t = target(sprite, layer);
-		const painted = shape.isoBox(paintable(t.layer), t.grid, cx, cy, w, d, h, {
+		assertAlbedo(t, normals);
+		const faces = {
 			top: toIndex(colors.top),
 			...('left' in colors ? { left: toIndex(colors.left) } : {}),
 			...('right' in colors ? { right: toIndex(colors.right) } : {}),
 			...('outline' in colors ? { outline: toIndex(colors.outline) } : {})
-		});
+		};
+		const painted = shape.isoBox(paintable(t.layer), t.grid, cx, cy, w, d, h, faces);
+		if (normals)
+			paintNormals(t, (n) =>
+				shape.isoBox(n, t.grid, cx, cy, w, d, h, {
+					top: faces.top ? ISO_FACE.top : 0,
+					...('left' in faces ? { left: faces.left ? ISO_FACE.left : 0 } : {}),
+					...('right' in faces ? { right: faces.right ? ISO_FACE.right : 0 } : {})
+				})
+			);
 		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_box', painted };
 	})
 };

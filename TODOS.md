@@ -110,41 +110,11 @@ written down — the `iso_to_grid` one against the floor it claims to build.
 
 ## Extras — normals from `iso_box`
 
-`normals_from_sprite` would produce a **wrong** map for anything `iso_box` draws, and no amount of
-`strength`/`blur` tuning fixes it. It reads the silhouette and bevels inward, which is right for a
-character and wrong for a box: a box's three faces are flat facets with three known, distinct
-normals, and silhouette-bevelling returns a rounded pillow with a flat interior. The one thing in an
-iso scene that most wants a normal map is the one thing the deriver cannot produce.
+~~`normals_from_sprite` would produce a **wrong** map for anything `iso_box` draws.~~ **Done** —
+`{ normals: true }` on `iso_box` / `iso_tile` / `iso_fill` writes the `.n` sibling as the shape
+paints. Top is `flat`; sides are `SW` / `SE` (world `+Y` / `+X` on this lattice, not due west / east).
+Outline is skipped on the map. A transparent face punches a hole, same as the art. The sibling is
+one flat layer: last write wins in **call order**, not stack order and not depth order — paint in
+composite order, or flatten first. Per-layer maps stay the export.ts upgrade.
 
-The fix is close to free, because **`iso_box` already knows the exact normal of every pixel it
-paints** and currently discards it. The faces land on labels that already exist, so this needs no
-new palette machinery and no new export path — `export_normal_map` and `export_lit` work unchanged:
-
-| face | label | hex |
-| --- | --- | --- |
-| top | `flat` | `#9999ff` |
-| left (SW-facing) | `SW`, or `W` for a squarer read | `#3333cc` / `#3399cc` |
-| right (SE-facing) | `SE`, or `E` | `#cc33cc` / `#cc99cc` |
-
-Shape: an opt-in that writes the `.n` sibling as the box is painted.
-
-```js
-frogsprite.shapes.iso_box(cx, cy, w, d, h, colors, { normals: true });
-frogsprite.shapes.iso_tile(cx, cy, w, color, { normals: true });   // the trivial case — all flat
-```
-
-`iso_tile` is the degenerate version: a floor is entirely `flat`, so the whole cave floor is one
-label and costs nothing to emit.
-
-Two things to settle before building it:
-
-- **Which label for the side faces.** `SW`/`SE` match the 2:1 geometry, `W`/`E` give a flatter,
-  harder-edged read that some engines prefer. Pick one, and say why in the docs rather than adding
-  an option for it.
-- **Ordering.** `iso_box` paints left, then right, then top, so the top wins on the ridges. The
-  normal map has to be written in the same order or the ridge pixels will claim a face normal while
-  the albedo shows the top. Same for the painter's-order overlap between neighbouring boxes: whoever
-  wins the colour must win the normal.
-
-Worth doing after the depth sorting above, not before — a lit iso scene whose character cannot walk
-behind a pillar is still the wrong picture, just better lit.
+Skipped, on purpose: a W/E switch, UI, teaching `normals_from_sprite` about boxes, an outline pass.
