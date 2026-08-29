@@ -429,3 +429,50 @@ test('a sprite whose only layer is a link still satisfies the at-least-one floor
 	) as any;
 	assert.equal(back[0].sets[0].sprites[0].layers.length, 1);
 });
+
+test('a ground row round-trips, including row 0 and the derive flag', () => {
+	const doc = pkg({
+		sprites: [
+			{ name: 'tree', layers: [{ name: 'layer-0', pixels: new Uint8Array(64).fill(3) }] },
+			{
+				name: 'scene',
+				layers: [
+					{ name: 'floor', pixels: new Uint8Array(64).fill(1) },        // scenery, no base
+					{ name: 'zero', pixels: new Uint8Array(64), base: 0 },        // a real row, not a falsy no-op
+					{ name: 'derived', pixels: new Uint8Array(64), base: true },
+					{ name: 'link', from: 'tree', base: 12 }
+				]
+			}
+		],
+		animations: []
+	});
+	const once = serialise(doc as any);
+	assert.equal(serialise(parse(once) as any), once, 'parse(serialise(x)) serialises identically');
+	const layers = (parse(once) as any)[0].sets[0].sprites[1].layers;
+	assert.equal('base' in layers[0], false, 'scenery stays scenery — an absent base is not invented');
+	assert.deepEqual(layers.slice(1).map((l: any) => l.base), [0, true, 12]);
+});
+
+test('a junk ground row is dropped the way any other malformed key is', () => {
+	const back = parse(
+		serialise(pkg({
+			sprites: [{ name: 'scene', layers: [
+				{ name: 'a', pixels: new Uint8Array(64), base: -3 },
+				{ name: 'b', pixels: new Uint8Array(64), base: 'feet' },
+				{ name: 'c', pixels: new Uint8Array(64), base: false }
+			] }],
+			animations: []
+		}) as any)
+	) as any;
+	assert.deepEqual(back[0].sets[0].sprites[0].layers.map((l: any) => 'base' in l), [false, false, false]);
+});
+
+test('a frame ground row survives, so a jump cannot be eaten by undo', () => {
+	const back = parse(
+		serialise(pkg({
+			sprites: [{ name: 'a', layers: [{ name: 'layer-0', pixels: new Uint8Array(64).fill(3) }] }],
+			animations: [{ name: 'jump', frames: [{ sprite: 'a', ms: 100, layers: { hero: { dy: -6, base: 30 } } }] }]
+		}) as any)
+	) as any;
+	assert.deepEqual(back[0].sets[0].animations[0].frames[0].layers, { hero: { dy: -6, base: 30 } });
+});

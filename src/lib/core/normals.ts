@@ -58,6 +58,20 @@ export const LABEL_INDEX: number[] = LABEL_HEXES.map((hex) => {
 	return i;
 });
 
+const labelIndex = (name: (typeof LABELS)[number]['name']) =>
+	LABEL_INDEX[LABELS.findIndex((l) => l.name === name)];
+
+/**
+ * Face labels for a 2:1 iso box. SW/SE, not W/E: world +Y / +X project screen-left-and-down /
+ * screen-right-and-down on this lattice (`isoToGrid`: +Y → (-w, +w/2), +X → (+w, +w/2)), so the
+ * sides point SW / SE, not due west / east.
+ */
+export const ISO_FACE = {
+	top: labelIndex('flat'),
+	left: labelIndex('SW'),
+	right: labelIndex('SE')
+};
+
 const byte = (v: number) => Math.round(Math.max(0, Math.min(255, ((v + 1) / 2) * 255)));
 
 /**

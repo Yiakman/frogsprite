@@ -14,8 +14,8 @@ class Editor {
 	packages = $state<Package[]>([]);
 	sel = $state({ pkg: '', set: '', sprite: '', anim: '', layer: '' });
 	color = $state(1);
-	/** Canvas backdrop: a palette index, or 0 for the checkerboard. A view setting, not persisted. */
-	background = $state(0);
+	/** Canvas backdrop: a palette index, 0 for the checkerboard, or `'iso-grid'`. A view setting, not persisted. */
+	background = $state<number | 'iso-grid'>(0);
 	/** Show every painted pixel as this index instead of its own colour. 0 is off. Also a view setting. */
 	silhouette = $state(0);
 	/**
@@ -287,7 +287,12 @@ class Editor {
 			},
 			view: {
 				zoom: this.zoom,
-				background: this.background ? PALETTE[this.background] : 'checkerboard',
+				background:
+					this.background === 'iso-grid'
+						? 'iso-grid'
+						: this.background
+							? PALETTE[this.background]
+							: 'checkerboard',
 				silhouette: this.silhouette ? PALETTE[this.silhouette] : 'off',
 				palette: this.swatchSet || 'cube',
 				raw: this.raw

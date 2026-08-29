@@ -268,3 +268,201 @@ export const triangle = (
 	color: number,
 	fill = true
 ): number => polygon(pixels, grid, [[x0, y0], [x1, y1], [x2, y2]], color, fill);
+
+// ---- 2:1 isometric ---------------------------------------------------------
+// Two pixels across per one pixel down. The diamond and the box are polygons of
+// these vertices; isoToGrid is the same lattice as numbers.
+
+function isoEven(v: unknown, what: string): number {
+	const n = least(v, 2, what);
+	if (n % 2) throw new Error(`${what} must be even (got ${n})`);
+	return n;
+}
+
+/**
+ * N, E, S, W of a 2:1 diamond centred on (cx, cy). w and d must already be even and congruent
+ * mod 4, which is exactly what makes all four half-extents whole. The two axes are (+w, +w/2) and
+ * (-d, +d/2), so N/S are offset sideways by half their difference — a rhombus, not a kite.
+ */
+function isoDiamond(cx: number, cy: number, w: number, d: number): Point[] {
+	const hx = (w + d) >> 1;
+	const hy = (w + d) >> 2;
+	const sx = (w - d) >> 1;
+	const sy = (w - d) >> 2;
+	return [
+		[cx - sx, cy - hy],
+		[cx + hx, cy + sy],
+		[cx + sx, cy + hy],
+		[cx - hx, cy - sy]
+	];
+}
+
+/** Diamond floor tile, width 2w × height w, centred on (cx, cy). `w` even. */
+export function isoTile(
+	pixels: Pixels,
+	grid: number,
+	cx: number,
+	cy: number,
+	w: number,
+	color: number,
+	fill = true
+): number {
+	const span = isoEven(w, 'w');
+	return polygon(
+		pixels,
+		grid,
+		isoDiamond(whole(cx, 'cx'), whole(cy, 'cy'), span, span),
+		color,
+		fill
+	);
+}
+
+/**
+ * Tessellate `isoTile` across the grid: every lattice point whose diamond touches the canvas.
+ * `odd` is the other checkerboard colour; omit it for a solid field. Recolour is clear then this.
+ */
+export function isoFill(
+	pixels: Pixels,
+	grid: number,
+	ox: number,
+	oy: number,
+	w: number,
+	color: number,
+	odd?: number,
+	fill = true
+): number {
+	const span = isoEven(w, 'w');
+	const originX = whole(ox, 'ox');
+	const originY = whole(oy, 'oy');
+	const hy = span / 2;
+	// u = i − j, v = i + j. Range is every diamond whose bbox can still hit [0, grid).
+	const uMin = Math.floor((-span - originX) / span) - 1;
+	const uMax = Math.ceil((grid + span - originX) / span) + 1;
+	const vMin = Math.floor((-hy - originY) / hy) - 1;
+	const vMax = Math.ceil((grid + hy - originY) / hy) + 1;
+	const all = new Set<number>();
+	for (let u = uMin; u <= uMax; u++) {
+		for (let v = vMin; v <= vMax; v++) {
+			if ((u + v) & 1) continue;
+			const i = (u + v) >> 1;
+			const j = (v - u) >> 1;
+			const { dx, dy } = isoToGrid(i, j, { w: span });
+			const cx = originX + dx;
+			const cy = originY + dy;
+			if (cx + span < 0 || cx - span >= grid || cy + hy < 0 || cy - hy >= grid) continue;
+			const c = odd !== undefined && (i + j) & 1 ? odd : color;
+			const cells = new Set<number>();
+			polygonCells(cells, grid, isoDiamond(cx, cy, span, span), fill);
+			paint(pixels, cells, c);
+			for (const k of cells) all.add(k);
+		}
+	}
+	return all.size;
+}
+
+export type IsoColors = {
+	top: number;
+	left?: number;
+	right?: number;
+	outline?: number;
+};
+
+/**
+ * Isometric box. (cx, cy) is the centre of the ground diamond; h extrudes screen-up.
+ * w and d even, ≥ 2, congruent modulo 4. h ≥ 0. Left, then right, then top, then outline.
+ */
+export function isoBox(
+	pixels: Pixels,
+	grid: number,
+	cx: number,
+	cy: number,
+	w: number,
+	d: number,
+	h: number,
+	colors: IsoColors
+): number {
+	if (colors == null || typeof colors.top !== 'number')
+		throw new Error('iso_box needs colors.top');
+	const ww = isoEven(w, 'w');
+	const dd = isoEven(d, 'd');
+	if ((ww - dd) % 4)
+		throw new Error(
+			`w and d must be congruent modulo 4 so 2:1 vertices land on pixels (got w=${ww}, d=${dd})`
+		);
+	const hh = least(h, 0, 'h');
+	const ox = whole(cx, 'cx');
+	const oy = whole(cy, 'cy');
+	const base = isoDiamond(ox, oy, ww, dd);
+	const top = isoDiamond(ox, oy - hh, ww, dd);
+	const all = new Set<number>();
+
+	const face = (pts: Point[], color: number | undefined) => {
+		if (color === undefined) return;
+		const cells = new Set<number>();
+		polygonCells(cells, grid, pts, true);
+		paint(pixels, cells, color);
+		for (const i of cells) all.add(i);
+	};
+
+	if (hh > 0) {
+		face([top[3], top[2], base[2], base[3]], colors.left); // west
+		face([top[2], top[1], base[1], base[2]], colors.right); // east
+	}
+	face(top, colors.top);
+
+	if (colors.outline !== undefined) {
+		const edges: Point[][] = [
+			[top[0], top[1]],
+			[top[1], top[2]],
+			[top[2], top[3]],
+			[top[3], top[0]]
+		];
+		if (hh > 0) {
+			edges.push([top[1], base[1]], [top[2], base[2]], [top[3], base[3]]);
+			edges.push([base[1], base[2]], [base[2], base[3]]);
+		}
+		for (const [a, b] of edges) {
+			const cells = new Set<number>();
+			lineCells(cells, grid, a[0], a[1], b[0], b[1]);
+			paint(pixels, cells, colors.outline);
+			for (const i of cells) all.add(i);
+		}
+	}
+	return all.size;
+}
+
+/**
+ * Screen offset of a 2:1 world point, in the units `isoTile` and `isoBox` already take.
+ *
+ *   isoToGrid(i, j, { w: 8 })   // tile (i, j) of a floor of 16 x 8 diamonds
+ *   isoToGrid(0, 0, 4)          // 4px straight up, on any size of tile
+ *
+ * `w` is the tile half-width, meaning exactly what it means in `isoTile(cx, cy, w)` — so a lattice
+ * and the shapes standing on it are said in one unit instead of two. It defaults to `2`, the unit
+ * cell, which is what this returned before it took one, so every existing call is unchanged. Even
+ * and >= 2 for the reason `isoTile` insists on it: `dy` multiplies by `w / 2`, and an odd `w` would
+ * put every other row of the lattice on a half pixel.
+ *
+ * `z` is the one term that does **not** scale with `w`. It is pixels, the same unit as `isoBox`'s
+ * `h`, so a jump is the same jump whatever the tiles measure. Scaling it would quietly redefine
+ * every `isoToGrid(x, y, z)` ever written, the moment a `w` appeared next to it.
+ *
+ * ponytail: one `w`, no `d`. `isoDiamond` does handle `w != d`, so a rhombus lattice is already
+ * drawable and this leaves it unplaceable — deliberately, since square tiles are the case that
+ * actually got built by hand. Add `{ d }` here, defaulting to `w`, if anyone lays one out.
+ */
+export function isoToGrid(
+	x: number,
+	y: number,
+	zOrOpts: number | { w?: number; z?: number } = 0
+): { dx: number; dy: number } {
+	// one option bag rather than a fourth argument: `{ w, z }` already says everything a trailing
+	// opts could, and a parameter whose meaning depends on the type of the one before it is worse
+	const spec = typeof zOrOpts === 'object' && zOrOpts !== null ? zOrOpts : { z: zOrOpts };
+	const w = spec.w === undefined ? 2 : isoEven(spec.w, 'w');
+	const xx = whole(x, 'x');
+	const yy = whole(y, 'y');
+	// `=== undefined` rather than `??`, so an explicit null still throws instead of reading as 0
+	const zz = whole(spec.z === undefined ? 0 : spec.z, 'z');
+	return { dx: (xx - yy) * w, dy: (xx + yy) * (w / 2) - zz };
+}

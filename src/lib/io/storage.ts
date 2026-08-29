@@ -66,6 +66,19 @@ function readOffset(v: unknown): number | undefined {
 	return Number.isFinite(n) && n !== 0 ? n : undefined;
 }
 
+/**
+ * A layer's ground row: `true` to derive it, or the row itself. Deliberately not `readOffset` —
+ * that drops zero as a no-op offset, and row 0 is a real place to stand.
+ */
+function readBase(v: unknown): number | true | undefined {
+	if (v === true) return true;
+	// `typeof` first, not Number(): `false`, `null` and `''` all coerce to 0, and 0 is a real row
+	// here — so the usual lenient coercion would turn "no base" into "stands on the top row"
+	if (typeof v !== 'number') return undefined;
+	const n = Math.round(v);
+	return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
 function readLayer(v: any, cells: number): Layer | null {
 	const n = name(v?.name);
 	if (!n) return null;
@@ -88,6 +101,8 @@ function readLayer(v: any, cells: number): Layer | null {
 	// is unchanged, so a `hidden` that didn't persist would make hide_layer un-undoable *and* let the
 	// next undo bring the layer back visible
 	if (v.hidden === true) layer.hidden = true;
+	const base = readBase(v.base);
+	if (base !== undefined) layer.base = base;
 	return layer;
 }
 
@@ -168,7 +183,11 @@ export const setPayload = (set: SpriteSet) => ({
 			...(isLinked(l)
 				? { from: l.from, ...(l.dx && { dx: l.dx }), ...(l.dy && { dy: l.dy }), ...(l.wrap && { wrap: true }) }
 				: { pixels: [...l.pixels] }),
-			...(l.hidden && { hidden: true })
+			...(l.hidden && { hidden: true }),
+			// `!== undefined` rather than the falsy test the keys above use: `base: 0` is a layer that
+			// stands on the top row, not a layer with no base, and dropping it here would make
+			// parse(serialise(x)) differ from x
+			...(l.base !== undefined && { base: l.base })
 		}))
 	})),
 	animations: set.animations.map((a) => ({ name: a.name, frames: a.frames.map((f) => ({ ...f })) }))

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { ISO_FACE } from './normals.ts';
 import * as shapes from './shapes.ts';
 
 /** Painted cells as (x,y) pairs, so an assertion reads like the picture. */
@@ -158,4 +159,159 @@ test('a thick line is clipped at the edge like everything else', () => {
 	shapes.line(px, 5, 0, 0, 4, 0, 2, 3); // hugging the top edge, so a third of the width falls off
 	assert.equal(px[0], 2, 'the line itself lands');
 	assert.equal(px.filter((v) => v).length, 10, 'two rows survive, the one above is dropped');
+});
+
+test('iso_tile is a 2:1 diamond, 4 wide × 2 tall at w=2', () => {
+	const px = new Array(64).fill(0);
+	const n = shapes.isoTile(px, 8, 4, 4, 2, 3);
+	const cells = drawn(px, 8);
+	assert.ok(n > 0);
+	assert.equal(px[3 * 8 + 4], 3, 'north vertex');
+	assert.equal(px[4 * 8 + 6], 3, 'east vertex');
+	assert.equal(px[5 * 8 + 4], 3, 'south vertex');
+	assert.equal(px[4 * 8 + 2], 3, 'west vertex');
+	const xs = cells.map(([x]) => x);
+	const ys = cells.map(([, y]) => y);
+	assert.equal(Math.max(...xs) - Math.min(...xs), 4, 'width 2w');
+	assert.equal(Math.max(...ys) - Math.min(...ys), 2, 'height w');
+	assert.throws(() => shapes.isoTile(new Array(64).fill(0), 8, 4, 4, 3, 3), /even/);
+	assert.throws(() => shapes.isoTile(new Array(64).fill(0), 8, 4, 4, 1, 3), /at least 2/);
+});
+
+test('iso_box paints left, then right, then top — top wins on the ridges', () => {
+	const px = new Array(32 * 32).fill(0);
+	shapes.isoBox(px, 32, 16, 20, 8, 8, 6, { top: 1, left: 2, right: 3 });
+	const topY = 20 - 6;
+	assert.equal(px[topY * 32 + 16], 1, 'centre of the top diamond');
+	assert.equal(px[(topY + 4) * 32 + 16], 1, 'south vertex of the top, where the sides meet');
+	assert.ok(px.includes(2) && px.includes(3), 'left and right faces painted');
+});
+
+test('iso_box face labels follow the same paint order — the ridge is the top, not a side', () => {
+	const albedo = new Array(32 * 32).fill(0);
+	const nrm = new Array(32 * 32).fill(0);
+	const geom = [32, 16, 20, 8, 8, 6] as const;
+	shapes.isoBox(albedo, ...geom, { top: 1, left: 2, right: 3 });
+	shapes.isoBox(nrm, ...geom, { top: ISO_FACE.top, left: ISO_FACE.left, right: ISO_FACE.right });
+	const topY = 20 - 6;
+	assert.equal(nrm[topY * 32 + 16], ISO_FACE.top, 'centre of the top is flat');
+	assert.equal(nrm[(topY + 4) * 32 + 16], ISO_FACE.top, 'south ridge is the top, not a side');
+	const left = albedo.findIndex((v) => v === 2);
+	assert.ok(left >= 0, 'left face has pixels');
+	assert.equal(nrm[left], ISO_FACE.left, 'a left-face interior pixel is SW');
+	const right = albedo.findIndex((v) => v === 3);
+	assert.ok(right >= 0);
+	assert.equal(nrm[right], ISO_FACE.right, 'a right-face interior pixel is SE');
+});
+
+test('iso_box skipped faces write no labels', () => {
+	const nrm = new Array(32 * 32).fill(0);
+	shapes.isoBox(nrm, 32, 16, 20, 8, 8, 6, { top: ISO_FACE.top, right: ISO_FACE.right });
+	assert.ok(!nrm.includes(ISO_FACE.left), 'omitting left paints no SW');
+	assert.ok(nrm.includes(ISO_FACE.top) && nrm.includes(ISO_FACE.right));
+});
+
+test('a transparent iso_box face leaves a hole in the map too', () => {
+	const albedo = new Array(32 * 32).fill(0);
+	const nrm = new Array(32 * 32).fill(0);
+	const geom = [32, 16, 20, 8, 8, 6] as const;
+	shapes.isoBox(albedo, ...geom, { top: 0, left: 2, right: 3 });
+	shapes.isoBox(nrm, ...geom, { top: 0, left: ISO_FACE.left, right: ISO_FACE.right });
+	const topY = 20 - 6;
+	assert.equal(albedo[topY * 32 + 16], 0, 'the art has a hole');
+	assert.equal(nrm[topY * 32 + 16], 0, 'the map has a hole where the art does');
+	const left = albedo.findIndex((v) => v === 2);
+	assert.ok(left >= 0);
+	assert.equal(nrm[left], ISO_FACE.left, 'an opaque face is still labelled');
+});
+
+test('iso_box with h=0 is the top tile alone', () => {
+	const tile = new Array(256).fill(0);
+	const box = new Array(256).fill(0);
+	shapes.isoTile(tile, 16, 8, 8, 4, 7);
+	shapes.isoBox(box, 16, 8, 8, 4, 4, 0, { top: 7, left: 2, right: 3 });
+	assert.deepEqual(tile, box, 'sides have zero height, so they paint nothing');
+	assert.throws(
+		() => shapes.isoBox(new Array(256).fill(0), 16, 8, 8, 6, 4, 2, { top: 1 }),
+		/modulo 4/
+	);
+});
+
+test('isoToGrid is the 2:1 lattice', () => {
+	assert.deepEqual(shapes.isoToGrid(1, 0, 0), { dx: 2, dy: 1 });
+	assert.deepEqual(shapes.isoToGrid(0, 1, 0), { dx: -2, dy: 1 });
+	assert.deepEqual(shapes.isoToGrid(0, 0, 4), { dx: 0, dy: -4 });
+	assert.deepEqual(shapes.isoToGrid(0, 0), { dx: 0, dy: 0 });
+	assert.throws(() => shapes.isoToGrid(0.5, 0, 0), /whole number/);
+});
+
+test('a w != d iso tile is still a rhombus, not a kite', () => {
+	const px = new Array(40 * 40).fill(0);
+	shapes.isoBox(px, 40, 20, 20, 8, 4, 0, { top: 1 });
+	// the two axes are (+8, +4) and (-4, +2) about the centre, so the four vertices are a
+	// parallelogram: N + S === E + W === twice the centre
+	const at = (x: number, y: number) => px[y * 40 + x];
+	assert.equal(at(18, 17), 1, 'north vertex');
+	assert.equal(at(26, 21), 1, 'east vertex');
+	assert.equal(at(22, 23), 1, 'south vertex — (w - d) / 2 right of north, not above it');
+	assert.equal(at(14, 19), 1, 'west vertex');
+	const cells = drawn(px, 40);
+	const xs = cells.map(([x]) => x);
+	const ys = cells.map(([, y]) => y);
+	assert.equal(Math.max(...xs) - Math.min(...xs), 12, 'w + d across');
+	assert.equal(Math.max(...ys) - Math.min(...ys), 6, '(w + d) / 2 down');
+});
+
+test('isoToGrid takes the tile size iso_tile takes, and defaults to the unit cell', () => {
+	assert.deepEqual(shapes.isoToGrid(1, 0, { w: 8 }), { dx: 8, dy: 4 }, 'one 16x8 tile down-right');
+	assert.deepEqual(shapes.isoToGrid(0, 1, { w: 8 }), { dx: -8, dy: 4 }, 'and one down-left');
+	assert.deepEqual(shapes.isoToGrid(1, 0), shapes.isoToGrid(1, 0, { w: 2 }), 'w defaults to the unit cell');
+	// z is pixels, so the same lift on any lattice — it is the one term w does not scale
+	assert.deepEqual(shapes.isoToGrid(0, 0, { w: 8, z: 4 }), { dx: 0, dy: -4 });
+	assert.deepEqual(shapes.isoToGrid(0, 0, 4), { dx: 0, dy: -4 }, 'and the bare-number form still means z');
+	assert.throws(() => shapes.isoToGrid(1, 0, { w: 3 }), /even/, 'an odd w would half-pixel every other row');
+	assert.throws(() => shapes.isoToGrid(1, 0, { w: 0 }), /at least 2/);
+	assert.throws(() => shapes.isoToGrid(1, 0, { w: 8, z: null as any }), /whole number/, 'null z is still a mistake');
+});
+
+test('a floor placed with isoToGrid is exactly the lattice iso_tile tessellates', () => {
+	// the whole point of the option: the placement helper and the shape now agree without arithmetic
+	const W = 8, G = 64;
+	const px = new Array(G * G).fill(0);
+	for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) {
+		const { dx, dy } = shapes.isoToGrid(i, j, { w: W });
+		shapes.isoTile(px, G, 32 + dx, 8 + dy, W, 1);
+	}
+	let holes = 0;
+	for (let y = 0; y < G; y++) for (let x = 0; x < G; x++)
+		if (!px[y * G + x] && Math.abs(x - 32) / 2 + Math.abs(y - 24) < 12) holes++;
+	assert.equal(holes, 0, 'neighbours share edges, so the field has no gaps');
+});
+
+test('isoFill covers the grid with no gaps', () => {
+	const W = 8, G = 64, OX = 32, OY = 8;
+	const px = new Array(G * G).fill(0);
+	const n = shapes.isoFill(px, G, OX, OY, W, 1);
+	assert.equal(px.filter((v) => v === 0).length, 0, 'the lattice covers the square');
+	assert.equal(n, G * G, 'overlap counted once');
+});
+
+test('isoFill checkerboard uses both colours', () => {
+	const W = 8, G = 32, OX = 16, OY = 8;
+	const px = new Array(G * G).fill(0);
+	shapes.isoFill(px, G, OX, OY, W, 1, 2);
+	assert.ok(px.includes(1) && px.includes(2));
+	assert.equal(px.filter((v) => v === 0).length, 0);
+	const { dx, dy } = shapes.isoToGrid(0, 0, { w: W });
+	assert.equal(px[(OY + dy) * G + (OX + dx)], 1, 'tile (0,0) is the even colour');
+	const next = shapes.isoToGrid(1, 0, { w: W });
+	assert.equal(px[(OY + next.dy) * G + (OX + next.dx)], 2, 'tile (1,0) is odd');
+});
+
+test('isoFill { fill: false } paints outline only', () => {
+	const W = 8, G = 32, OX = 16, OY = 16;
+	const px = new Array(G * G).fill(0);
+	shapes.isoFill(px, G, OX, OY, W, 3, undefined, false);
+	assert.equal(px[OY * G + OX], 0, 'centre of tile (0,0) is inside, not on the edge');
+	assert.ok(px.includes(3), 'edges are painted');
 });

@@ -8,7 +8,14 @@
 	import { editor } from '../state/store.svelte';
 
 	// the swatches that set these live in the context bar; the canvas only reports them
-	const backdrop = $derived(editor.background ? PALETTE[editor.background] : null);
+	const iso = $derived(editor.background === 'iso-grid');
+	const backdrop = $derived(
+		editor.background === 'iso-grid'
+			? null
+			: editor.background
+				? PALETTE[editor.background]
+				: null
+	);
 	const silhouette = $derived(editor.silhouette ? PALETTE[editor.silhouette] : null);
 
 	let painting = $state(false);
@@ -143,6 +150,7 @@
 			<div
 				class="grid"
 				class:live
+				class:iso
 				class:composed={showingComposite}
 				style:--n={grid}
 				style:--zoom={editor.zoom}
@@ -214,7 +222,7 @@
 				{/if}
 				<!-- named, not just shown: a screenshot has to say what it was taken under -->
 				<span class="on" data-testid="backdrop"
-					>· on {backdrop ?? 'checkerboard'}{silhouette ? ` · silhouette ${silhouette}` : ''}</span
+					>· on {iso ? 'iso-grid' : backdrop ?? 'checkerboard'}{silhouette ? ` · silhouette ${silhouette}` : ''}</span
 				>
 				{#if editor.frame >= 0}
 					<span class="on" data-testid="esc-hint">· Esc leave frame</span>
@@ -252,14 +260,22 @@
 					<button
 						class="sw"
 						class:checker={!c}
-						class:sel={backdrop === c}
+						class:sel={!iso && backdrop === c}
 						style:background={c}
-						aria-pressed={backdrop === c}
+						aria-pressed={!iso && backdrop === c}
 						aria-label="{c ?? 'checkerboard'} background"
 						title="Show {c ?? 'the checkerboard'} through transparent pixels"
 						onclick={() => fs.background(c)}
 					></button>
 				{/each}
+				<button
+					class="sw iso-sw"
+					class:sel={iso}
+					aria-pressed={iso}
+					aria-label="isometric grid background"
+					title="Show a 2:1 isometric grid through transparent pixels"
+					onclick={() => fs.background('iso-grid')}
+				></button>
 				{#each ['#000000', '#ffffff'] as c (c)}
 					<button
 						class="sw sil"
@@ -341,6 +357,19 @@
 				transparent 1px calc(100% / var(--n))
 			),
 			repeating-linear-gradient(to bottom, #ffffff12 0 1px, transparent 1px calc(100% / var(--n)));
+	}
+	/* 2:1 diamond lattice, one diamond per iso_to_grid unit cell. The period is measured along the
+	   gradient line, which on a square box at this angle is 3/sqrt5 of a side rather than a side —
+	   so a step of 4/sqrt5 cells is 400% / 3n of it, not 100% / n. */
+	.grid.iso {
+		background-image: none;
+		background-color: #252525;
+	}
+	.grid.iso::after {
+		--iso-step: calc(400% / var(--n) / 3);
+		background-image:
+			repeating-linear-gradient(26.565deg, #ffffff18 0 1px, transparent 1px var(--iso-step)),
+			repeating-linear-gradient(-26.565deg, #ffffff18 0 1px, transparent 1px var(--iso-step));
 	}
 	.cursor {
 		position: absolute;
@@ -454,6 +483,12 @@
 			#232323 270deg
 		);
 		background-size: 50% 50%;
+	}
+	.sw.iso-sw {
+		background-color: #252525;
+		background-image:
+			linear-gradient(26.565deg, transparent 40%, #ffffff44 40% 45%, transparent 45%),
+			linear-gradient(-26.565deg, transparent 40%, #ffffff44 40% 45%, transparent 45%);
 	}
 	/* round = the sprite, square = what is behind it */
 	.sw.sil {

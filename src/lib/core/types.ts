@@ -36,6 +36,13 @@ export type LayerView = {
 	cy?: number;
 	flipX?: boolean;
 	flipY?: boolean;
+	/**
+	 * This frame's ground row for the layer, overriding the layer's own — see `Painted.base`. The
+	 * one case that needs it is a jump: `iso_to_grid` folds height into `dy` (`dy = (x + y) - z`),
+	 * so a character in the air would otherwise sort as though he had walked backwards. Say where
+	 * his feet still are and the lift stops moving him in depth.
+	 */
+	base?: number;
 };
 /** Per-layer overrides for one frame, keyed by layer name. Layers not named are left alone. */
 export type Arrangement = Record<string, LayerView>;
@@ -55,7 +62,7 @@ export type Frame = {
 	layers?: Arrangement;
 };
 /** One image in a sprite's stack. `hidden` is skipped when compositing but keeps its pixels. */
-export type Painted = { name: string; pixels: Uint8Array; hidden?: boolean };
+export type Painted = { name: string; pixels: Uint8Array; hidden?: boolean; base?: number | true };
 /**
  * A layer that shows another sprite in the same set, live — it holds no pixels of its own, only the
  * name of what to draw. Repaint that sprite and every layer linked to it follows, which is the whole
@@ -75,7 +82,22 @@ export type Linked = {
 	dy?: number;
 	wrap?: boolean;
 	hidden?: boolean;
+	base?: number | true;
 };
+
+/**
+ * Where this layer meets the ground, as a row in its own art — the shadow under a character, the
+ * foot of a pillar. Present makes the layer an **entity**: `flatten` composites it in depth order
+ * against the other entities instead of by stack position, so a character walks behind what is
+ * further back and in front of what is nearer. `true` derives it from the lowest painted row,
+ * which is what a sprite drawn standing already gives you.
+ *
+ * Absent means **scenery** — drawn first, in stack order. That is the default and what every layer
+ * written before this is, so a stack with no `base` anywhere composites exactly as it always did.
+ *
+ * Unrelated to `BASE` in layers.ts, which is the name of a sprite's first layer.
+ */
+export type GroundRow = number | true;
 /**
  * A union rather than an optional `from` on one shape, for the reason layers.ts gives about
  * `flatten` never handing back a live buffer: with `pixels` always present, the twenty painting

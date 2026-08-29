@@ -141,6 +141,11 @@ at the edges. `strength` is the **bevel threshold**, not a depth — every direc
 tilt, so raising it bevels more of the sprite rather than steepening what is already bevelled; `blur`
 is how far in from the edge the bevel reaches.
 
+That bevel is the wrong tool for an `iso_box`. A box is three flat facets, and silhouette-bevelling
+returns a rounded pillow. `{ normals: true }` on `iso_box` / `iso_tile` / `iso_fill` writes the `.n`
+sibling as the shape paints — see [Isometric](#isometric). A transparent face is a hole, the same
+invariant `normals_from_sprite` keeps.
+
 **Stored pixels are direction labels, not normals.** The cube has no `0x80` channel level, so
 `#8080ff` — the canonical flat normal, and the commonest colour in any normal map — is not a palette
 entry; `color('#8080ff')` lands on `#9999ff`, a normal tilted up and left, and every neutral pixel
@@ -210,16 +215,19 @@ Where two layers overlap the higher one wins; transparent (index `0`) is the hol
 underneath show through. There is no opacity and no blend mode, and there cannot be: pixels are
 palette *indices*, so there is nothing meaningful to average between index 3 and index 9.
 
-- `new_layer(name?, { at, above, below })` — add a layer and select it. `at: 'top' | 'bottom'`, or
+- `new_layer(name?, { at, above, below, base })` — add a layer and select it. `at: 'top' | 'bottom'`, or
   `above: 'road'` / `below: 'fg'`. With none of them it lands above the *active* layer — which is a
-  cursor an earlier `select_layer` moved, so say where you mean when building a stack in several calls
+  cursor an earlier `select_layer` moved, so say where you mean when building a stack in several calls.
+  `base` makes it an entity sorted by depth rather than by stack position — see [Depth](#depth)
 - `select_layer(name)` — which layer painting lands on
 - `delete_layer(name)` — remove it and its pixels; a sprite must keep at least one
 - `hide_layer(name?, on = true)` — hide one layer, or show it again with `hide_layer(name, false)`.
   Defaults to the active layer. A hidden layer keeps its pixels: it is skipped when the sprite is
   composited, not erased
 - `set_layers([...])` — reorder, and show/hide several at once, bottom first. Every existing layer
-  must appear exactly once: this rearranges the stack, it never destroys part of it
+  must appear exactly once: this rearranges the stack, it never destroys part of it. Entries also
+  take `base`, which **merges** where `hidden` replaces — a plain reorder cannot quietly turn an
+  entity back into scenery
 - `tile_layer(name?, { period, from })` — repeat the layer's leftmost `period` columns across the
   grid. Draw one motif, get the rest; `period` must divide the grid. Use it before `scroll_layer`,
   because it makes the repeat a **guarantee** rather than a hope
@@ -238,7 +246,7 @@ palette *indices*, so there is nothing meaningful to average between index 3 and
   frogsprite.cycle_layers(['pose-0', 'pose-1', 'pose-2', 'pose-3']);   // one per frame, round and round
   frogsprite.cycle_layers(['step-a', 'step-b'], { every: 4 });         // held four frames each
   ```
-- `link_layer(from, { name, dx, dy, wrap, at, above, below, sprite })` — show another sprite as a
+- `link_layer(from, { name, dx, dy, wrap, at, above, below, sprite, base })` — show another sprite as a
   layer of this one, **live**. Repaint that sprite and every layer linked to it changes with it, which
   is the whole difference from `stamp`. `dx`/`dy` place it, so the same drawing appears as many times
   as you like at different offsets
@@ -290,12 +298,67 @@ The rules worth knowing:
   a frame's value replaces the link's rather than adding to it.)
 - **Links can nest** — a wheel linked into a cart, the cart linked into a scene. A loop is refused
   when you make it, and drawn as nothing if one ever reaches the canvas.
+- **A link is a still.** Nested links draw, but a frame's `layers` cannot reach inside the linked
+  sprite — `cycle_layers` on `skel` does not show through a link into `scene`. To animate a character
+  in a scene, link each pose and `cycle_layers` those links (they share `dx` / `base`; recolour the
+  source poses and every instance follows). Two characters are two rings; a second `cycle_layers`
+  merges. Keeping the pose layers on the scene sprite also works; wrapping them in one `skel` link
+  does not.
 - **`delete_sprite` refuses** while a link still shows it, naming them. `{ force: true }` bakes those
   layers rather than deleting them, so the picture survives.
+
+```js
+// a walking character in a scene — one link per pose, not one skel wrapping them
+frogsprite.link_layer('skel-0', { name: 'hero',   dx: 40, dy: 24, base: true });
+frogsprite.link_layer('skel-1', { name: 'hero-1', dx: 40, dy: 24, base: true });
+frogsprite.link_layer('skel-2', { name: 'hero-2', dx: 40, dy: 24, base: true });
+frogsprite.link_layer('skel-3', { name: 'hero-3', dx: 40, dy: 24, base: true });
+frogsprite.cycle_layers(['hero', 'hero-1', 'hero-2', 'hero-3']);
+```
 
 Reach for `stamp` instead when you want a one-off you will then paint over: it copies pixels once and
 the connection is gone. `link_layer` is for anything you will still edit, or repeat.
 
+
+#### Depth
+
+A stack composites bottom to top, which is the wrong order for a scene drawn in perspective: a
+character on a layer above the floor is in front of *everything*, so he can never walk behind a
+pillar. Give a layer a **`base`** — the row in its own art where it meets the ground, the shadow
+under a character or the foot of a post — and it stops being sorted by stack position:
+
+```js
+frogsprite.link_layer('hero', { dx: 40, dy: 24, base: true });   // derive it from the lowest painted row
+frogsprite.link_layer('pillar', { dx: 72, dy: 40, base: true });
+```
+
+- **No `base` is scenery.** It draws first, in stack order, exactly as every layer did before this
+  existed. A floor belongs here — its own lowest painted row is the bottom of the canvas, so a floor
+  that derived a ground row would sort in front of everything standing on it.
+- **A `base` makes it an entity**, drawn after all the scenery and ordered against the other
+  entities by `base + dy`. `true` derives the row from the lowest painted pixel, which is what a
+  sprite drawn standing already gives you; a number says it outright.
+- **A frame's `dy` moves it in depth**, which is the point: a walk cycle that already slides a
+  character across the floor now also reorders him against the props, with nothing added per frame.
+
+Sorting on the ground row alone is exact rather than nearly right, and only because of the
+projection: in 2:1 a thing standing at world `(i, j)` sits at screen `y = OY + (i + j)·w/2`, which
+rises strictly with `i + j` — and `i + j` **is** iso depth. Two entities on the same row therefore
+share an `i + j`, differ in `x`, and cannot overlap, so the tie is free and stable. Nothing anywhere
+needs to know `i` or `j`: placement stays in screen pixels.
+
+Two things it deliberately does not do:
+
+- **It cannot sort inside one layer.** A floor with its props painted into it is one layer and one
+  depth. Props have to be their own layers — usually `link_layer` per prop — to take part. Painting
+  a whole tiled floor flat is still right; a ground plane never sorts.
+- **A lift is not a step back.** `iso_to_grid` folds height into `dy` (`dy = (x + y) - z`), so a
+  jumping character would otherwise sort as though he had walked away from the camera. Override the
+  frame's `base` with where his feet still are:
+
+  ```js
+  layers: { hero: { dx, dy: dy - jump, base: 32 + jump } }   // rises, stays at the same depth
+  ```
 
 #### Moving layers per frame — parallax
 
@@ -382,6 +445,7 @@ speed turns into a refused one for reasons nothing on screen explains. `tile_lay
 
 `hidden` is a third override, and it beats the layer's own setting in both directions: a frame can
 show a layer the sprite hides, or hide one it shows. That is how one sprite carries two arm poses.
+`base` is a fourth, and beats the layer's own the same way — see [Depth](#depth).
 
 An arrangement also takes **the same geometry and colour keys `fx` does** — `invert`, `hue`,
 `rotate`, `flipX`, `flipY` — applied to that layer alone:
@@ -507,8 +571,8 @@ All painting commands take an optional trailing `sprite` name and default to the
   hand-drawing a symmetric character twice, and it guarantees an exact silhouette. Stamp asymmetric
   detail (spots, highlights, a turned head) *after* reflecting.
 - `rotate(angle, opts?)` — turn the sprite. `angle` is in degrees and must be a **multiple of 30**
-  (`45` throws); **positive is clockwise**, like CSS. `opts` is `{ cx, cy, sprite }`. Returns
-  `{ sprite, angle, center, solid, lost }`: `solid` is how many non-transparent cells the sprite has
+  (`45` throws); **positive is clockwise**, like CSS. `opts` is `{ cx, cy, sprite, layer }`. Returns
+  `{ sprite, layer, angle, center, solid, lost }`: `solid` is how many non-transparent cells the sprite has
   now, and `lost` is how many non-transparent cells **no destination sampled** — clipped at the edge,
   or dropped in the resample. `lost` is never negative, and it is not a net change: nearest-neighbour
   resampling *duplicates* cells as well as dropping them, so `solid` can go up and `lost` be non-zero
@@ -556,8 +620,8 @@ All painting commands take an optional trailing `sprite` name and default to the
 #### Shapes
 
 `frogsprite.shapes.*` fills a whole form in one call. Each takes the colour, then an options object
-`{ fill = true, sprite }` — so `fill: false` draws the outline only, and `sprite` targets one by name
-like every other painting command.
+`{ fill = true, sprite, layer }` — so `fill: false` draws the outline only, and `sprite` / `layer`
+target one by name like `stamp` and `shift`. Without `layer` it still paints the selected layer.
 
 | call | |
 | --- | --- |
@@ -568,9 +632,13 @@ like every other painting command.
 | `shapes.ellipse(cx, cy, rx, ry, color, opts?)` | separate radii |
 | `shapes.triangle(x0, y0, x1, y1, x2, y2, color, opts?)` | three vertices |
 | `shapes.polygon(points, color, opts?)` | `points` is `[[x, y], …]`, three or more |
+| `shapes.iso_tile(cx, cy, w, color, opts?)` | 2:1 diamond floor tile, width `2w` × height `w`. `w` even |
+| `shapes.iso_fill(ox, oy, w, color, opts?)` | tessellate `iso_tile` across the grid from origin `(ox, oy)`. `{ odd }` is the other checkerboard colour |
+| `shapes.iso_box(cx, cy, w, d, h, colors, opts?)` | isometric block; `colors` is `{ top, left?, right?, outline? }` |
 
-Each returns `{ sprite, shape, painted }`, where `painted` counts the cells actually written —
-overlap is counted once, and anything clipped off the canvas is not counted at all.
+Each returns `{ sprite, layer, shape, painted }` — `layer` is the one it landed on, which is worth
+reading back when you did not name it — and `painted` counts the cells actually written: overlap is
+counted once, and anything clipped off the canvas is not counted at all.
 
 ```js
 frogsprite.shapes.ellipse(8, 10, 6, 4, '#22aa33');        // body
@@ -598,7 +666,86 @@ plotting pixels by hand, and much easier to correct.
 
 In the UI these are the shape buttons in the tool rail (the icon column left of the sidebar): one
 dialog per shape, filled, in the current colour. Outlines are JS-only. The rail's **Rotate** button
-takes an angle, and optionally a `cx` and `cy` centre, and warns when a turn loses pixels.
+takes an angle, and optionally a `cx` and `cy` centre, and warns when a turn loses pixels. `iso_tile`,
+`iso_fill` and `iso_box` are JS-only, like `rect`.
+
+#### Isometric
+
+2:1 dimetric: two pixels across per one pixel down. Draw a floor with `iso_fill`; a single diamond
+or a box with `iso_tile` / `iso_box`; place with `iso_to_grid`.
+
+```js
+const W = 8, OX = 64, OY = 20;                     // 16 x 8 tiles, and where (0, 0) sits
+frogsprite.new_layer('floor', { at: 'bottom' });   // scenery: no `base`, so it stays underfoot
+frogsprite.shapes.iso_fill(OX, OY, W, '#666699', { odd: '#669999', layer: 'floor', normals: true });
+const wall = frogsprite.iso_to_grid(3, -1, { w: W });        // the same lattice holds boxes
+frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
+  top: '#99cccc', left: '#669999', right: '#336666'
+}, { normals: true });
+```
+
+- **`iso_fill(ox, oy, w, color)`** — every lattice point whose diamond touches the grid, in one undo
+  step. `{ odd }` is the other checkerboard colour; omit it for a solid field. `{ fill: false }` is
+  grout, same as `iso_tile`. Recolour is `clear` then this — the floor is scenery, baked on purpose.
+  `tile_layer` stays 1D: a cartesian period is the wrong shape for a diamond lattice, and a live
+  tiled layer would be one link per cell.
+- **`iso_tile(cx, cy, w)`** — diamond centred on `(cx, cy)`, width `2w`, height `w`. `w` even and ≥ 2.
+- **`iso_box(cx, cy, w, d, h, colors)`** — `(cx, cy)` is the centre of the **ground** diamond; `h`
+  extrudes screen-up. `w` and `d` even, ≥ 2, congruent modulo 4 (so the 2:1 vertices land on pixels).
+  `h === 0` is just the top tile. Paint order is left, right, top, then outline — top wins on the
+  ridges. Missing `left` / `right` / `outline` skips that face.
+  - **`{ normals: true }`** writes the `.n` sibling as the box paints, so it lights as three facets
+    instead of a bevelled pillow. Top is `flat`; the sides are `SW` / `SE` because world `+Y` / `+X`
+    point screen-left-and-down / screen-right-and-down on this lattice, not due west / east. Outline
+    is a colour, not a surface, and is skipped on the map. A transparent face punches a hole, same
+    as the art. The sibling is one flat layer: **last write wins, in call order**, not stack order
+    and not depth order. The albedo composites floor-then-walls by stack; if you paint the walls
+    first then the floor, the map has floor over walls. Paint in composite order, or flatten first.
+    An entity with a `base` has no single composite at paint time — that is why a per-layer
+    arrangement already cannot export a normal map. `iso_tile` / `iso_fill` take the same flag: the
+    whole floor is `flat`.
+  - **`outline` is for a lone box** — a crate, a pillar, a stalagmite. It draws the whole box: four
+    top edges, three verticals, two base edges. On a **tessellated run those internal edges are the
+    seams you do not want**: a wall of outlined boxes reads as a row of separate objects rather than
+    one mass, and if the outline colour happens to match what is behind the wall the seams read as
+    gaps instead of lines. Omit it on a run and the three face shades carry the form — which is what
+    the wall above does.
+  - The opposite is true of **`iso_tile`**, where the shared edges are the point: outlining every
+    floor tile in a darker shade (`{ fill: false }`, a second pass) reads as grout. A floor should
+    show its tiling; a wall should not show its blocks.
+- **`iso_to_grid(x, y, z?)`** or **`iso_to_grid(x, y, { w, z })`** → `{ dx, dy }`, a screen offset
+  to add to wherever you put the origin. Integers only.
+  - **`w` is the same tile half-width `iso_tile` takes**, so a lattice and the shapes standing on it
+    are said in one unit: `iso_to_grid(i, j, { w: 8 })` steps one 16×8 tile per `i`, and feeding
+    `dx`/`dy` straight to `iso_tile` / `iso_box` places them with no arithmetic in between. Even and ≥ 2,
+    the constraint `iso_tile` already has — `dy` multiplies by `w / 2`, and an odd `w` would put
+    every other row of the lattice on a half pixel.
+  - **It defaults to `2`**, the unit cell, which is what this returned before it took one:
+    `{ dx: (x - y) * 2, dy: (x + y) - z }`. Omit `{ w }` and `x`/`y` are those 2px units rather than
+    tiles, which on a real tile size reads as the whole floor collapsed into a smear.
+  - **`z` is pixels and does not scale with `w`** — the same unit as `iso_box`'s `h`, so
+    `iso_to_grid(0, 0, 4)` is a 4px jump whatever the tiles measure.
+
+**`background('iso-grid')` only shows through transparent pixels**, like every other backdrop — see
+[Reviewing what you drew](#reviewing-what-you-drew). A finished scene is opaque wall to wall, so it
+is a no-op exactly when you reach for it. It earns its keep laying out a *single* tile or box on an
+empty canvas, where the lattice is what tells you the vertices landed where you meant.
+
+**Reading one back is still cartesian.** `print_sprite` knows nothing about world `(x, y, z)`, and a
+128 grid dumps 128 lines of 128 characters. Window it with `rect`, and aim the canvas at the same
+place — both are in [Inspection](#inspection):
+
+```js
+frogsprite.print_sprite('scene', { rect: [24, 18, 72, 56] });   // just the character
+frogsprite.zoom(4, { x: 48, y: 36 });                           // and look at him
+```
+
+Draw the floor with `iso_fill` and the walls flat into scenery layers; give every **prop and
+character pose its own layer with a `base`** so they sort against each other as they move. A walking
+character is one link per pose plus `cycle_layers` — a single `skel` link is a still, see
+[Linked layers](#linked-layers--one-drawing-many-places). See [Depth](#depth) — that is what lets
+something walk behind a pillar, and the `z` above is exactly the lift the section's last note is
+about.
 
 ### Importing an image
 
@@ -1029,6 +1176,9 @@ set.sprites[0].layers[0].pixels;   // a plain array, grid * grid long
   `palette()` reads the active list as hexes, `palette('pico8')` sets a preset, `palette([...])`
   takes your own, `palette('cube')` restores all 256. See [Colours](#colours)
 - `palettes()` — the preset names, with the colour count each one survives snapping with
+- `iso_to_grid(x, y, z?)` / `iso_to_grid(x, y, { w, z })` — a 2:1 lattice point to a screen
+  `{ dx, dy }`. `w` is the tile half-width `iso_tile` takes and defaults to `2`; `z` stays in pixels.
+  Integers only
 - `normals_from_sprite(sprite?, opts?)` — derive a normal map from the silhouette into `<name>.n`;
   `'*'` does the whole set. See [Normal maps](#normal-maps)
 - `export_normal_map(opts?)` — a normal map as a PNG, labels translated to true normal RGB
@@ -1042,11 +1192,17 @@ Three view settings change how the canvas *looks* without touching a single pixe
 with your work, and none affects exports or `print_sprite()`.
 
 - `background(color?)` — what shows through the **transparent** pixels; `background()` restores the
-  checkerboard
+  checkerboard. `background('iso-grid')` is a 2:1 diamond lattice instead
 - `silhouette(color?)` — draws every **painted** pixel in one colour, so only the shape is left;
   defaults to black, and `silhouette(null)` turns it off
-- `zoom(n = 1)` — magnify the canvas, 1 to 8; `zoom()` fits the pane again. At 128 a fitted canvas is
-  fine for composition and hopeless for a two-pixel detail. The stage scrolls once it outgrows the pane
+- `zoom(n = 1, { x, y })` — magnify the canvas, 1 to 8; `zoom()` fits the pane again. At 128 a fitted
+  canvas is fine for composition and hopeless for a two-pixel detail, so **aim it**: `x` and `y` are
+  grid coordinates and default to the centre of the *canvas*, which is rarely where your subject is —
+  a 30px character on a 128 grid is off-frame at `zoom(4)` unless you say where he is. The aim is
+  one-shot, so scrolling the stage by hand afterwards is not fought
+  ```js
+  frogsprite.zoom(4, { x: 40, y: 60 });   // magnify, and put (40, 60) in the middle of the pane
+  ```
 - `raw(on?)` — draw the sprite **as it is stored**, ignoring the held frame's `fx`, `trail` and
   `transition`. This is the answer to "is that shape mine, or did an effect do it?" — and to "what
   would a brush stroke here actually land on?"

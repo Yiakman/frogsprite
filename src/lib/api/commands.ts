@@ -8,8 +8,8 @@ import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image
 import { diffPixels, GRIDS, put, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
 import { sha256 as hashOf } from '../io/hash.ts';
 import { freeName, taken } from '../core/names.ts';
-import { normalsOf } from '../core/normals.ts';
-import { BASE, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, period as periodOf, placeAt, poseAt, scrollStep, shownAs } from '../core/layers.ts';
+import { ISO_FACE, normalsOf } from '../core/normals.ts';
+import { BASE, bakedBase, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, period as periodOf, placeAt, poseAt, scrollStep, shownAs } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
 import type { Point } from '../core/shapes.ts';
@@ -17,10 +17,10 @@ import type { Animation, Frame, Layer, Sprite, SpriteSet } from '../core/types.t
 import { editor } from '../state/store.svelte.ts';
 
 type Color = number | string | null;
-/** Trailing options every shape shares: `fill` (ignored by `line`) and the usual sprite override. */
-type ShapeOpts = { fill?: boolean; sprite?: string };
+/** Trailing options every shape shares: `fill` (ignored by `line`), and the usual sprite / layer overrides. */
+type ShapeOpts = { fill?: boolean; sprite?: string; layer?: string };
 /** Centre of rotation, in pixel coordinates: whole for a pixel, `.5` for the corner between two. */
-type RotateOpts = { cx?: number; cy?: number; sprite?: string };
+type RotateOpts = { cx?: number; cy?: number; sprite?: string; layer?: string };
 
 /** Everything a frame may carry. `set_animation` refuses anything else rather than dropping it. */
 const FRAME_KEYS = new Set(['sprite', 'ms', 'fx', 'trail', 'transition', 'layers']);
@@ -127,6 +127,21 @@ const ro = <T extends (...a: any[]) => any>(fn: T): T => wrap(false, fn) as unkn
  * next, reads its work back and sees only the outline. Each of the five is commented at the site.
  */
 type Target = { sprite: Sprite; layer: Layer; grid: GridSize; sprites: Sprite[] };
+
+/**
+ * A ground row as the API takes it: `true` to derive it from the lowest painted row, a row to say
+ * it outright, absent for scenery. Throws where storage's `readBase` quietly drops — a stored file
+ * has to survive being wrong, a command should say so.
+ *
+ * Deliberately not capped to the grid: a row past the bottom is how you say "always in front".
+ */
+function readGround(v: unknown): number | true | undefined {
+	if (v === undefined || v === null) return undefined;
+	if (v === true) return true;
+	if (!Number.isInteger(v) || (v as number) < 0)
+		throw new Error(`base must be true, or a whole row from 0 — got ${JSON.stringify(v)}`);
+	return v as number;
+}
 
 function target(name?: string, layer?: string): Target {
 	const set = editor.requireSet();
@@ -532,13 +547,14 @@ const api = {
 	}),
 
 	/** Turn a sprite in steps of 30°, positive clockwise. See AGENTS.md §Painting. */
-	rotate: mut(function (angle: number, { cx, cy, sprite }: RotateOpts = {}) {
-		const t = target(sprite);
+	rotate: mut(function (angle: number, { cx, cy, sprite, layer }: RotateOpts = {}) {
+		const t = target(sprite, layer);
 		const px = paintable(t.layer);
 		const lost = spin(px, t.grid, angle, cx, cy);
 		const mid = (t.grid - 1) / 2;
 		return {
 			sprite: t.sprite.name,
+			layer: t.layer.name,
 			angle,
 			center: [cx ?? mid, cy ?? mid],
 			solid: px.reduce((n, p) => n + (p === TRANSPARENT ? 0 : 1), 0),
@@ -666,12 +682,15 @@ const api = {
 	// blend there can be is paint-over, where index 0 is the hole.
 
 	/** Add a layer above the active one and select it. Names itself `layer-1`, `layer-2`… if asked. */
-	new_layer: mut(function (name?: string, { at, above, below }: { at?: 'top' | 'bottom'; above?: string; below?: string } = {}) {
+	new_layer: mut(function (name?: string, { at, above, below, base }: { at?: 'top' | 'bottom'; above?: string; below?: string; base?: number | true } = {}) {
 		const t = target();
 		const sprite = t.sprite;
 		const named = name ?? freeName(sprite.layers, `layer-${sprite.layers.length}`);
 		taken(sprite.layers, named, 'layer');
-		sprite.layers.splice(placeAt(t.sprite, t.layer.name, { at, above, below }), 0, newLayer(named, t.grid));
+		const made = newLayer(named, t.grid);
+		const ground = readGround(base);
+		if (ground !== undefined) made.base = ground;
+		sprite.layers.splice(placeAt(t.sprite, t.layer.name, { at, above, below }), 0, made);
 		editor.sel = { ...editor.sel, layer: named };
 		return { sprite: sprite.name, layer: named, layers: sprite.layers.map((l) => l.name) };
 	}),
@@ -697,7 +716,8 @@ const api = {
 	 *
 	 * Same set only, so both sprites share a grid. `copy_sprite` brings art in from another set first.
 	 */
-	link_layer: mut(function (from: string, { name, dx = 0, dy = 0, wrap = false, at, above, below, sprite }: { name?: string; dx?: number; dy?: number; wrap?: boolean; at?: 'top' | 'bottom'; above?: string; below?: string; sprite?: string } = {}) {
+	link_layer: mut(function (from: string, { name, dx = 0, dy = 0, wrap = false, at, above, below, sprite, base }: { name?: string; dx?: number; dy?: number; wrap?: boolean; at?: 'top' | 'bottom'; above?: string; below?: string; sprite?: string; base?: number | true } = {}) {
+		const ground = readGround(base);
 		const t = target(sprite);
 		const src = t.sprites.find((sp) => sp.name === from);
 		// flatten draws a name it cannot resolve as nothing, on purpose. The *command* must not put
@@ -717,6 +737,7 @@ const api = {
 		// zeroes stay off the object: settle() charges no undo step when the document serialises
 		// unchanged, and a `dx: 0` written here would not survive the round-trip through storage
 		const geometry = {
+			...(ground !== undefined && { base: ground }),
 			...(Math.round(dx) && { dx: Math.round(dx) }),
 			...(Math.round(dy) && { dy: Math.round(dy) }),
 			...(wrap && { wrap: true as const })
@@ -754,10 +775,13 @@ const api = {
 			throw new Error(`"${t.layer.name}" is already a painted layer — there is no link to break`);
 		const was = t.layer.from;
 		const i = t.sprite.layers.findIndex((l) => l.name === t.layer.name);
+		// the bake folds the link's dy into the pixels, so a ground row has to move with them
+		const base = bakedBase(t.layer.base, t.layer.dy ?? 0, t.grid, t.grid);
 		t.sprite.layers[i] = {
 			name: t.layer.name,
 			pixels: shownAs(t.layer, t.grid, t.sprites),
-			...(t.layer.hidden && { hidden: true })
+			...(t.layer.hidden && { hidden: true }),
+			...(base !== undefined && { base })
 		};
 		return { sprite: t.sprite.name, layer: t.layer.name, was };
 	}),
@@ -815,7 +839,7 @@ const api = {
 	 * Every existing layer must appear exactly once: this rearranges a stack, it never destroys one.
 	 * Use `new_layer` / `delete_layer` to change what is in it.
 	 */
-	set_layers: mut(function (layers: (string | { name: string; hidden?: boolean })[]) {
+	set_layers: mut(function (layers: (string | { name: string; hidden?: boolean; base?: number | true })[]) {
 		const t = target();
 		const sprite = t.sprite;
 		if (!Array.isArray(layers) || !layers.length) throw new Error('layers must be a non-empty array');
@@ -838,7 +862,14 @@ const api = {
 			// Spread everything else — naming `pixels` here would silently unlink every linked layer
 			// the moment anyone reordered the stack.
 			const { hidden: _was, ...rest } = found;
-			return { ...rest, ...(l.hidden && { hidden: true as const }) };
+			// `base` merges where `hidden` replaces: an entry that says nothing about it keeps what the
+			// layer had, so a plain reorder cannot silently turn an entity back into scenery
+			const ground = readGround(l.base);
+			return {
+				...rest,
+				...(l.hidden && { hidden: true as const }),
+				...(ground !== undefined && { base: ground })
+			};
 		});
 		sprite.layers = next;
 		return { sprite: sprite.name, layers: next.map((l) => (l.hidden ? `${l.name} (hidden)` : l.name)) };
@@ -1593,7 +1624,7 @@ const api = {
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_spritesheet', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico', 'sha256'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
-				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'diff_frames', 'contact_sheet', 'palette', 'color', 'background', 'silhouette', 'zoom', 'raw', 'help'],
+				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'diff_frames', 'contact_sheet', 'palette', 'color', 'iso_to_grid', 'background', 'silhouette', 'zoom', 'raw', 'help'],
 				history: ['undo', 'redo', 'history', 'batch'],
 				storage: ['flush', 'reset']
 			},
@@ -1648,8 +1679,12 @@ const api = {
 		return { zoom: editor.zoom, at: editor.zoomAt };
 	}),
 
-	/** Canvas backdrop for reviewing a sprite; `background()` restores the checkerboard. Paints nothing. */
-	background: ro(function (color: Color = null) {
+	/** Canvas backdrop for reviewing a sprite; `background()` restores the checkerboard. Paints nothing. `'iso-grid'` is a 2:1 diamond lattice. */
+	background: ro(function (color: Color | 'iso-grid' = null) {
+		if (color === 'iso-grid') {
+			editor.background = 'iso-grid';
+			return { background: 'iso-grid' as const };
+		}
 		editor.background = toIndex(color);
 		return { background: editor.background ? PALETTE[editor.background] : 'checkerboard' };
 	}),
@@ -1747,6 +1782,20 @@ const api = {
 	color: ro((c: Color) => toIndex(c)),
 
 	/**
+	 * Screen offset of a 2:1 world point, in the units `shapes.iso_tile` / `iso_fill` / `iso_box` take.
+	 *
+	 *   iso_to_grid(i, j, { w: 8 })   // tile (i, j) of a floor of 16 x 8 diamonds
+	 *   iso_to_grid(0, 0, 4)          // 4px straight up, on any size of tile
+	 *
+	 * `w` is the tile half-width `iso_tile` takes — even and at least 2 — so a lattice and the shapes
+	 * on it are said in one unit. It defaults to `2`, the unit cell: `{ dx: (x - y) * 2, dy: x + y - z }`.
+	 * `z` is pixels and does not scale with `w`, matching `iso_box`'s `h`. Integers only.
+	 */
+	iso_to_grid: ro((x: number, y: number, zOrOpts: number | { w?: number; z?: number } = 0) =>
+		shape.isoToGrid(x, y, zOrOpts)
+	),
+
+	/**
 	 * `steps` palette indices blending evenly between two colours, ends included — a sky gradient or
 	 * a shading ramp without snapping hexes by hand against a palette whose channels only take
 	 * 00/33/66/99/cc/ff.
@@ -1833,6 +1882,26 @@ const api = {
 	})
 };
 
+/** `{ normals: true }` writes the `.n` sibling — refuse if this sprite already is one. */
+function assertAlbedo(t: Target, normals?: boolean) {
+	if (normals && t.sprite.name.endsWith('.n'))
+		throw new Error('normals: true writes the .n sibling — this sprite already is one');
+}
+
+/**
+ * Find-or-create `<name>.n` and paint labels into its first layer. One flat sibling, same as
+ * `normals_from_sprite` — per-layer maps are the export.ts upgrade. Stay on the albedo sprite.
+ */
+function paintNormals(t: Target, paint: (pixels: Uint8Array) => void) {
+	const named = `${t.sprite.name}.n`;
+	let sib = t.sprites.find((s) => s.name === named);
+	if (!sib) {
+		sib = { name: named, layers: [newLayer(BASE, t.grid)] };
+		t.sprites.push(sib);
+	}
+	paint(paintable(sib.layers[0]));
+}
+
 /**
  * Geometry, one call per shape. Kept off the flat `api` map because they live a level down as
  * `frogsprite.shapes.*` — the maths is all in shapes.ts, so these are argument plumbing only.
@@ -1844,50 +1913,136 @@ const shapes = {
 	 * Straight line between two points, endpoints included. No fill — a line has no inside. `width`
 	 * thickens it, with square caps and joins.
 	 */
-	line: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { width = 1, sprite }: ShapeOpts & { width?: number } = {}) {
-		const t = target(sprite);
+	line: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { width = 1, sprite, layer }: ShapeOpts & { width?: number } = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.line(paintable(t.layer), t.grid, x0, y0, x1, y1, toIndex(color), width);
-		return { sprite: t.sprite.name, shape: 'line', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'line', painted };
 	}),
 
 	/** Rectangle between two opposite corners, given in either order — the non-square one. */
-	rect: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	rect: mut(function (x0: number, y0: number, x1: number, y1: number, color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.rect(paintable(t.layer), t.grid, x0, y0, x1, y1, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'rect', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'rect', painted };
 	}),
 
 	/** Axis-aligned square from its top-left corner. */
-	square: mut(function (x: number, y: number, size: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	square: mut(function (x: number, y: number, size: number, color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.square(paintable(t.layer), t.grid, x, y, size, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'square', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'square', painted };
 	}),
 
-	circle: mut(function (cx: number, cy: number, r: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	circle: mut(function (cx: number, cy: number, r: number, color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.circle(paintable(t.layer), t.grid, cx, cy, r, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'circle', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'circle', painted };
 	}),
 
 	/** Circle with separate radii — the way to draw a body, a head or an eye that isn't round. */
-	ellipse: mut(function (cx: number, cy: number, rx: number, ry: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	ellipse: mut(function (cx: number, cy: number, rx: number, ry: number, color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.ellipse(paintable(t.layer), t.grid, cx, cy, rx, ry, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'ellipse', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'ellipse', painted };
 	}),
 
-	triangle: mut(function (x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	triangle: mut(function (x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.triangle(paintable(t.layer), t.grid, x0, y0, x1, y1, x2, y2, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'triangle', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'triangle', painted };
 	}),
 
 	/** Any closed shape: `polygon([[2, 1], [13, 6], [7, 14]], '#22aa33')`. Three points or more. */
-	polygon: mut(function (points: Point[], color: Color, { fill = true, sprite }: ShapeOpts = {}) {
-		const t = target(sprite);
+	polygon: mut(function (points: Point[], color: Color, { fill = true, sprite, layer }: ShapeOpts = {}) {
+		const t = target(sprite, layer);
 		const painted = shape.polygon(paintable(t.layer), t.grid, points, toIndex(color), fill);
-		return { sprite: t.sprite.name, shape: 'polygon', painted };
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'polygon', painted };
+	}),
+
+	/** 2:1 diamond floor tile, width 2w × height w, centred on (cx, cy). `w` even. */
+	iso_tile: mut(function (
+		cx: number,
+		cy: number,
+		w: number,
+		color: Color,
+		{ fill = true, sprite, layer, normals }: ShapeOpts & { normals?: boolean } = {}
+	) {
+		const t = target(sprite, layer);
+		const px = paintable(t.layer);
+		assertAlbedo(t, normals);
+		const c = toIndex(color);
+		const painted = shape.isoTile(px, t.grid, cx, cy, w, c, fill);
+		if (normals) paintNormals(t, (n) => shape.isoTile(n, t.grid, cx, cy, w, c ? ISO_FACE.top : 0, fill));
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_tile', painted };
+	}),
+
+	/**
+	 * Tessellate `iso_tile` across the grid from origin (ox, oy). One call, one undo step —
+	 * the floor loop, not 1,200 of them. `odd` is the other checkerboard colour; omit it for a
+	 * solid field. `{ fill: false }` is grout, same as `iso_tile`. Recolour is `clear` then this.
+	 * `tile_layer` stays 1D: a cartesian period is the wrong shape for a diamond lattice.
+	 */
+	iso_fill: mut(function (
+		ox: number,
+		oy: number,
+		w: number,
+		color: Color,
+		{ fill = true, odd, sprite, layer, normals }: ShapeOpts & { odd?: Color; normals?: boolean } = {}
+	) {
+		const t = target(sprite, layer);
+		const px = paintable(t.layer);
+		assertAlbedo(t, normals);
+		const c = toIndex(color);
+		const o = odd === undefined ? undefined : toIndex(odd);
+		const painted = shape.isoFill(px, t.grid, ox, oy, w, c, o, fill);
+		if (normals)
+			paintNormals(t, (n) =>
+				shape.isoFill(n, t.grid, ox, oy, w, c ? ISO_FACE.top : 0, o === undefined ? undefined : o ? ISO_FACE.top : 0, fill)
+			);
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_fill', painted };
+	}),
+
+	/**
+	 * Isometric box. (cx, cy) is the ground-diamond centre; h extrudes screen-up.
+	 * `colors` is `{ top, left?, right?, outline? }` — missing sides are skipped.
+	 *
+	 * `outline` is for a lone box. It draws all nine edges, three of which are internal, so a
+	 * tessellated run of them reads as separate objects — omit it there and let the face shades
+	 * carry the form. `{ normals: true }` writes the `.n` sibling as three facets (`flat` / `SW` /
+	 * `SE`); a transparent face punches a hole, same as the art. `normals_from_sprite` would bevel
+	 * the silhouette into a pillow. See Isometric in AGENTS.md.
+	 */
+	iso_box: mut(function (
+		cx: number,
+		cy: number,
+		w: number,
+		d: number,
+		h: number,
+		colors: { top: Color; left?: Color; right?: Color; outline?: Color },
+		// no `fill`: a box is three filled faces and an optional outline, so there is nothing for it
+		// to mean here — and silently accepting it is worse than refusing it
+		{ sprite, layer, normals }: Omit<ShapeOpts, 'fill'> & { normals?: boolean } = {}
+	) {
+		if (!colors || !('top' in colors))
+			throw new Error('iso_box needs { top, left?, right?, outline? }');
+		const t = target(sprite, layer);
+		assertAlbedo(t, normals);
+		const faces = {
+			top: toIndex(colors.top),
+			...('left' in colors ? { left: toIndex(colors.left) } : {}),
+			...('right' in colors ? { right: toIndex(colors.right) } : {}),
+			...('outline' in colors ? { outline: toIndex(colors.outline) } : {})
+		};
+		const painted = shape.isoBox(paintable(t.layer), t.grid, cx, cy, w, d, h, faces);
+		if (normals)
+			paintNormals(t, (n) =>
+				shape.isoBox(n, t.grid, cx, cy, w, d, h, {
+					top: faces.top ? ISO_FACE.top : 0,
+					...('left' in faces ? { left: faces.left ? ISO_FACE.left : 0 } : {}),
+					...('right' in faces ? { right: faces.right ? ISO_FACE.right : 0 } : {})
+				})
+			);
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_box', painted };
 	})
 };
 
