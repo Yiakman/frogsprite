@@ -240,7 +240,7 @@ palette *indices*, so there is nothing meaningful to average between index 3 and
 - `move_layers(names, { path, unit, animation, wrap, seamless })` — walk one layer, or a whole group
   of them, along a path across an animation: a camera over a scene bigger than the canvas, or a prop
   with corners in its route. Takes waypoints rather than a speed, moves every layer named as one, and
-  is the only one of these that writes **`dy`**. `unit` scales the path, so a route can be said in map
+  is the only one of these that *moves* on **`dy`**. `unit` scales the path, so a route can be said in map
   sections rather than pixels. A **closed** path (last waypoint === first) stops one step short of
   home so the loop closes instead of holding frame 0 twice — a 5-point tour is 4 frames, one per side.
   An **open** one lands on its last waypoint and comes back `closed: false`; matching waypoints to
@@ -522,7 +522,8 @@ that is `move_layers`. The sign is the trap worth naming: `path` says where the 
 camera moving east is a path going west. It writes `wrap` on every frame either way, the way
 `cycle_layers` writes `hidden`, so a rig left wrapping by an earlier `scroll_layer` is put back
 rather than quietly kept — each section would otherwise repeat its own copy instead of yielding
-to its neighbour.
+to its neighbour. The other direction is `dy`: `scroll_layer` writes `dy: 0` so a leftover pan
+does not keep sliding the layer down.
 
 ```js
 frogsprite.move_layers(cells, { path: [[0, 0], [-1, 0]], unit: 128 });   // the view travels east

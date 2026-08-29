@@ -319,6 +319,15 @@ test('a null clears one layer entry, and a null `layers` clears them all', () =>
 	assert.equal(patchEffects(frame as any, { layers: null }).layers, undefined);
 });
 
+test('a dy of 0 in a patch clears a leftover pan, the way wrap: false unwraps', () => {
+	// scroll_layer writes dy: 0 for this: merge keeps the 0 long enough to overwrite, then
+	// readArrangement drops it as a no-op offset — so a later scroll does not keep sliding down
+	const frame = { sprite: 'a', ms: 100, layers: { road: { dx: 10, dy: 50, wrap: false } } };
+	assert.deepEqual(patchEffects(frame as any, { layers: { road: { dx: -8, dy: 0, wrap: true } } }).layers, {
+		road: { dx: -8, wrap: true }
+	});
+});
+
 test('the number shorthand merges as dx, keeping the rest of the entry', () => {
 	const frame = { sprite: 'a', ms: 100, layers: { road: { wrap: true, hidden: false } } };
 	assert.deepEqual(patchEffects(frame as any, { layers: { road: -8 } }).layers, {

@@ -276,6 +276,25 @@ test('a frame arrangement survives serialise/parse, so undo cannot eat it', () =
 	assert.deepEqual(back[1].layers, { fuji: { dx: -8 } }, 'the number shorthand normalises to dx');
 });
 
+test('a frame wrap: false survives serialise/parse, so an origin camera stays unwrapped', () => {
+	// links omit wrap: false as the default; an arrangement must not — dropping it would let a
+	// wrapping link take over after reload, which is the override this key exists to make
+	const doc = pkg({
+		animations: [
+			{
+				name: 'walk',
+				frames: [{ sprite: 'a', ms: 100, layers: { cam: { wrap: false } } }]
+			}
+		]
+	});
+	const once = serialise(doc as any);
+	assert.match(once, /"wrap":false/);
+	assert.deepEqual((parse(once) as any)[0].sets[0].animations[0].frames[0].layers, {
+		cam: { wrap: false }
+	});
+	assert.equal(serialise(parse(once) as any), once, 'parse(serialise(x)) serialises identically');
+});
+
 test('readSet keeps a frame arrangement it understands and drops the rest', () => {
 	const set = readSet({
 		name: 's',

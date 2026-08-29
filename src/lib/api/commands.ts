@@ -934,8 +934,9 @@ const api = {
 	 *   scroll_layer('fuji', { speed: -2 })     // far away, drifts
 	 *   scroll_layer('road', { speed: -16 })    // underfoot, races
 	 *
-	 * Writes `dx: speed * i` into every frame, leaving other layers' arrangements alone. `speed` is
-	 * px per frame and signed: negative scrolls left, which is what a rider moving right sees.
+	 * Writes `dx: speed * i` into every frame, and `dy: 0` so a leftover `move_layers` pan is put
+	 * back rather than quietly kept. Other layers' arrangements are left alone. `speed` is px per
+	 * frame and signed: negative scrolls left, which is what a rider moving right sees.
 	 *
 	 * **It refuses a scroll that would not loop.** A layer moving `s` px over `n` frames travels
 	 * `n·s`, and unless that is a whole number of the art's own repeats the last frame cuts back to
@@ -982,7 +983,7 @@ const api = {
 			);
 		}
 		anim.frames = anim.frames.map((f, i) =>
-			patchEffects(f, { layers: { [layer]: { dx: Math.round(speed) * i, wrap } } })
+			patchEffects(f, { layers: { [layer]: { dx: Math.round(speed) * i, dy: 0, wrap } } })
 		);
 		editor.stop();
 		return { animation: anim.name, layer, speed, frames: n, repeatsEvery: p, seamless: ok };
