@@ -833,14 +833,15 @@ frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
   right at +1/2) or `'right'` (the SE quad, rising at −1/2). Same-set, like `stamp`: the source size
   *is* the face, transparent skipped, no resample. `{ dx, dy }` is where source (0, 0) lands — for a
   box at `(cx, cy)` of height `h` that is `(cx - w, cy - h)` for `left`, `(cx, cy + w / 2 - h)` for
-  `right`, and `(cx, cy - w / 2)` for `top`. `{ normals: true }` writes that face's label
-  (`flat` / `SW` / `SE`) onto the `.n` sibling, so aiming at the wrong face is a wrong light
-  direction as well as a wrong shear.
+  `right`, and `(cx, cy - w / 2 - h)` for `top` — the top face is the ground diamond *lifted*, so it
+  subtracts `h` like the other two, and an anchor that forgets it lands the motif on the right face.
+  `{ normals: true }` writes that face's label (`flat` / `SW` / `SE`) onto the `.n` sibling, so aiming
+  at the wrong face is a wrong light direction as well as a wrong shear.
 
 ```js
 frogsprite.shapes.iso_box(16, 20, 8, 8, 8, { top: '#996633', left: '#663300', right: '#331900' });
-frogsprite.project_face('logo', 'right');
-frogsprite.project_face('grate', 'top', { dy: -8 });
+frogsprite.project_face('logo', 'right', { dx: 16, dy: 16 });   // (cx, cy + w / 2 - h)
+frogsprite.project_face('grate', 'top', { dx: 16, dy: 8 });     // (cx, cy - w / 2 - h)
 ```
 
 - **`iso_to_grid(x, y, z?)`** or **`iso_to_grid(x, y, { w, z })`** → `{ dx, dy }`, a screen offset

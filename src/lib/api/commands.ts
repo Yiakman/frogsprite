@@ -536,9 +536,17 @@ const api = {
 
 	/**
 	 * Stamp a flat motif onto a 2:1 iso face of the current sprite. `face` is `top` (diamond),
-	 * `left` (−1/2 slope) or `right` (+1/2 slope). Same-set, same grid, like `stamp` — the source
-	 * size *is* the face, no resample. `{ normals: true }` writes that face's label (`flat` / `SW` /
-	 * `SE`) onto the `.n` sibling for every opaque projected pixel.
+	 * `left` (the SW face, +1/2 slope) or `right` (the SE face, −1/2 slope) — the three `iso_box`
+	 * draws. Same-set, same grid, like `stamp` — the source size *is* the face, no resample.
+	 *
+	 * `{ dx, dy }` is where source (0, 0) lands. For a box at `(cx, cy)` of height `h` that is
+	 * `(cx - w, cy - h)` for `left`, `(cx, cy + w / 2 - h)` for `right` and `(cx, cy - w / 2 - h)`
+	 * for `top` — **every one of them lifts by `h`**, the top face included: it is the ground
+	 * diamond raised, so an anchor that forgets `h` lands the motif on the right face instead, at a
+	 * shear that still looks plausible.
+	 *
+	 * `{ normals: true }` writes that face's label (`flat` / `SW` / `SE`) onto the `.n` sibling for
+	 * every opaque projected pixel.
 	 */
 	project_face: mut(function (
 		from: string,
