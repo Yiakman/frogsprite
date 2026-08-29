@@ -118,3 +118,15 @@ one flat layer: last write wins in **call order**, not stack order and not depth
 composite order, or flatten first. Per-layer maps stay the export.ts upgrade.
 
 Skipped, on purpose: a W/E switch, UI, teaching `normals_from_sprite` about boxes, an outline pass.
+
+## The cave scene, re-cut
+
+`caves/crypt` was rebuilt on all of the above once they landed — the deferral in item 1 is spent.
+Floor is one `iso_fill` (checkerboard plus a grout pass, `normals: true` on both); walls and
+stalagmites are `iso_box` runs painted back-to-front so the `.n` sibling matches call order; every
+prop is its own sprite so it can be a link with `base: true`. The skeleton's seven pose links carry
+`base: 31` — the feet row, stated rather than derived, so torso and legs sort as one thing. The
+40-frame patrol is four `iso_to_grid(i, j, { w: 8 })` waypoints with the frames interpolated
+between them, so `base + dy` reorders him against the rocks for free. The fourth facing is
+`body-back` with a frame `flipX`; that mirrors the whole 128 grid, so its `dx` anchors at
+`127 - 15`, not `15`.
