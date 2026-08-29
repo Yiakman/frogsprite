@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { diffPixels, GRIDS, put, reflect, rotate, shift, SIDES, stamp, tile, upscale } from './grid.ts';
+import { diffPixels, GRIDS, projectFace, put, reflect, rotate, shift, SIDES, stamp, tile, upscale } from './grid.ts';
 
 /** 4x4 grid from rows of digits, for readable expectations. */
 const grid4 = (...rows: string[]) => rows.flatMap((r) => [...r].map(Number));
@@ -229,6 +229,50 @@ test('stamp survives a junk offset rather than smearing everything off-canvas', 
 	const dst = new Uint8Array(4);
 	stamp(dst, Uint8Array.from([3, 0, 0, 0]), 2, NaN as unknown as number, undefined as unknown as number);
 	assert.equal(dst[0], 3, 'NaN is treated as no offset');
+});
+
+test('projectFace top squashes a 2×2 into a 2:1 diamond', () => {
+	const src = new Uint8Array(64);
+	src[0] = 1;
+	src[1] = 2;
+	src[8] = 3;
+	src[9] = 4;
+	const dst = new Uint8Array(64);
+	assert.equal(projectFace(dst, src, 8, 'top', 4, 4), 4);
+	assert.equal(dst[4 * 8 + 4], 1, '(0,0) → origin');
+	assert.equal(dst[4 * 8 + 5], 2, '(1,0) → east');
+	assert.equal(dst[4 * 8 + 3], 3, '(0,1) → west');
+	assert.equal(dst[5 * 8 + 4], 4, '(1,1) → south');
+});
+
+// The slopes are not a free choice: they are whichever way iso_box's own left and right faces run,
+// measured off a rendered box. left (SW) falls to the right, right (SE) rises.
+test('projectFace left and right shear top/bottom the way iso_box\'s faces do', () => {
+	const src = new Uint8Array(64);
+	for (let u = 0; u < 4; u++) src[u] = 7;
+	const left = new Uint8Array(64);
+	projectFace(left, src, 8, 'left', 2, 3);
+	assert.equal(left[3 * 8 + 2], 7, 'u=0 stays on the origin row');
+	assert.equal(left[4 * 8 + 4], 7, 'u=2 has dropped one row (+1/2), like the SW face');
+	assert.equal(left[3 * 8 + 4], 0, 'and left that cell empty');
+
+	const right = new Uint8Array(64);
+	projectFace(right, src, 8, 'right', 2, 3);
+	assert.equal(right[3 * 8 + 2], 7);
+	assert.equal(right[2 * 8 + 4], 7, 'u=2 has climbed one row (−1/2), like the SE face');
+});
+
+test('projectFace skips transparent source, so holes stay holes', () => {
+	const src = new Uint8Array(64);
+	src[0] = 1;
+	src[1] = 0;
+	src[8] = 3;
+	src[9] = 4;
+	const dst = new Uint8Array(64).fill(9);
+	projectFace(dst, src, 8, 'top', 4, 4);
+	assert.equal(dst[4 * 8 + 5], 9, 'the missing (1,0) leaves dest alone');
+	assert.equal(dst[4 * 8 + 4], 1);
+	assert.throws(() => projectFace(dst, src, 8, 'east' as any), /top, left, right/);
 });
 
 test('shift wraps what falls off the edge when asked', () => {
