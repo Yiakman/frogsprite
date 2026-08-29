@@ -309,7 +309,8 @@ The rules worth knowing:
   Reading is never refused — `print_sprite(undefined, 'tree-2')` shows you the tree.
 - **A frame's `dx` adds to the link's own.** The link says where the object lives, the frame says how
   far it has moved — so `scroll_layer` drives a linked layer like any other. (`wrap` is the exception:
-  a frame's value replaces the link's rather than adding to it.)
+  a frame's value replaces the link's rather than adding to it, in both directions — a frame's
+  `wrap: false` un-wraps a link that wraps by default.)
 - **Links can nest** — a wheel linked into a cart, the cart linked into a scene. A loop is refused
   when you make it, and drawn as nothing if one ever reaches the canvas.
 - **A link is a still.** Nested links draw, but a frame's `layers` cannot reach inside the linked
@@ -458,7 +459,8 @@ speed turns into a refused one for reasons nothing on screen explains. `tile_lay
 `repeatsEvery` it actually achieved, which is the number `scroll_layer` will measure.
 
 `hidden` is a third override, and it beats the layer's own setting in both directions: a frame can
-show a layer the sprite hides, or hide one it shows. That is how one sprite carries two arm poses.
+show a layer the sprite hides, or hide one it shows. `wrap` is the same — a frame's value replaces
+the link's, so `wrap: false` turns off a link that wraps by default. That is how one sprite carries two arm poses.
 `base` is a fourth, and beats the layer's own the same way — see [Depth](#depth).
 
 An arrangement also takes **the same geometry and colour keys `fx` does** — `invert`, `hue`,
@@ -511,7 +513,10 @@ animations over the same sprite can scroll it at different speeds, and neither t
 measures the period and refuses a speed that would jump or freeze. A pan across a scene, or a prop
 walking a route with corners in it, has no repeat to land on and a destination to reach instead —
 that is `move_layers`. The sign is the trap worth naming: `path` says where the **layers** go, so a
-camera moving east is a path going west.
+camera moving east is a path going west. It writes `wrap` on every frame either way, the way
+`cycle_layers` writes `hidden`, so a rig left wrapping by an earlier `scroll_layer` is put back
+rather than quietly kept — each section would otherwise repeat its own copy instead of yielding
+to its neighbour.
 
 ```js
 frogsprite.move_layers(cells, { path: [[0, 0], [-1, 0]], unit: 128 });   // the view travels east

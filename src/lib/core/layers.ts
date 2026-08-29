@@ -127,12 +127,8 @@ export function flatten(
 		}
 		// A link's own placement is where it sits in this sprite; the frame's is a nudge on top, so the
 		// two *add*, and `scroll_layer` drives a linked layer with no special case. `wrap` overrides
-		// rather than adding, there being nothing to add.
-		//
-		// ponytail: that makes `wrap` one-way — readArrangement drops a `wrap: false`, so a frame
-		// cannot un-wrap a link that wraps by default. The fix is the tri-state `hidden` gets eleven
-		// lines below it in fx.ts; do it if anyone wants a link that wraps in most frames but not one.
-		//
+		// rather than adding, there being nothing to add — in both directions, so a frame can un-wrap a
+		// link that wraps by default as well as wrap one that does not.
 		const dy = (link?.dy ?? 0) + (v?.dy ?? 0);
 		placed.push({
 			px,

@@ -268,7 +268,9 @@ export function readArrangement(v: any, { strict = false }: { strict?: boolean }
 		const dy = Math.round(Number(spec.dy));
 		if (dx) view.dx = dx;
 		if (dy) view.dy = dy;
-		if (spec.wrap === true) view.wrap = true;
+		// tri-state, like `hidden` below: absent inherits the link's own wrap, where `false` overrides a
+		// link that wraps by default. `=== true` collapsed those two and made the override one-way.
+		if (typeof spec.wrap === 'boolean') view.wrap = spec.wrap;
 		// pick the fx keys so wrap/hidden/cx/cy are not unknown keys under strict readFx
 		const fx = readFx(
 			strict

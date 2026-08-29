@@ -293,6 +293,15 @@ test('readArrangement is lenient on load and strict on write', () => {
 	assert.throws(() => readArrangement({ w: { spin: 1 } }, { strict: true }), /unknown key "spin"/);
 });
 
+test('wrap is tri-state, so a frame can un-wrap a link that wraps by default', () => {
+	// dropping the `false` made the override one-way: a link wrapping by default could never be
+	// turned off for one frame, and clearing an earlier scroll_layer's wrap did nothing
+	assert.deepEqual(readArrangement({ w: { dx: 4, wrap: false } }, { strict: true }), {
+		w: { dx: 4, wrap: false }
+	});
+	assert.deepEqual(readArrangement({ w: { dx: 4 } })?.w.wrap, undefined, 'absent still inherits');
+});
+
 test('a layer patch merges key by key, and does not wipe the keys beside it', () => {
 	// the regression: patching `dy` replaced the whole entry and threw away the `hidden: false` in
 	// it, silently un-posing half an animation with nothing on screen to say why

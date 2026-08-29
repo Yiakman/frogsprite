@@ -1015,8 +1015,9 @@ const api = {
 	 * an animation nobody wired up. Usually it means `unit` was left at 1.
 	 *
 	 * `wrap` is off unless asked, because a rig of map sections must not wrap — each one would repeat
-	 * its own copy instead of yielding to its neighbour. It cannot be turned *off* here either: a
-	 * frame's `wrap: false` is dropped, so clear it on the link.
+	 * its own copy instead of yielding to its neighbour. It is written on every frame either way, the
+	 * way `cycle_layers` writes `hidden`, so a rig left wrapping by an earlier `scroll_layer` is put
+	 * back rather than quietly kept.
 	 */
 	move_layers: mut(function (names: string | string[], { path, unit = 1, animation, sprite, wrap = false, seamless = true }: { path: [number, number][]; unit?: number; animation?: string; sprite?: string; wrap?: boolean; seamless?: boolean }) {
 		const list = Array.isArray(names) ? names : [names];
@@ -1051,7 +1052,7 @@ const api = {
 			);
 		anim.frames = anim.frames.map((f, i) =>
 			patchEffects(f, {
-				layers: Object.fromEntries(list.map((nm) => [nm, { ...at[i], ...(wrap && { wrap: true }) }]))
+				layers: Object.fromEntries(list.map((nm) => [nm, { ...at[i], wrap }]))
 			})
 		);
 		editor.stop();

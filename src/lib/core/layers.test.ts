@@ -384,6 +384,18 @@ test("a link's transparent pixels let the layer underneath show through", () => 
 	assert.deepEqual(Array.from(flatten(s, 2, undefined, [t, s])), [1, 7, 1, 1], 'paint-over holds');
 });
 
+test('a frame can un-wrap a link that wraps by default, as well as wrap one that does not', () => {
+	const src = sprite(['layer-0', [1, 2, 3, 4]]);
+	const scene = linked('scene', { from: 's', name: 'l', dx: 1, wrap: true });
+	// the link wraps, so column 0 is what fell off the right
+	assert.deepEqual(Array.from(flatten(scene, 2, undefined, [src])), [2, 1, 4, 3]);
+	assert.deepEqual(
+		Array.from(flatten(scene, 2, { l: { wrap: false } }, [src])),
+		[0, 1, 0, 3],
+		'the frame says no, so the overhang is dropped rather than re-entering'
+	);
+});
+
 test('a rotate on a linked layer never touches the source buffer', () => {
 	const t = sprite(['t', [1, 2, 3, 4]]);
 	t.name = 'tree';
