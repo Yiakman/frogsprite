@@ -5,7 +5,7 @@ import { compose, patchEffects, readArrangement, readFx, readTrail, readTransiti
 import * as history from '../core/history.ts';
 import * as storage from '../io/storage.ts';
 import { imageToPixels, type ImageSource, type ImportOptions } from '../io/image.ts';
-import { diffPixels, GRIDS, put, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type Side } from '../core/grid.ts';
+import { diffPixels, GRIDS, ISO_FACES, projectFace, put, reflect as reflectHalf, rotate as spin, shift as slide, SIDES, stamp as blit, tile as tileAcross, upscale, type GridSize, type IsoFace, type Side } from '../core/grid.ts';
 import { sha256 as hashOf } from '../io/hash.ts';
 import { freeName, taken } from '../core/names.ts';
 import { ISO_FACE, normalsOf } from '../core/normals.ts';
@@ -532,6 +532,37 @@ const api = {
 			throw new Error(`stamp("${from}") would read and write the same sprite — clone_sprite it first`);
 		const painted = blit(paintable(t.layer), flatten(src, set.grid, undefined, set.sprites), set.grid, dx, dy, wrap);
 		return { sprite: t.sprite.name, layer: t.layer.name, from, painted };
+	}),
+
+	/**
+	 * Stamp a flat motif onto a 2:1 iso face of the current sprite. `face` is `top` (diamond),
+	 * `left` (−1/2 slope) or `right` (+1/2 slope). Same-set, same grid, like `stamp` — the source
+	 * size *is* the face, no resample. `{ normals: true }` writes that face's label (`flat` / `SW` /
+	 * `SE`) onto the `.n` sibling for every opaque projected pixel.
+	 */
+	project_face: mut(function (
+		from: string,
+		face: IsoFace,
+		{ dx = 0, dy = 0, sprite, layer, normals }: { dx?: number; dy?: number; sprite?: string; layer?: string; normals?: boolean } = {}
+	) {
+		if (!ISO_FACES.includes(face))
+			throw new Error(`project_face needs one of ${ISO_FACES.join(', ')} (got ${JSON.stringify(face)})`);
+		const set = editor.requireSet();
+		const src = set.sprites.find((s) => s.name === from);
+		if (!src) throw new Error(`no sprite "${from}" in set "${set.name}"`);
+		const t = target(sprite, layer);
+		if (src.name === t.sprite.name)
+			throw new Error(`project_face("${from}") would read and write the same sprite — clone_sprite it first`);
+		assertAlbedo(t, normals);
+		const px = flatten(src, set.grid, undefined, set.sprites);
+		const painted = projectFace(paintable(t.layer), px, set.grid, face, dx, dy);
+		if (normals) {
+			const labels = new Uint8Array(set.grid * set.grid);
+			const tag = ISO_FACE[face];
+			for (let i = 0; i < px.length; i++) if (px[i]) labels[i] = tag;
+			paintNormals(t, (n) => projectFace(n, labels, set.grid, face, dx, dy));
+		}
+		return { sprite: t.sprite.name, layer: t.layer.name, from, face, painted };
 	}),
 
 	/**
@@ -1619,7 +1650,7 @@ const api = {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select', 'delete_sprite', 'delete_set', 'delete_package'],
 				layers: ['new_layer', 'link_layer', 'unlink_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'tile_layer', 'scroll_layer', 'cycle_layers', 'flatten_sprite'],
 				copying: ['copy_set', 'copy_sprite', 'copy_animation', 'copy_frames', 'copy_layer'],
-				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'reflect', 'rotate', 'shift', 'clear', 'ramp', 'import_image'],
+				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'project_face', 'reflect', 'rotate', 'shift', 'clear', 'ramp', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_spritesheet', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico', 'sha256'],

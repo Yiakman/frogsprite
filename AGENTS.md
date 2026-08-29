@@ -44,9 +44,10 @@ clip (`fx` and layer arrangements are invisible to `print_sprite`).
 | --- | --- | --- |
 | Draw a character | `paint_map` / `shapes.*` / `reflect` | `paint_pixel` loops, `new_layer` |
 | Next animation pose | `clone_sprite` / `copy_sprite` | `new_layer`, `cycle_layers` |
-| Face the other way | `fx: { flipX: true }` | clone + `reflect` (unless the art is asymmetric on purpose) |
+| Face the other way | `fx: { flipX: true }` on the **pose** (or that link's arrangement) | clone + `reflect`; `flipX` on the scene sprite (mirrors the whole grid) |
 | Hurt / team colour | `fx: { hue: 'red' }` | recolour the shared sprite |
 | Put a tree in a scene once | `stamp` | a layer (unless you will still edit the tree) |
+| Put a logo on a crate | `project_face` | `stamp` of the flat motif |
 | The same tree four times | `link_layer` | four `stamp`s — you would redraw all four by hand |
 | Scrolling background | layers + `scroll_layer` | one sprite per frame, or `fx.dx` |
 | Check art | `print_sprite` | — |
@@ -604,6 +605,8 @@ All painting commands take an optional trailing `sprite` name and default to the
   transparent pixels leave what is underneath alone, and `wrap` re-enters what falls off an edge on
   the opposite side — which is what makes a tile scroll for ever. Both sprites are in the active set.
   **It bakes** — see [Stamping vs. arranging](#stamping-vs-arranging) before you build a scene with it
+- `project_face(from, face, { dx, dy, sprite, layer, normals })` — stamp a flat motif onto a 2:1 iso
+  face (`top` / `left` / `right`). Same set as `stamp`; see [Isometric](#isometric)
 - `clear(color?)` — fill the sprite (default transparent)
 - `ramp(from, to, steps = 8)` — palette indices blending evenly between two colours, ends included.
   Writes a shading ramp or a band of sky without snapping hexes by hand:
@@ -672,7 +675,7 @@ takes an angle, and optionally a `cx` and `cy` centre, and warns when a turn los
 #### Isometric
 
 2:1 dimetric: two pixels across per one pixel down. Draw a floor with `iso_fill`; a single diamond
-or a box with `iso_tile` / `iso_box`; place with `iso_to_grid`.
+or a box with `iso_tile` / `iso_box`; texture a face with `project_face`; place with `iso_to_grid`.
 
 ```js
 const W = 8, OX = 64, OY = 20;                     // 16 x 8 tiles, and where (0, 0) sits
@@ -713,6 +716,21 @@ frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
   - The opposite is true of **`iso_tile`**, where the shared edges are the point: outlining every
     floor tile in a darker shade (`{ fill: false }`, a second pass) reads as grout. A floor should
     show its tiling; a wall should not show its blocks.
+- **`project_face(from, face, opts?)`** — stamp a flat motif onto a face. `face` names the same
+  three faces `iso_box` does: `'top'` (2:1 diamond), `'left'` (the SW quad, top edge falling to the
+  right at +1/2) or `'right'` (the SE quad, rising at −1/2). Same-set, like `stamp`: the source size
+  *is* the face, transparent skipped, no resample. `{ dx, dy }` is where source (0, 0) lands — for a
+  box at `(cx, cy)` of height `h` that is `(cx - w, cy - h)` for `left`, `(cx, cy + w / 2 - h)` for
+  `right`, and `(cx, cy - w / 2)` for `top`. `{ normals: true }` writes that face's label
+  (`flat` / `SW` / `SE`) onto the `.n` sibling, so aiming at the wrong face is a wrong light
+  direction as well as a wrong shear.
+
+```js
+frogsprite.shapes.iso_box(16, 20, 8, 8, 8, { top: '#996633', left: '#663300', right: '#331900' });
+frogsprite.project_face('logo', 'right');
+frogsprite.project_face('grate', 'top', { dy: -8 });
+```
+
 - **`iso_to_grid(x, y, z?)`** or **`iso_to_grid(x, y, { w, z })`** → `{ dx, dy }`, a screen offset
   to add to wherever you put the origin. Integers only.
   - **`w` is the same tile half-width `iso_tile` takes**, so a lattice and the shapes standing on it
@@ -743,9 +761,10 @@ frogsprite.zoom(4, { x: 48, y: 36 });                           // and look at h
 Draw the floor with `iso_fill` and the walls flat into scenery layers; give every **prop and
 character pose its own layer with a `base`** so they sort against each other as they move. A walking
 character is one link per pose plus `cycle_layers` — a single `skel` link is a still, see
-[Linked layers](#linked-layers--one-drawing-many-places). See [Depth](#depth) — that is what lets
-something walk behind a pillar, and the `z` above is exactly the lift the section's last note is
-about.
+[Linked layers](#linked-layers--one-drawing-many-places). SW ↔ SE is `fx: { flipX: true }` on the
+**pose** (or that link's arrangement), never on the scene sprite — that mirrors the whole grid.
+See [Depth](#depth) — that is what lets something walk behind a pillar, and the `z` above is exactly
+the lift the section's last note is about.
 
 ### Importing an image
 

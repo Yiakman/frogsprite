@@ -121,6 +121,66 @@ export function stamp(
 	return painted;
 }
 
+export const ISO_FACES = ['top', 'left', 'right'] as const;
+export type IsoFace = (typeof ISO_FACES)[number];
+
+/**
+ * Stamp `src` onto an isometric face of `dst` — the texture counterpart of `iso_tile`.
+ * Inverse-mapped, same as `rotate`: forward rounding is not onto, so it would leave holes.
+ *
+ * 1:1 source pixels, transparent skipped, no resample. `(dx, dy)` is where source (0, 0) lands
+ * (the north of a top diamond; the top-left of a wall). The three maps:
+ *
+ *   top   (u, v) → (u − v, (u + v) >> 1)
+ *   left  (u, v) → (u, v + (u >> 1))     // slope +1/2, iso_box's left (SW) face
+ *   right (u, v) → (u, v − (u >> 1))     // slope −1/2, iso_box's right (SE) face
+ *
+ * The slopes are fixed by which face each name means, and the names are `iso_box`'s: `left` is the
+ * quad on the +Y edge (SW), whose top edge falls to the right; `right` is the +X one (SE), whose top
+ * edge rises. Get them the other way round and a motif shears across the face it was aimed at while
+ * the `.n` sibling labels it with the opposite normal — a wrong light direction, in a picture that
+ * still looks plausible.
+ */
+export function projectFace(
+	dst: Pixels,
+	src: Pixels,
+	grid: number,
+	face: IsoFace,
+	dx = 0,
+	dy = 0
+): number {
+	if (!ISO_FACES.includes(face))
+		throw new Error(`project_face needs one of ${ISO_FACES.join(', ')} (got ${JSON.stringify(face)})`);
+	dx = Math.round(dx) || 0;
+	dy = Math.round(dy) || 0;
+	let painted = 0;
+	for (let y = 0; y < grid; y++) {
+		for (let x = 0; x < grid; x++) {
+			const rx = x - dx;
+			const ry = y - dy;
+			let u: number;
+			let v: number;
+			if (face === 'top') {
+				const s = 2 * ry + (rx & 1);
+				u = (s + rx) >> 1;
+				v = (s - rx) >> 1;
+			} else if (face === 'left') {
+				u = rx;
+				v = ry - (u >> 1);
+			} else {
+				u = rx;
+				v = ry + (u >> 1);
+			}
+			if (u < 0 || v < 0 || u >= grid || v >= grid) continue;
+			const p = src[v * grid + u];
+			if (p === TRANSPARENT) continue;
+			dst[y * grid + x] = p;
+			painted++;
+		}
+	}
+	return painted;
+}
+
 /**
  * A copy of `pixels` blown up from one grid to a larger one — each source pixel becomes an n×n
  * block. Every supported grid is a power of two, so the factor is always whole: nothing is
