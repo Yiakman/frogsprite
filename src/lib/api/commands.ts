@@ -992,7 +992,7 @@ const api = {
 	 * Walk one layer, or a whole group of them, along a path across an animation — a camera over a
 	 * scene bigger than the canvas, or a prop with corners in its route.
 	 *
-	 *   move_layers(cells, { path: [[0,0], [1,0], [1,1], [0,1], [0,0]], unit: 128 })   // a tour of a 2x2 map
+	 *   move_layers(cells, { path: [[0,0], [1,0], [1,1], [0,1], [0,0]], unit: 128 })   // closed 2x2: 4 frames
 	 *   move_layers('skel', { path: [[8,8], [40,8], [40,48]], animation: 'patrol' })   // one prop, three legs
 	 *
 	 * `scroll_layer` is for a layer that repeats and must loop; this is for one that does not and has
@@ -1005,10 +1005,10 @@ const api = {
 	 * goes, since moving the view east slides the map west.
 	 *
 	 * A **closed** path (last waypoint === first) stops one step short of home, so the loop closes
-	 * instead of holding frame 0 twice. An **open** one lands on its last waypoint at the last frame
-	 * and comes back `closed: false`, which is the tour that visibly snaps back on playback. Repeat a
-	 * waypoint to hold there — a duplicate is a segment with nowhere to go, which is what makes a
-	 * cell-by-cell hop rather than a glide.
+	 * instead of holding frame 0 twice — a 5-point tour is 4 frames, one per side. An **open** one
+	 * lands on its last waypoint at the last frame and comes back `closed: false`, which is the tour
+	 * that visibly snaps back on playback. Matching waypoints to frames is that open path: it hops
+	 * cell by cell. Repeat a waypoint to hold there — a duplicate is a segment with nowhere to go.
 	 *
 	 * It refuses a path that never moves, for the reason `scroll_layer` refuses a frozen scroll: every
 	 * frame identical is invisible in a still, invisible in the return value, and reads on playback as

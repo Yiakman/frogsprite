@@ -242,11 +242,12 @@ palette *indices*, so there is nothing meaningful to average between index 3 and
   with corners in its route. Takes waypoints rather than a speed, moves every layer named as one, and
   is the only one of these that writes **`dy`**. `unit` scales the path, so a route can be said in map
   sections rather than pixels. A **closed** path (last waypoint === first) stops one step short of
-  home so the loop closes instead of holding frame 0 twice; an **open** one lands on its last waypoint
-  and comes back `closed: false`. Repeat a waypoint to hold there. It refuses a path that never moves,
+  home so the loop closes instead of holding frame 0 twice — a 5-point tour is 4 frames, one per side.
+  An **open** one lands on its last waypoint and comes back `closed: false`; matching waypoints to
+  frames hops cell by cell. Repeat a waypoint to hold there. It refuses a path that never moves,
   for the reason `scroll_layer` refuses a frozen scroll
   ```js
-  frogsprite.move_layers(cells, { path: [[0,0],[1,0],[1,1],[0,1],[0,0]], unit: 128 });  // a tour of a 2x2 map
+  frogsprite.move_layers(cells, { path: [[0,0],[1,0],[1,1],[0,1],[0,0]], unit: 128 });  // closed 2x2: 4 frames
   frogsprite.move_layers('skel', { path: [[8,8],[40,8],[40,48]], animation: 'patrol' });
   ```
 - `cycle_layers(names, { animation, every, sprite, seamless })` — show one of a ring of layers per
@@ -551,9 +552,10 @@ frogsprite.move_layers(cells, { path: [[0, 0], [-1, 0], [-1, -1]], unit: G });
 
 `path` is where the layers go, so the view travels the other way — `[-1, 0]` is the camera moving one
 section east. A **fractional** waypoint is a view straddling two sections: `[-0.6, 0]` shows the last
-40% of one and the first 60% of the next, which is all a partial view is. And **as many waypoints as
-there are frames lands one on each**, so a path naming every cell in turn is a map you step through
-in the timeline rather than pan across.
+40% of one and the first 60% of the next, which is all a partial view is. An **open** path with as
+many waypoints as frames lands on each in turn, so a path naming every cell is a map you step through
+in the timeline rather than pan across. A **closed** tour wants one fewer frames than points — the
+last waypoint *is* frame 0, and drawing it would hold the start twice.
 
 Three things decide whether it holds together:
 
@@ -595,7 +597,7 @@ come with it rather than the terrain alone:
 ```js
 const stops = [];
 for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) stops.push([-i, -j]);
-frogsprite.set_animation(stops.map(() => ({ sprite: 'view', ms: 400 })));
+frogsprite.set_animation(stops.map(() => ({ sprite: 'view', ms: 400 })));  // open: one cell per frame
 frogsprite.move_layers(cells, { path: stops, unit: G });
 await frogsprite.export_spritesheet({ cols, scale: 1, download: true });   // 2 x 2 cells of 128 = 256x256
 ```
