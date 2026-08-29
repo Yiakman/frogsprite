@@ -51,6 +51,7 @@ clip (`fx` and layer arrangements are invisible to `print_sprite`).
 | The same tree four times | `link_layer` | four `stamp`s — you would redraw all four by hand |
 | Scrolling background | layers + `scroll_layer` | one sprite per frame, or `fx.dx` |
 | A camera pan, or a route with corners | `move_layers` | `scroll_layer` — it loops; a pan arrives |
+| A map bigger than the grid | one sprite per section, `link_layer` per cell | one giant sprite — a sprite is grid-clipped |
 | Check art | `print_sprite` | — |
 | Check a clip | `print_frame` / `contact_sheet` | `print_sprite` |
 
@@ -302,6 +303,10 @@ step by hand.
 
 The rules worth knowing:
 
+- **A link is clipped, not refused.** `dx`/`dy` may put it partly or wholly off the canvas: what
+  lands is drawn and the rest is dropped, exactly as `stamp` does. That is what makes a scene larger
+  than the grid possible at all — see [Scenes bigger than the canvas](#scenes-bigger-than-the-canvas).
+  `wrap: true` is the other choice: whatever falls off one edge re-enters at the other.
 - **Same set only.** `from` names a sprite in this set, so both share the grid. Use `copy_sprite` to
   bring art in from another set first, then link to the copy.
 - **A link has no pixels**, so `paint_*`, `shapes.*`, `shift`, `rotate`, `clear` and `tile_layer`
@@ -521,6 +526,82 @@ to its neighbour.
 ```js
 frogsprite.move_layers(cells, { path: [[0, 0], [-1, 0]], unit: 128 });   // the view travels east
 ```
+
+#### Scenes bigger than the canvas
+
+A sprite is clipped to its grid, so a map larger than one screen cannot be *drawn* — it has to be
+composed. Cut it into sections, one sprite each, and link them into a view sprite on a cell lattice:
+
+```js
+const G = 128, cols = 2, rows = 2;                    // the grid size is the section size
+frogsprite.new_sprite('view');                       // the sections are already drawn: m-0-0, m-1-0…
+const cells = [];
+for (let j = 0; j < rows; j++)
+  for (let i = 0; i < cols; i++)
+    cells.push(frogsprite.link_layer(`m-${i}-${j}`, { name: `c${i}${j}`, dx: i * G, dy: j * G }).layer);
+```
+
+Most of those sit entirely off the canvas, which is the point: a link is clipped rather than refused,
+so a section you cannot see draws nothing and one at the edge draws its part. **The camera is a single
+offset carried by every section at once**, which is what `move_layers` takes a list of layers for:
+
+```js
+frogsprite.move_layers(cells, { path: [[0, 0], [-1, 0], [-1, -1]], unit: G });
+```
+
+`path` is where the layers go, so the view travels the other way — `[-1, 0]` is the camera moving one
+section east. A **fractional** waypoint is a view straddling two sections: `[-0.6, 0]` shows the last
+40% of one and the first 60% of the next, which is all a partial view is. And **as many waypoints as
+there are frames lands one on each**, so a path naming every cell in turn is a map you step through
+in the timeline rather than pan across.
+
+Three things decide whether it holds together:
+
+- **`wrap` stays off.** A wrapping section repeats its own copy instead of yielding to its neighbour.
+  `move_layers` writes `wrap: false` on every frame for you; `scroll_layer` defaults it to `true`, so
+  a rig driven by that one first needs putting back.
+- **Props and characters are links on the view sprite, not art painted into a section.** A section is
+  one layer and one depth, so anything inside it cannot sort against anything else — and a prop
+  straddling a seam would be cut in half. Give each one a `base` and the same camera offset the
+  sections carry: a uniform `dy` shifts every entity equally, so `base + dy` keeps the order it had.
+  See [Depth](#depth).
+- **An iso floor derives its origin rather than typing it.** Section `(i, j)` fills from
+  `(OX - i*G, OY - j*G)`, so all four are drawing one lattice instead of four. `iso_fill` already
+  covers the diamonds hanging off the canvas and the neighbour holds their other halves, so the seam
+  is *exact*: a window straddling two sections is pixel-identical to the same floor drawn as a single
+  fill, checkerboard parity and all. Type the origins by hand and the lattice jogs a few pixels at one
+  seam — invisible in either section, glaring the moment the camera crosses it.
+
+```js
+const W = 8, OX = 20, OY = 12;
+for (let j = 0; j < rows; j++)
+  for (let i = 0; i < cols; i++) {
+    frogsprite.new_sprite(`m-${i}-${j}`);
+    frogsprite.shapes.iso_fill(OX - i * G, OY - j * G, W, '#666699', { odd: '#669999' });
+  }
+```
+
+Check it through the **frame** reads, never the sprite reads — the camera lives on the animation, so
+`print_sprite` shows the rig standing still. `print_frame(i, { rect })` windows one view. Reading a
+pan off `diff_frames` takes more care here than it does for a scroll: a tiled floor *repeats*, so two
+windows a whole number of tiles apart are genuinely identical and `identical: true` says nothing
+about the camera — 128px sections on 16px tiles put every whole-section stop on the same picture.
+Diff a pair that lands mid-tile, or give each section a landmark and read that instead.
+
+**The whole map as one image.** Give the animation one stop per cell in reading order and pack it at
+the map's own width. Every cell of the sheet is a composed window, so the props and the depth sorting
+come with it rather than the terrain alone:
+
+```js
+const stops = [];
+for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) stops.push([-i, -j]);
+frogsprite.set_animation(stops.map(() => ({ sprite: 'view', ms: 400 })));
+frogsprite.move_layers(cells, { path: stops, unit: G });
+await frogsprite.export_spritesheet({ cols, scale: 1, download: true });   // 2 x 2 cells of 128 = 256x256
+```
+
+That doubles as the check on everything above: a seam that does not line up is a visible jog across a
+cell boundary, in one picture.
 
 #### Stamping vs. arranging
 
@@ -793,6 +874,9 @@ character is one link per pose plus `cycle_layers` — a single `skel` link is a
 **pose** (or that link's arrangement), never on the scene sprite — that mirrors the whole grid.
 See [Depth](#depth) — that is what lets something walk behind a pillar, and the `z` above is exactly
 the lift the section's last note is about.
+
+A floor larger than the grid is cut into sections and composed, one lattice shared between them —
+see [Scenes bigger than the canvas](#scenes-bigger-than-the-canvas).
 
 ### Importing an image
 
@@ -1094,6 +1178,11 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   frogsprite.export_spritesheet({ cols: 4 });            // 4 across, folded into rows
   frogsprite.export_spritesheet({ scale: 1 });           // one cell per grid pixel
   ```
+
+  An animation whose frames are **camera stops** over a map assembled from linked sections packs
+  into the assembled map itself — every cell is a composed *window*, so the props, entities and
+  depth sorting come with it rather than just the terrain. `scale: 1` keeps it to the map's own
+  pixels. See [Scenes bigger than the canvas](#scenes-bigger-than-the-canvas).
 
 - `export_zip({ scale = 8, effects?, transitions?, animations?, download?, base64? })` → **the whole
   set as a .zip**. Async. Contains:
