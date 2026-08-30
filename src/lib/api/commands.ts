@@ -1523,10 +1523,11 @@ const api = {
 		return svg;
 	}),
 
-	export_png: ro(function ({ sprite, scale = 8, download = false } = {} as any) {
+	export_png: ro(function ({ sprite, scale = 8, download = false, show = false } = {} as any) {
 		const t = target(sprite);
 		const url = ex.toPNG(seen(t), t.grid, scale); // display, not edit: the whole stack
 		if (download) ex.download(url, `${t.sprite.name}.png`);
+		if (show) ex.show(url, t.sprite.name);
 		return url;
 	}),
 
@@ -1539,12 +1540,13 @@ const api = {
 	 * Playback shows one frame at a time and a screenshot catches whichever was up, so a fault in
 	 * frame 9 stays invisible until it goes past. On a sheet it is obvious at a glance.
 	 */
-	contact_sheet: ro(function ({ animation, cols = 4, scale = 2, gap = 4, effects = true, transitions = true, download = false }: { animation?: string; cols?: number; scale?: number; gap?: number; effects?: boolean; transitions?: boolean; download?: boolean } = {}) {
+	contact_sheet: ro(function ({ animation, cols = 4, scale = 2, gap = 4, effects = true, transitions = true, download = false, show = false }: { animation?: string; cols?: number; scale?: number; gap?: number; effects?: boolean; transitions?: boolean; download?: boolean; show?: boolean } = {}) {
 		const set = editor.requireSet();
 		const anim = animOf(animation);
 		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
 		const url = ex.toContactSheet(set.sprites, anim.frames, set.grid, { cols, scale, gap, effects, transitions });
 		if (download) ex.download(url, `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}-sheet.png`);
+		if (show) ex.show(url, `${anim.name} — ${anim.frames.length} frames`);
 		return { animation: anim.name, frames: anim.frames.length, cols: Math.min(cols, anim.frames.length), url };
 	}),
 
@@ -1558,7 +1560,7 @@ const api = {
 	 * a CSS `steps()` background) needs nothing but the PNG. The JSON carries what the strip
 	 * cannot: which sprite each cell came from, and how long it is held.
 	 */
-	export_spritesheet: ro(function ({ animation, cols, scale = 8, effects = true, transitions = true, normals = false, download = false }: { animation?: string; cols?: number; scale?: number; effects?: boolean; transitions?: boolean; normals?: boolean; download?: boolean } = {}) {
+	export_spritesheet: ro(function ({ animation, cols, scale = 8, effects = true, transitions = true, normals = false, download = false, show = false }: { animation?: string; cols?: number; scale?: number; effects?: boolean; transitions?: boolean; normals?: boolean; download?: boolean; show?: boolean } = {}) {
 		const set = editor.requireSet();
 		const anim = animOf(animation);
 		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
@@ -1576,6 +1578,7 @@ const api = {
 			ex.download(url, `${base}.png`);
 			ex.downloadJSON(meta, `${base}.json`);
 		}
+		if (show) ex.show(url, `${base}.png`);
 		return { animation: anim.name, ...meta, url };
 	}),
 
@@ -2115,6 +2118,16 @@ const shapes = {
 		assertAlbedo(t, normals);
 		const c = toIndex(color);
 		const o = odd === undefined ? undefined : toIndex(odd);
+		// Two colours that snap onto one palette entry are a checkerboard that is not there: the call
+		// succeeds, the floor comes out a flat field, and nothing in the return value says so. That is
+		// the same shape of failure `scroll_layer` refuses in a frozen scroll, so it is refused here.
+		if (o !== undefined && o === c)
+			throw new Error(
+				`iso_fill's odd colour ${JSON.stringify(odd)} snaps to the same palette entry as ` +
+					`${JSON.stringify(color)} (index ${c}), so the checkerboard would come out a flat field. ` +
+					`The cube steps 00, 33, 66, 99, cc, ff per channel — pick two colours at least one step ` +
+					`apart (color("#669933") tells you where any hex lands), or drop { odd } for a solid fill.`
+			);
 		const painted = shape.isoFill(px, t.grid, ox, oy, w, c, o, fill);
 		if (normals)
 			paintNormals(t, (n) =>
@@ -2163,7 +2176,16 @@ const shapes = {
 					...('right' in faces ? { right: faces.right ? ISO_FACE.right : 0 } : {})
 				})
 			);
-		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_box', painted };
+		// Faces that snap onto one entry draw a box with no form. Not refused, unlike `iso_fill`'s
+		// checkerboard — a one-shade box is a legitimate silhouette — but a `facets: 1` on a call that
+		// passed three colours is the box quietly losing its shading. The outline is a colour, not a
+		// surface, so it does not count; a flat tile (`h === 0`) has only its top to count.
+		const facets = new Set(
+			(h === 0 ? [faces.top] : [faces.top, faces.left, faces.right]).filter(
+				(i) => i !== undefined && i !== TRANSPARENT
+			)
+		).size;
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_box', painted, facets };
 	})
 };
 

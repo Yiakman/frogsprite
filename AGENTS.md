@@ -85,6 +85,12 @@ Two consequences worth taking on faith rather than rediscovering:
 
 - **Pick colours that are already cube coordinates** (channels from `00 33 66 99 cc ff`) whenever the
   hue matters. Then there is nothing to round and nothing to be surprised by.
+- **Two different hexes can land on the same entry, and nothing downstream can tell them apart.**
+  `#5a7a3a` and `#4e6c33` both snap to `86`, so a checkerboard drawn in them is a flat field and a
+  sprite drawn in one is invisible against the other — the call succeeds and only the pixels know.
+  `color()` on each is the check, and it is worth running once over a scene's whole palette before
+  drawing anything: `Object.fromEntries(Object.entries(hexes).map(([k, v]) => [k, frogsprite.color(v)]))`,
+  then look for repeats. `iso_fill` refuses the one case it can see for you.
 - **Never `ramp()` between two different hue families.** Interpolation is linear in RGB, so a
   navy→peach sky necessarily passes through a point where all three channels are equal — that is
   grey by definition, and the middle of your gradient snaps to it. Ramp within one hue and butt the
@@ -800,7 +806,10 @@ frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
 ```
 
 - **`iso_fill(ox, oy, w, color)`** — every lattice point whose diamond touches the grid, in one undo
-  step. `{ odd }` is the other checkerboard colour; omit it for a solid field. `{ fill: false }` is
+  step. `{ odd }` is the other checkerboard colour; omit it for a solid field. **An `odd` that snaps
+  onto `color` is refused** — two hexes a step apart in the wrong place land on one palette entry and
+  the checkerboard comes out a flat field, which no return value would have told you (see
+  [Colours](#colours)). `{ fill: false }` is
   grout, same as `iso_tile`. Recolour is `clear` then this — the floor is scenery, baked on purpose.
   `tile_layer` stays 1D: a cartesian period is the wrong shape for a diamond lattice, and a live
   tiled layer would be one link per cell.
@@ -808,7 +817,10 @@ frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
 - **`iso_box(cx, cy, w, d, h, colors)`** — `(cx, cy)` is the centre of the **ground** diamond; `h`
   extrudes screen-up. `w` and `d` even, ≥ 2, congruent modulo 4 (so the 2:1 vertices land on pixels).
   `h === 0` is just the top tile. Paint order is left, right, top, then outline — top wins on the
-  ridges. Missing `left` / `right` / `outline` skips that face.
+  ridges. Missing `left` / `right` / `outline` skips that face. It returns **`facets`**, how many
+  distinct shades survived snapping: a `facets: 1` on a call that passed three colours is a box that
+  has quietly lost its form. Not refused, unlike `iso_fill`'s checkerboard — a one-shade box is a
+  legitimate silhouette — and the outline never counts, being a colour rather than a surface.
   - **`{ normals: true }`** writes the `.n` sibling as the box paints, so it lights as three facets
     instead of a bevelled pillow. Top is `flat`; the sides are `SW` / `SE` because world `+Y` / `+X`
     point screen-left-and-down / screen-right-and-down on this lattice, not due west / east. Outline
@@ -1146,15 +1158,24 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   await frogsprite.sha256(frogsprite.export_png({ scale: 1 }));
   ```
 - `export_svg({ sprite?, scale?, download? })` → SVG string, horizontal runs merged
-- `export_png({ sprite?, scale = 8, download? })` → `data:image/png;base64,…`
+- `export_png({ sprite?, scale = 8, download?, show? })` → `data:image/png;base64,…`
 - `export_ico({ sprite?, sizes = [16, 32, 48], download? })` → Promise of `data:image/x-icon;base64,…`
 - `export_animated_svg({ animation?, scale?, effects?, transitions?, download? })` → one animation
   as a self-contained looping SVG — the active one, or `animation` by name
-- `contact_sheet({ animation?, cols = 4, scale = 2, gap?, effects?, transitions?, download? })` →
+- `contact_sheet({ animation?, cols = 4, scale = 2, gap?, effects?, transitions?, download?, show? })` →
   every frame as one numbered PNG grid. Playback shows one frame at a time and a screenshot catches
   whichever was up, so a fault in frame 9 stays invisible until it goes past; on a sheet it is
   obvious at a glance. Reach for it before believing an animation is finished
-- `export_spritesheet({ animation?, cols?, scale = 8, effects?, transitions?, normals?, download? })` → **one
+
+  **`show: true` puts the render on screen** instead of leaving you with a data URL — over the app,
+  unsmoothed, gone on a click or Esc. `download` writes a file you then have to go and open; `show`
+  is for the far commoner case of wanting to *look* at a sheet and carry on. It works the same on
+  `export_png` and `export_spritesheet`, one overlay at a time, and saves nothing:
+
+  ```js
+  frogsprite.contact_sheet({ cols: 8, scale: 3, show: true });   // every frame, on screen, now
+  ```
+- `export_spritesheet({ animation?, cols?, scale = 8, effects?, transitions?, normals?, download?, show? })` → **one
   animation as a packed strip PNG plus its frame map** — the hand-off to a game engine, which wants
   one image with uniform cells rather than the ZIP's one file per sprite. Cells are the same size,
   in reading order, gapless, on a transparent background, so anything that asks only for a frame
@@ -1343,6 +1364,10 @@ with your work, and none affects exports or `print_sprite()`.
   ```js
   frogsprite.zoom(4, { x: 40, y: 60 });   // magnify, and put (40, 60) in the middle of the pane
   ```
+- `contact_sheet({ show: true })` — every frame at once, on screen. The canvas shows one frame and
+  playback shows whichever went past; a sheet is the only view that shows them together, and `show`
+  is what makes looking at one a single call rather than a download. `export_png` and
+  `export_spritesheet` take it too — see [Export](#export)
 - `raw(on?)` — draw the sprite **as it is stored**, ignoring the held frame's `fx`, `trail` and
   `transition`. This is the answer to "is that shape mine, or did an effect do it?" — and to "what
   would a brush stroke here actually land on?"

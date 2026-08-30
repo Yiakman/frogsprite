@@ -627,6 +627,49 @@ A.src=${JSON.stringify(albedo)}; N.src=${JSON.stringify(normal)};
 </script>`;
 }
 
+/** One overlay at a time: a second `show` replaces the first rather than stacking on it. */
+const PEEK = 'frogsprite-peek';
+
+/**
+ * Put a rendered image on screen, over the app, until it is dismissed — the counterpart to
+ * `download` for when you only wanted to *look*.
+ *
+ * A contact sheet is the one render that answers "does this animation read", and until this existed
+ * the only two ways to see one were to save it to disk or to build a viewer by hand, neither of
+ * which is a thing you do mid-session. `image-rendering: pixelated` is not decoration: a sheet
+ * scaled to fit with smoothing on is a blur, which is the one thing it must not be.
+ *
+ * ponytail: plain DOM rather than a component. It owns no state, is not saved, and is gone on the
+ * next click — a Svelte overlay would be a store, a component and a mount for something that is one
+ * function. The caption is `textContent`, since a set name is user input.
+ */
+export function show(url: string, title: string) {
+	document.getElementById(PEEK)?.remove();
+	const box = document.createElement('div');
+	box.id = PEEK;
+	box.style.cssText =
+		'position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;gap:10px;' +
+		'align-items:center;justify-content:center;background:#0b0b0edd;cursor:zoom-out';
+	const img = new Image();
+	img.src = url;
+	img.style.cssText = 'max-width:94vw;max-height:88vh;image-rendering:pixelated';
+	const caption = document.createElement('p');
+	caption.textContent = `${title} — click, or press Esc, to close`;
+	caption.style.cssText = 'margin:0;font:12px ui-monospace,SFMono-Regular,monospace;color:#c9c9d2';
+	box.append(img, caption);
+	const close = () => {
+		box.remove();
+		window.removeEventListener('keydown', onKey);
+	};
+	const onKey = (e: KeyboardEvent) => {
+		if (e.key === 'Escape') close();
+	};
+	box.addEventListener('click', close);
+	window.addEventListener('keydown', onKey);
+	document.body.append(box);
+	return title;
+}
+
 export function downloadBlob(blob: Blob, filename: string) {
 	const href = URL.createObjectURL(blob);
 	const a = document.createElement('a');
