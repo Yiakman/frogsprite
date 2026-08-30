@@ -275,6 +275,43 @@ test('projectFace skips transparent source, so holes stay holes', () => {
 	assert.throws(() => projectFace(dst, src, 8, 'east' as any), /top, left, right/);
 });
 
+test('projectFace top leaves no holes, which is the whole reason it is inverse-mapped', () => {
+	// forward-mapping this would round two source pixels onto one destination and leave the gaps
+	// between them empty. 16 source pixels in, 16 destinations painted: no holes and no collisions
+	const src = new Uint8Array(64);
+	for (let v = 0; v < 4; v++) for (let u = 0; u < 4; u++) src[v * 8 + u] = 1;
+	const dst = new Uint8Array(64);
+	assert.equal(projectFace(dst, src, 8, 'top', 3, 0), 16);
+	const widths: number[] = [];
+	for (let y = 0; y < 8; y++) {
+		const row = Array.from(dst.slice(y * 8, y * 8 + 8));
+		const first = row.indexOf(1);
+		if (first < 0) continue;
+		const last = row.lastIndexOf(1);
+		assert.ok(row.slice(first, last + 1).every((p) => p === 1), `row ${y} has a hole in it`);
+		widths.push(last - first + 1);
+	}
+	// 2:1 means a half-diamond: the `>> 1` folds two source rows onto each destination row
+	assert.deepEqual(widths, [3, 7, 5, 1]);
+});
+
+test('projectFace holds up where the destination is left of the anchor and rx goes negative', () => {
+	// the subtle half of the inverse: `rx & 1` picks the parity in two's complement and `>> 1` floors,
+	// so a source west of the diamond's north still lands. Truncating either would land it a row off
+	const src = new Uint8Array(64);
+	src[6 * 8 + 3] = 5; // source (3, 6): x = (3 - 6) + 5 = 2, y = (3 + 6) >> 1 = 4
+	const dst = new Uint8Array(64);
+	assert.equal(projectFace(dst, src, 8, 'top', 5, 0), 1);
+	assert.equal(dst[4 * 8 + 2], 5);
+
+	// and a negative offset on a sheared face, where the shift is applied to the source column
+	const wall = new Uint8Array(64);
+	wall[1 * 8 + 3] = 6; // source (3, 1): x = 3 - 2 = 1, y = (1 + (3 >> 1)) - 1 = 1
+	const out = new Uint8Array(64);
+	assert.equal(projectFace(out, wall, 8, 'left', -2, -1), 1);
+	assert.equal(out[1 * 8 + 1], 6);
+});
+
 test('shift wraps what falls off the edge when asked', () => {
 	const drop = Uint8Array.of(1, 2, 3, 4);
 	shift(drop, 2, 1, 0);

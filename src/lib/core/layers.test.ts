@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BASE, bakedBase, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, lowestRow, moves, newLayer, paintable, period, placeAt, poseAt, scrollStep, shownAs } from './layers.ts';
+import { BASE, bakedBase, closes, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, lowestRow, moves, newLayer, paintable, pathAt, period, placeAt, poseAt, scrollStep, shownAs } from './layers.ts';
 import type { Linked, Painted, Sprite } from './types.ts';
 
 // typed as Painted rather than Layer so tests can reach `.pixels` — this factory only ever builds
@@ -252,6 +252,50 @@ test('cycles catches a pose ring that would not close', () => {
 	assert.equal(cycles(12, 6), true);
 });
 
+// --- paths -------------------------------------------------------------------
+// The only arithmetic in move_layers, and the only place the open/closed distinction is decided.
+
+/** Every frame's position along a path, which is what move_layers writes one per frame. */
+const walk = (path: [number, number][], frames: number) =>
+	Array.from({ length: frames }, (_, i) => pathAt(path, i, frames));
+
+test('an open path lands exactly on its last waypoint', () => {
+	// the pan that arrives: the destination is the *last frame*, not one step past it
+	assert.deepEqual(walk([[0, 0], [4, 0]], 5), [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]]);
+});
+
+test('a closed path stops one step short, so the loop closes instead of stuttering', () => {
+	// frame 4 would be (0, 0) again — the same picture as frame 0, held for two frames on playback
+	assert.deepEqual(walk([[0, 0], [4, 0], [0, 0]], 4), [[0, 0], [2, 0], [4, 0], [2, 0]]);
+});
+
+test('a tour of a 2x2 map spends the same number of frames on each side', () => {
+	const tour = walk([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]], 8);
+	assert.deepEqual(tour, [
+		[0, 0], [0.5, 0],
+		[1, 0], [1, 0.5],
+		[1, 1], [0.5, 1],
+		[0, 1], [0, 0.5]
+	]);
+	assert.equal(closes([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]), true);
+	assert.equal(closes([[0, 0], [1, 0]]), false, 'a pan that arrives somewhere else');
+});
+
+test('waypoints are held by repeating them, which is what makes a cell-by-cell hop', () => {
+	// no `hold` option: a duplicate waypoint is a segment of zero length, so the frames spent on it
+	// are frames that do not move
+	assert.deepEqual(walk([[0, 0], [0, 0], [1, 0], [1, 0]], 4), [[0, 0], [0, 0], [1, 0], [1, 0]]);
+});
+
+test('a one-waypoint path is a constant, and a single frame is its first point', () => {
+	assert.deepEqual(walk([[3, 7]], 3), [[3, 7], [3, 7], [3, 7]]);
+	assert.deepEqual(walk([[3, 7], [9, 9]], 1), [[3, 7]], 'no span to divide, so nowhere to be but the start');
+});
+
+test('both axes interpolate, and fractions survive to be scaled by unit later', () => {
+	assert.deepEqual(walk([[0, 0], [1, 2]], 3), [[0, 0], [0.5, 1], [1, 2]]);
+});
+
 // --- linked layers -----------------------------------------------------------
 // A linked layer holds a sprite *name*, not pixels, so the source stays the one copy of that art.
 // Everything below is either "does it draw what the source draws" or "does a bad graph stay quiet",
@@ -338,6 +382,18 @@ test("a link's transparent pixels let the layer underneath show through", () => 
 		layers: [{ name: 'sky', pixels: Uint8Array.from([1, 1, 1, 1]) }, { name: 'a', from: 'tree' }]
 	};
 	assert.deepEqual(Array.from(flatten(s, 2, undefined, [t, s])), [1, 7, 1, 1], 'paint-over holds');
+});
+
+test('a frame can un-wrap a link that wraps by default, as well as wrap one that does not', () => {
+	const src = sprite(['layer-0', [1, 2, 3, 4]]);
+	const scene = linked('scene', { from: 's', name: 'l', dx: 1, wrap: true });
+	// the link wraps, so column 0 is what fell off the right
+	assert.deepEqual(Array.from(flatten(scene, 2, undefined, [src])), [2, 1, 4, 3]);
+	assert.deepEqual(
+		Array.from(flatten(scene, 2, { l: { wrap: false } }, [src])),
+		[0, 1, 0, 3],
+		'the frame says no, so the overhang is dropped rather than re-entering'
+	);
 });
 
 test('a rotate on a linked layer never touches the source buffer', () => {

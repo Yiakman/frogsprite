@@ -293,6 +293,15 @@ test('readArrangement is lenient on load and strict on write', () => {
 	assert.throws(() => readArrangement({ w: { spin: 1 } }, { strict: true }), /unknown key "spin"/);
 });
 
+test('wrap is tri-state, so a frame can un-wrap a link that wraps by default', () => {
+	// dropping the `false` made the override one-way: a link wrapping by default could never be
+	// turned off for one frame, and clearing an earlier scroll_layer's wrap did nothing
+	assert.deepEqual(readArrangement({ w: { dx: 4, wrap: false } }, { strict: true }), {
+		w: { dx: 4, wrap: false }
+	});
+	assert.deepEqual(readArrangement({ w: { dx: 4 } })?.w.wrap, undefined, 'absent still inherits');
+});
+
 test('a layer patch merges key by key, and does not wipe the keys beside it', () => {
 	// the regression: patching `dy` replaced the whole entry and threw away the `hidden: false` in
 	// it, silently un-posing half an animation with nothing on screen to say why
@@ -308,6 +317,15 @@ test('a null clears one layer entry, and a null `layers` clears them all', () =>
 	const frame = { sprite: 'a', ms: 100, layers: { a: { dx: 2 }, b: { dx: 4 } } };
 	assert.deepEqual(patchEffects(frame as any, { layers: { a: null } }).layers, { b: { dx: 4 } });
 	assert.equal(patchEffects(frame as any, { layers: null }).layers, undefined);
+});
+
+test('a dy of 0 in a patch clears a leftover pan, the way wrap: false unwraps', () => {
+	// scroll_layer writes dy: 0 for this: merge keeps the 0 long enough to overwrite, then
+	// readArrangement drops it as a no-op offset — so a later scroll does not keep sliding down
+	const frame = { sprite: 'a', ms: 100, layers: { road: { dx: 10, dy: 50, wrap: false } } };
+	assert.deepEqual(patchEffects(frame as any, { layers: { road: { dx: -8, dy: 0, wrap: true } } }).layers, {
+		road: { dx: -8, wrap: true }
+	});
 });
 
 test('the number shorthand merges as dx, keeping the rest of the entry', () => {

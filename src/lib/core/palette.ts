@@ -23,7 +23,8 @@ export const GRAY_START = 217;
 /** Every opaque index, in order — the candidate pool when no working set is active. */
 export const ALL: number[] = Array.from({ length: 255 }, (_, i) => i + 1);
 
-const RGB: [number, number, number][] = PALETTE.map((c) =>
+/** Every entry as RGB. Exported for the byte-level writers — a PNG `PLTE` is exactly this table. */
+export const RGB: [number, number, number][] = PALETTE.map((c) =>
 	c === 'transparent'
 		? [0, 0, 0]
 		: [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)]

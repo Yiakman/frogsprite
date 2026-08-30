@@ -50,6 +50,8 @@ clip (`fx` and layer arrangements are invisible to `print_sprite`).
 | Put a logo on a crate | `project_face` | `stamp` of the flat motif |
 | The same tree four times | `link_layer` | four `stamp`s — you would redraw all four by hand |
 | Scrolling background | layers + `scroll_layer` | one sprite per frame, or `fx.dx` |
+| A camera pan, or a route with corners | `move_layers` | `scroll_layer` — it loops; a pan arrives |
+| A map bigger than the grid | one sprite per section, `link_layer` per cell | one giant sprite — a sprite is grid-clipped |
 | Check art | `print_sprite` | — |
 | Check a clip | `print_frame` / `contact_sheet` | `print_sprite` |
 
@@ -83,6 +85,12 @@ Two consequences worth taking on faith rather than rediscovering:
 
 - **Pick colours that are already cube coordinates** (channels from `00 33 66 99 cc ff`) whenever the
   hue matters. Then there is nothing to round and nothing to be surprised by.
+- **Two different hexes can land on the same entry, and nothing downstream can tell them apart.**
+  `#5a7a3a` and `#4e6c33` both snap to `86`, so a checkerboard drawn in them is a flat field and a
+  sprite drawn in one is invisible against the other — the call succeeds and only the pixels know.
+  `color()` on each is the check, and it is worth running once over a scene's whole palette before
+  drawing anything: `Object.fromEntries(Object.entries(hexes).map(([k, v]) => [k, frogsprite.color(v)]))`,
+  then look for repeats. `iso_fill` refuses the one case it can see for you.
 - **Never `ramp()` between two different hue families.** Interpolation is linear in RGB, so a
   navy→peach sky necessarily passes through a point where all three channels are equal — that is
   grey by definition, and the middle of your gradient snaps to it. Ramp within one hue and butt the
@@ -235,6 +243,19 @@ palette *indices*, so there is nothing meaningful to average between index 3 and
 - `scroll_layer(name, { speed, animation, wrap, seamless })` — scroll one layer across an animation,
   `speed` px per frame and signed. Writes the offsets into every frame for you, and **refuses a
   scroll that would not loop** (see below)
+- `move_layers(names, { path, unit, animation, wrap, seamless })` — walk one layer, or a whole group
+  of them, along a path across an animation: a camera over a scene bigger than the canvas, or a prop
+  with corners in its route. Takes waypoints rather than a speed, moves every layer named as one, and
+  is the only one of these that *moves* on **`dy`**. `unit` scales the path, so a route can be said in map
+  sections rather than pixels. A **closed** path (last waypoint === first) stops one step short of
+  home so the loop closes instead of holding frame 0 twice — a 5-point tour is 4 frames, one per side.
+  An **open** one lands on its last waypoint and comes back `closed: false`; matching waypoints to
+  frames hops cell by cell. Repeat a waypoint to hold there. It refuses a path that never moves,
+  for the reason `scroll_layer` refuses a frozen scroll
+  ```js
+  frogsprite.move_layers(cells, { path: [[0,0],[1,0],[1,1],[0,1],[0,0]], unit: 128 });  // closed 2x2: 4 frames
+  frogsprite.move_layers('skel', { path: [[8,8],[40,8],[40,48]], animation: 'patrol' });
+  ```
 - `cycle_layers(names, { animation, every, sprite, seamless })` — show one of a ring of layers per
   frame: a pedal stroke, a walk cycle, a flame. The pose counterpart to `scroll_layer`, and the other
   half of what an animation needs — reach for it instead of hand-writing an `i % n` of `hidden`
@@ -289,6 +310,10 @@ step by hand.
 
 The rules worth knowing:
 
+- **A link is clipped, not refused.** `dx`/`dy` may put it partly or wholly off the canvas: what
+  lands is drawn and the rest is dropped, exactly as `stamp` does. That is what makes a scene larger
+  than the grid possible at all — see [Scenes bigger than the canvas](#scenes-bigger-than-the-canvas).
+  `wrap: true` is the other choice: whatever falls off one edge re-enters at the other.
 - **Same set only.** `from` names a sprite in this set, so both share the grid. Use `copy_sprite` to
   bring art in from another set first, then link to the copy.
 - **A link has no pixels**, so `paint_*`, `shapes.*`, `shift`, `rotate`, `clear` and `tile_layer`
@@ -296,7 +321,8 @@ The rules worth knowing:
   Reading is never refused — `print_sprite(undefined, 'tree-2')` shows you the tree.
 - **A frame's `dx` adds to the link's own.** The link says where the object lives, the frame says how
   far it has moved — so `scroll_layer` drives a linked layer like any other. (`wrap` is the exception:
-  a frame's value replaces the link's rather than adding to it.)
+  a frame's value replaces the link's rather than adding to it, in both directions — a frame's
+  `wrap: false` un-wraps a link that wraps by default.)
 - **Links can nest** — a wheel linked into a cart, the cart linked into a scene. A loop is refused
   when you make it, and drawn as nothing if one ever reaches the canvas.
 - **A link is a still.** Nested links draw, but a frame's `layers` cannot reach inside the linked
@@ -445,7 +471,8 @@ speed turns into a refused one for reasons nothing on screen explains. `tile_lay
 `repeatsEvery` it actually achieved, which is the number `scroll_layer` will measure.
 
 `hidden` is a third override, and it beats the layer's own setting in both directions: a frame can
-show a layer the sprite hides, or hide one it shows. That is how one sprite carries two arm poses.
+show a layer the sprite hides, or hide one it shows. `wrap` is the same — a frame's value replaces
+the link's, so `wrap: false` turns off a link that wraps by default. That is how one sprite carries two arm poses.
 `base` is a fourth, and beats the layer's own the same way — see [Depth](#depth).
 
 An arrangement also takes **the same geometry and colour keys `fx` does** — `invert`, `hue`,
@@ -493,6 +520,97 @@ Merging goes all the way down: patching `{ pose: { dy: -1 } }` keeps the `hidden
 
 The pixels still live on the *sprite* — what a frame carries is only an arrangement of them. So two
 animations over the same sprite can scroll it at different speeds, and neither touches the art.
+
+**A camera is not a scroll.** `scroll_layer` is for art that *repeats* and must loop, which is why it
+measures the period and refuses a speed that would jump or freeze. A pan across a scene, or a prop
+walking a route with corners in it, has no repeat to land on and a destination to reach instead —
+that is `move_layers`. The sign is the trap worth naming: `path` says where the **layers** go, so a
+camera moving east is a path going west. It writes `wrap` on every frame either way, the way
+`cycle_layers` writes `hidden`, so a rig left wrapping by an earlier `scroll_layer` is put back
+rather than quietly kept — each section would otherwise repeat its own copy instead of yielding
+to its neighbour. The other direction is `dy`: `scroll_layer` writes `dy: 0` so a leftover pan
+does not keep sliding the layer down.
+
+```js
+frogsprite.move_layers(cells, { path: [[0, 0], [-1, 0]], unit: 128 });   // the view travels east
+```
+
+#### Scenes bigger than the canvas
+
+A sprite is clipped to its grid, so a map larger than one screen cannot be *drawn* — it has to be
+composed. Cut it into sections, one sprite each, and link them into a view sprite on a cell lattice:
+
+```js
+const G = 128, cols = 2, rows = 2;                    // the grid size is the section size
+frogsprite.new_sprite('view');                       // the sections are already drawn: m-0-0, m-1-0…
+const cells = [];
+for (let j = 0; j < rows; j++)
+  for (let i = 0; i < cols; i++)
+    cells.push(frogsprite.link_layer(`m-${i}-${j}`, { name: `c${i}${j}`, dx: i * G, dy: j * G }).layer);
+```
+
+Most of those sit entirely off the canvas, which is the point: a link is clipped rather than refused,
+so a section you cannot see draws nothing and one at the edge draws its part. **The camera is a single
+offset carried by every section at once**, which is what `move_layers` takes a list of layers for:
+
+```js
+frogsprite.move_layers(cells, { path: [[0, 0], [-1, 0], [-1, -1]], unit: G });
+```
+
+`path` is where the layers go, so the view travels the other way — `[-1, 0]` is the camera moving one
+section east. A **fractional** waypoint is a view straddling two sections: `[-0.6, 0]` shows the last
+40% of one and the first 60% of the next, which is all a partial view is. An **open** path with as
+many waypoints as frames lands on each in turn, so a path naming every cell is a map you step through
+in the timeline rather than pan across. A **closed** tour wants one fewer frames than points — the
+last waypoint *is* frame 0, and drawing it would hold the start twice.
+
+Three things decide whether it holds together:
+
+- **`wrap` stays off.** A wrapping section repeats its own copy instead of yielding to its neighbour.
+  `move_layers` writes `wrap: false` on every frame for you; `scroll_layer` defaults it to `true`, so
+  a rig driven by that one first needs putting back.
+- **Props and characters are links on the view sprite, not art painted into a section.** A section is
+  one layer and one depth, so anything inside it cannot sort against anything else — and a prop
+  straddling a seam would be cut in half. Give each one a `base` and the same camera offset the
+  sections carry: a uniform `dy` shifts every entity equally, so `base + dy` keeps the order it had.
+  See [Depth](#depth).
+- **An iso floor derives its origin rather than typing it.** Section `(i, j)` fills from
+  `(OX - i*G, OY - j*G)`, so all four are drawing one lattice instead of four. `iso_fill` already
+  covers the diamonds hanging off the canvas and the neighbour holds their other halves, so the seam
+  is *exact*: a window straddling two sections is pixel-identical to the same floor drawn as a single
+  fill, checkerboard parity and all. Type the origins by hand and the lattice jogs a few pixels at one
+  seam — invisible in either section, glaring the moment the camera crosses it.
+
+```js
+const W = 8, OX = 20, OY = 12;
+for (let j = 0; j < rows; j++)
+  for (let i = 0; i < cols; i++) {
+    frogsprite.new_sprite(`m-${i}-${j}`);
+    frogsprite.shapes.iso_fill(OX - i * G, OY - j * G, W, '#666699', { odd: '#669999' });
+  }
+```
+
+Check it through the **frame** reads, never the sprite reads — the camera lives on the animation, so
+`print_sprite` shows the rig standing still. `print_frame(i, { rect })` windows one view. Reading a
+pan off `diff_frames` takes more care here than it does for a scroll: a tiled floor *repeats*, so two
+windows a whole number of tiles apart are genuinely identical and `identical: true` says nothing
+about the camera — 128px sections on 16px tiles put every whole-section stop on the same picture.
+Diff a pair that lands mid-tile, or give each section a landmark and read that instead.
+
+**The whole map as one image.** Give the animation one stop per cell in reading order and pack it at
+the map's own width. Every cell of the sheet is a composed window, so the props and the depth sorting
+come with it rather than the terrain alone:
+
+```js
+const stops = [];
+for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) stops.push([-i, -j]);
+frogsprite.set_animation(stops.map(() => ({ sprite: 'view', ms: 400 })));  // open: one cell per frame
+frogsprite.move_layers(cells, { path: stops, unit: G });
+await frogsprite.export_spritesheet({ cols, scale: 1, download: true });   // 2 x 2 cells of 128 = 256x256
+```
+
+That doubles as the check on everything above: a seam that does not line up is a visible jog across a
+cell boundary, in one picture.
 
 #### Stamping vs. arranging
 
@@ -688,7 +806,10 @@ frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
 ```
 
 - **`iso_fill(ox, oy, w, color)`** — every lattice point whose diamond touches the grid, in one undo
-  step. `{ odd }` is the other checkerboard colour; omit it for a solid field. `{ fill: false }` is
+  step. `{ odd }` is the other checkerboard colour; omit it for a solid field. **An `odd` that snaps
+  onto `color` is refused** — two hexes a step apart in the wrong place land on one palette entry and
+  the checkerboard comes out a flat field, which no return value would have told you (see
+  [Colours](#colours)). `{ fill: false }` is
   grout, same as `iso_tile`. Recolour is `clear` then this — the floor is scenery, baked on purpose.
   `tile_layer` stays 1D: a cartesian period is the wrong shape for a diamond lattice, and a live
   tiled layer would be one link per cell.
@@ -696,7 +817,10 @@ frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
 - **`iso_box(cx, cy, w, d, h, colors)`** — `(cx, cy)` is the centre of the **ground** diamond; `h`
   extrudes screen-up. `w` and `d` even, ≥ 2, congruent modulo 4 (so the 2:1 vertices land on pixels).
   `h === 0` is just the top tile. Paint order is left, right, top, then outline — top wins on the
-  ridges. Missing `left` / `right` / `outline` skips that face.
+  ridges. Missing `left` / `right` / `outline` skips that face. It returns **`facets`**, how many
+  distinct shades survived snapping: a `facets: 1` on a call that passed three colours is a box that
+  has quietly lost its form. Not refused, unlike `iso_fill`'s checkerboard — a one-shade box is a
+  legitimate silhouette — and the outline never counts, being a colour rather than a surface.
   - **`{ normals: true }`** writes the `.n` sibling as the box paints, so it lights as three facets
     instead of a bevelled pillow. Top is `flat`; the sides are `SW` / `SE` because world `+Y` / `+X`
     point screen-left-and-down / screen-right-and-down on this lattice, not due west / east. Outline
@@ -721,14 +845,15 @@ frogsprite.shapes.iso_box(OX + wall.dx, OY + wall.dy, W, W, 24, {
   right at +1/2) or `'right'` (the SE quad, rising at −1/2). Same-set, like `stamp`: the source size
   *is* the face, transparent skipped, no resample. `{ dx, dy }` is where source (0, 0) lands — for a
   box at `(cx, cy)` of height `h` that is `(cx - w, cy - h)` for `left`, `(cx, cy + w / 2 - h)` for
-  `right`, and `(cx, cy - w / 2)` for `top`. `{ normals: true }` writes that face's label
-  (`flat` / `SW` / `SE`) onto the `.n` sibling, so aiming at the wrong face is a wrong light
-  direction as well as a wrong shear.
+  `right`, and `(cx, cy - w / 2 - h)` for `top` — the top face is the ground diamond *lifted*, so it
+  subtracts `h` like the other two, and an anchor that forgets it lands the motif on the right face.
+  `{ normals: true }` writes that face's label (`flat` / `SW` / `SE`) onto the `.n` sibling, so aiming
+  at the wrong face is a wrong light direction as well as a wrong shear.
 
 ```js
 frogsprite.shapes.iso_box(16, 20, 8, 8, 8, { top: '#996633', left: '#663300', right: '#331900' });
-frogsprite.project_face('logo', 'right');
-frogsprite.project_face('grate', 'top', { dy: -8 });
+frogsprite.project_face('logo', 'right', { dx: 16, dy: 16 });   // (cx, cy + w / 2 - h)
+frogsprite.project_face('grate', 'top', { dx: 16, dy: 8 });     // (cx, cy - w / 2 - h)
 ```
 
 - **`iso_to_grid(x, y, z?)`** or **`iso_to_grid(x, y, { w, z })`** → `{ dx, dy }`, a screen offset
@@ -765,6 +890,9 @@ character is one link per pose plus `cycle_layers` — a single `skel` link is a
 **pose** (or that link's arrangement), never on the scene sprite — that mirrors the whole grid.
 See [Depth](#depth) — that is what lets something walk behind a pillar, and the `z` above is exactly
 the lift the section's last note is about.
+
+A floor larger than the grid is cut into sections and composed, one lattice shared between them —
+see [Scenes bigger than the canvas](#scenes-bigger-than-the-canvas).
 
 ### Importing an image
 
@@ -1030,15 +1158,40 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   await frogsprite.sha256(frogsprite.export_png({ scale: 1 }));
   ```
 - `export_svg({ sprite?, scale?, download? })` → SVG string, horizontal runs merged
-- `export_png({ sprite?, scale = 8, download? })` → `data:image/png;base64,…`
+- `export_png({ sprite?, scale = 8, download?, show? })` → `data:image/png;base64,…`
 - `export_ico({ sprite?, sizes = [16, 32, 48], download? })` → Promise of `data:image/x-icon;base64,…`
 - `export_animated_svg({ animation?, scale?, effects?, transitions?, download? })` → one animation
   as a self-contained looping SVG — the active one, or `animation` by name
-- `contact_sheet({ animation?, cols = 4, scale = 2, gap?, effects?, transitions?, download? })` →
+- `export_apng({ animation?, scale = 8, effects?, transitions?, download?, show?, dataUrl? })` → **one
+  animation as an animated PNG**, and the answer to "can I have this as a gif". Returns
+  `{ animation, file, frames, width, height, bytes }` — the file itself only for `dataUrl: true`,
+  since an animation is the one export big enough that a data URL would bury a console; `download`
+  and `show` build it for you. Measured on a 32-frame 64px scene: the animated SVG is **1.2 MB**,
+  this is **41 KB at `scale: 4`** and 16 KB at `scale: 1`, because an SVG holds every frame at once as
+  vector rects and its size follows the painted rect count (a 16px sprite: 12 KB of SVG, 2.3 KB of
+  APNG). The 256-entry palette is the PNG's `PLTE` verbatim and index 0 its `tRNS`, so nothing is
+  quantised or dithered, and a frame delay is `ms / 1000` — exact, where GIF rounds to centiseconds.
+  **Not GIF** because LZW has no platform equivalent and would be a hand-written coder for worse
+  compression; what GIF still buys is universal embedding, and an APNG's fallback wherever it is not
+  understood is its first frame, shown as an ordinary still PNG
+  ```js
+  frogsprite.export_apng({ show: true });                   // look at it
+  frogsprite.export_apng({ scale: 4, download: true });     // and keep it
+  ```
+- `contact_sheet({ animation?, cols = 4, scale = 2, gap?, effects?, transitions?, download?, show? })` →
   every frame as one numbered PNG grid. Playback shows one frame at a time and a screenshot catches
   whichever was up, so a fault in frame 9 stays invisible until it goes past; on a sheet it is
   obvious at a glance. Reach for it before believing an animation is finished
-- `export_spritesheet({ animation?, cols?, scale = 8, effects?, transitions?, normals?, download? })` → **one
+
+  **`show: true` puts the render on screen** instead of leaving you with a data URL — over the app,
+  unsmoothed, gone on a click or Esc. `download` writes a file you then have to go and open; `show`
+  is for the far commoner case of wanting to *look* at a sheet and carry on. It works the same on
+  `export_png` and `export_spritesheet`, one overlay at a time, and saves nothing:
+
+  ```js
+  frogsprite.contact_sheet({ cols: 8, scale: 3, show: true });   // every frame, on screen, now
+  ```
+- `export_spritesheet({ animation?, cols?, scale = 8, effects?, transitions?, normals?, download?, show? })` → **one
   animation as a packed strip PNG plus its frame map** — the hand-off to a game engine, which wants
   one image with uniform cells rather than the ZIP's one file per sprite. Cells are the same size,
   in reading order, gapless, on a transparent background, so anything that asks only for a frame
@@ -1066,6 +1219,11 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   frogsprite.export_spritesheet({ cols: 4 });            // 4 across, folded into rows
   frogsprite.export_spritesheet({ scale: 1 });           // one cell per grid pixel
   ```
+
+  An animation whose frames are **camera stops** over a map assembled from linked sections packs
+  into the assembled map itself — every cell is a composed *window*, so the props, entities and
+  depth sorting come with it rather than just the terrain. `scale: 1` keeps it to the map's own
+  pixels. See [Scenes bigger than the canvas](#scenes-bigger-than-the-canvas).
 
 - `export_zip({ scale = 8, effects?, transitions?, animations?, download?, base64? })` → **the whole
   set as a .zip**. Async. Contains:
@@ -1222,6 +1380,10 @@ with your work, and none affects exports or `print_sprite()`.
   ```js
   frogsprite.zoom(4, { x: 40, y: 60 });   // magnify, and put (40, 60) in the middle of the pane
   ```
+- `contact_sheet({ show: true })` — every frame at once, on screen. The canvas shows one frame and
+  playback shows whichever went past; a sheet is the only view that shows them together, and `show`
+  is what makes looking at one a single call rather than a download. `export_png` and
+  `export_spritesheet` take it too — see [Export](#export)
 - `raw(on?)` — draw the sprite **as it is stored**, ignoring the held frame's `fx`, `trail` and
   `transition`. This is the answer to "is that shape mine, or did an effect do it?" — and to "what
   would a brush stroke here actually land on?"

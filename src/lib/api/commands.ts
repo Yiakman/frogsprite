@@ -9,7 +9,7 @@ import { diffPixels, GRIDS, ISO_FACES, projectFace, put, reflect as reflectHalf,
 import { sha256 as hashOf } from '../io/hash.ts';
 import { freeName, taken } from '../core/names.ts';
 import { ISO_FACE, normalsOf } from '../core/normals.ts';
-import { BASE, bakedBase, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, period as periodOf, placeAt, poseAt, scrollStep, shownAs } from '../core/layers.ts';
+import { BASE, bakedBase, closes, copyOfSprite, cycles, flatten, frameStep, isLinked, layerOf, links, loops, moves, newLayer, paintable, pathAt, period as periodOf, placeAt, poseAt, scrollStep, shownAs, type Waypoint } from '../core/layers.ts';
 import * as selection from '../core/selection.ts';
 import * as shape from '../core/shapes.ts';
 import type { Point } from '../core/shapes.ts';
@@ -536,9 +536,17 @@ const api = {
 
 	/**
 	 * Stamp a flat motif onto a 2:1 iso face of the current sprite. `face` is `top` (diamond),
-	 * `left` (−1/2 slope) or `right` (+1/2 slope). Same-set, same grid, like `stamp` — the source
-	 * size *is* the face, no resample. `{ normals: true }` writes that face's label (`flat` / `SW` /
-	 * `SE`) onto the `.n` sibling for every opaque projected pixel.
+	 * `left` (the SW face, +1/2 slope) or `right` (the SE face, −1/2 slope) — the three `iso_box`
+	 * draws. Same-set, same grid, like `stamp` — the source size *is* the face, no resample.
+	 *
+	 * `{ dx, dy }` is where source (0, 0) lands. For a box at `(cx, cy)` of height `h` that is
+	 * `(cx - w, cy - h)` for `left`, `(cx, cy + w / 2 - h)` for `right` and `(cx, cy - w / 2 - h)`
+	 * for `top` — **every one of them lifts by `h`**, the top face included: it is the ground
+	 * diamond raised, so an anchor that forgets `h` lands the motif on the right face instead, at a
+	 * shear that still looks plausible.
+	 *
+	 * `{ normals: true }` writes that face's label (`flat` / `SW` / `SE`) onto the `.n` sibling for
+	 * every opaque projected pixel.
 	 */
 	project_face: mut(function (
 		from: string,
@@ -934,8 +942,9 @@ const api = {
 	 *   scroll_layer('fuji', { speed: -2 })     // far away, drifts
 	 *   scroll_layer('road', { speed: -16 })    // underfoot, races
 	 *
-	 * Writes `dx: speed * i` into every frame, leaving other layers' arrangements alone. `speed` is
-	 * px per frame and signed: negative scrolls left, which is what a rider moving right sees.
+	 * Writes `dx: speed * i` into every frame, and `dy: 0` so a leftover `move_layers` pan is put
+	 * back rather than quietly kept. Other layers' arrangements are left alone. `speed` is px per
+	 * frame and signed: negative scrolls left, which is what a rider moving right sees.
 	 *
 	 * **It refuses a scroll that would not loop.** A layer moving `s` px over `n` frames travels
 	 * `n·s`, and unless that is a whole number of the art's own repeats the last frame cuts back to
@@ -982,10 +991,91 @@ const api = {
 			);
 		}
 		anim.frames = anim.frames.map((f, i) =>
-			patchEffects(f, { layers: { [layer]: { dx: Math.round(speed) * i, wrap } } })
+			patchEffects(f, { layers: { [layer]: { dx: Math.round(speed) * i, dy: 0, wrap } } })
 		);
 		editor.stop();
 		return { animation: anim.name, layer, speed, frames: n, repeatsEvery: p, seamless: ok };
+	}),
+
+	/**
+	 * Walk one layer, or a whole group of them, along a path across an animation — a camera over a
+	 * scene bigger than the canvas, or a prop with corners in its route.
+	 *
+	 *   move_layers(cells, { path: [[0,0], [1,0], [1,1], [0,1], [0,0]], unit: 128 })   // closed 2x2: 4 frames
+	 *   move_layers('skel', { path: [[8,8], [40,8], [40,48]], animation: 'patrol' })   // one prop, three legs
+	 *
+	 * `scroll_layer` is for a layer that repeats and must loop; this is for one that does not and has
+	 * to *arrive*. It writes `dx` **and `dy`** — the axis a scroll never had — into every frame for
+	 * every layer named, so a rig of section links all carrying the same offset moves as one camera.
+	 *
+	 * `unit` scales the whole path, so a route can be said in sections rather than pixels: at
+	 * `unit: 128`, `[0.5, 0]` is half a section east. Rounding happens once, at the end, so fractions
+	 * do not drift. `path` is where the **layers** go — a camera is the negative of where the camera
+	 * goes, since moving the view east slides the map west.
+	 *
+	 * A **closed** path (last waypoint === first) stops one step short of home, so the loop closes
+	 * instead of holding frame 0 twice — a 5-point tour is 4 frames, one per side. An **open** one
+	 * lands on its last waypoint at the last frame and comes back `closed: false`, which is the tour
+	 * that visibly snaps back on playback. Matching waypoints to frames is that open path: it hops
+	 * cell by cell. Repeat a waypoint to hold there — a duplicate is a segment with nowhere to go.
+	 *
+	 * It refuses a path that never moves, for the reason `scroll_layer` refuses a frozen scroll: every
+	 * frame identical is invisible in a still, invisible in the return value, and reads on playback as
+	 * an animation nobody wired up. Usually it means `unit` was left at 1.
+	 *
+	 * `wrap` is off unless asked, because a rig of map sections must not wrap — each one would repeat
+	 * its own copy instead of yielding to its neighbour. It is written on every frame either way, the
+	 * way `cycle_layers` writes `hidden`, so a rig left wrapping by an earlier `scroll_layer` is put
+	 * back rather than quietly kept.
+	 */
+	move_layers: mut(function (names: string | string[], { path, unit = 1, animation, sprite, wrap = false, seamless = true }: { path: [number, number][]; unit?: number; animation?: string; sprite?: string; wrap?: boolean; seamless?: boolean }) {
+		const list = Array.isArray(names) ? names : [names];
+		if (!list.length || list.some((n) => typeof n !== 'string' || !n))
+			throw new Error('move_layers needs a layer name, or a list of them');
+		if (!Array.isArray(path) || !path.length)
+			throw new Error('move_layers needs a path: [[x, y], [x, y]…], in whatever unit you count in');
+		const route: Waypoint[] = path.map((p, i) => {
+			if (!Array.isArray(p) || p.length !== 2 || !p.every((n) => Number.isFinite(n)))
+				throw new Error(`waypoint ${i} of the path is not an [x, y] pair of numbers`);
+			return [Number(p[0]), Number(p[1])] as Waypoint;
+		});
+		if (!Number.isFinite(unit)) throw new Error('move_layers unit must be a number of pixels per path step');
+		const anim = animOf(animation);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames to move over`);
+		const t = target(sprite);
+		for (const n of list) layerOf(t.sprite, n); // throws with the stack before anything is written
+		const n = anim.frames.length;
+		// every frame's offset resolved first, so the still check below reads the pixels that will
+		// actually be written rather than the waypoints they came from — a path can move and still round
+		// to one offset, which is the failure that looks like a layer nobody animated
+		const at = anim.frames.map((_, i) => {
+			const [x, y] = pathAt(route, i, n);
+			return { dx: Math.round(x * unit), dy: Math.round(y * unit) };
+		});
+		if (n > 1 && seamless && at.every((p) => p.dx === at[0].dx && p.dy === at[0].dy))
+			throw new Error(
+				`this path writes the same offset (${at[0].dx}, ${at[0].dy}) into all ${n} frames, so the ` +
+					`layer(s) would sit perfectly still. At unit ${unit} the whole route spans less than a pixel — ` +
+					`either spread the waypoints, or raise unit (a path counted in map sections wants the grid ` +
+					`size, unit: ${t.grid}). { seamless: false } allows it.`
+			);
+		anim.frames = anim.frames.map((f, i) =>
+			patchEffects(f, {
+				layers: Object.fromEntries(list.map((nm) => [nm, { ...at[i], wrap }]))
+			})
+		);
+		editor.stop();
+		return {
+			animation: anim.name,
+			layers: list.length,
+			frames: n,
+			unit,
+			from: at[0],
+			to: at[n - 1],
+			// false is the tour that cuts back to the start on loop. Reported rather than refused: unlike a
+			// parallax scroll, a one-way pan is a finished thing you may well be exporting as a sheet
+			closed: closes(route)
+		};
 	}),
 
 	/**
@@ -1433,10 +1523,11 @@ const api = {
 		return svg;
 	}),
 
-	export_png: ro(function ({ sprite, scale = 8, download = false } = {} as any) {
+	export_png: ro(function ({ sprite, scale = 8, download = false, show = false } = {} as any) {
 		const t = target(sprite);
 		const url = ex.toPNG(seen(t), t.grid, scale); // display, not edit: the whole stack
 		if (download) ex.download(url, `${t.sprite.name}.png`);
+		if (show) ex.show(url, t.sprite.name);
 		return url;
 	}),
 
@@ -1449,12 +1540,13 @@ const api = {
 	 * Playback shows one frame at a time and a screenshot catches whichever was up, so a fault in
 	 * frame 9 stays invisible until it goes past. On a sheet it is obvious at a glance.
 	 */
-	contact_sheet: ro(function ({ animation, cols = 4, scale = 2, gap = 4, effects = true, transitions = true, download = false }: { animation?: string; cols?: number; scale?: number; gap?: number; effects?: boolean; transitions?: boolean; download?: boolean } = {}) {
+	contact_sheet: ro(function ({ animation, cols = 4, scale = 2, gap = 4, effects = true, transitions = true, download = false, show = false }: { animation?: string; cols?: number; scale?: number; gap?: number; effects?: boolean; transitions?: boolean; download?: boolean; show?: boolean } = {}) {
 		const set = editor.requireSet();
 		const anim = animOf(animation);
 		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
 		const url = ex.toContactSheet(set.sprites, anim.frames, set.grid, { cols, scale, gap, effects, transitions });
 		if (download) ex.download(url, `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}-sheet.png`);
+		if (show) ex.show(url, `${anim.name} — ${anim.frames.length} frames`);
 		return { animation: anim.name, frames: anim.frames.length, cols: Math.min(cols, anim.frames.length), url };
 	}),
 
@@ -1468,7 +1560,42 @@ const api = {
 	 * a CSS `steps()` background) needs nothing but the PNG. The JSON carries what the strip
 	 * cannot: which sprite each cell came from, and how long it is held.
 	 */
-	export_spritesheet: ro(function ({ animation, cols, scale = 8, effects = true, transitions = true, normals = false, download = false }: { animation?: string; cols?: number; scale?: number; effects?: boolean; transitions?: boolean; normals?: boolean; download?: boolean } = {}) {
+	/**
+	 * One animation as an **animated PNG** — the same picture as `export_animated_svg`, at a fraction
+	 * of the size, and the answer to "can I have this as a gif".
+	 *
+	 *   export_apng({ show: true })                 // look at it
+	 *   export_apng({ scale: 4, download: true })   // and keep it
+	 *
+	 * An animated SVG holds every frame at once as vector rects, so its size follows the *painted
+	 * rect count*: a 16px sprite is 12 KB and a full 64px scene is over a megabyte. This writes the
+	 * frames as indexed bitmaps, which is what they already are — the 256-entry palette is the PNG's
+	 * `PLTE` verbatim and index 0 is its `tRNS`, so nothing is quantised and nothing is dithered.
+	 *
+	 * APNG rather than GIF because GIF's LZW has no platform equivalent and would be a hand-written
+	 * coder, where a PNG wants the zlib deflate `CompressionStream` already emits; because a frame
+	 * delay here is `ms / 1000` exactly rather than GIF's centiseconds; and because it comes out
+	 * smaller. What GIF still has is universal embedding — an APNG's fallback in anything that does
+	 * not know the format is its first frame, shown as an ordinary still PNG.
+	 *
+	 * Returns the size rather than the file: an animation is the one export big enough that handing
+	 * back a data URL by default would bury a console. `dataUrl: true` asks for it, the same way
+	 * `export_zip` takes `base64`.
+	 */
+	export_apng: ro(async function ({ animation, scale = 8, effects = true, transitions = true, download = false, show = false, dataUrl = false }: { animation?: string; scale?: number; effects?: boolean; transitions?: boolean; download?: boolean; show?: boolean; dataUrl?: boolean } = {}) {
+		const set = editor.requireSet();
+		const anim = animOf(animation);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
+		const { png, frames, size } = await ex.toAPNG(set.sprites, anim.frames, set.grid, { scale, effects, transitions });
+		const file = `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}.png`;
+		// built only when something asks for it — the string is four thirds of the file
+		const url = download || show || dataUrl ? ex.toDataURL(png, 'image/png') : undefined;
+		if (download) ex.download(url!, file);
+		if (show) ex.show(url!, `${anim.name} — ${frames} frames, ${(png.length / 1024).toFixed(1)} KB`);
+		return { animation: anim.name, file, frames, width: size, height: size, bytes: png.length, ...(dataUrl ? { url } : {}) };
+	}),
+
+	export_spritesheet: ro(function ({ animation, cols, scale = 8, effects = true, transitions = true, normals = false, download = false, show = false }: { animation?: string; cols?: number; scale?: number; effects?: boolean; transitions?: boolean; normals?: boolean; download?: boolean; show?: boolean } = {}) {
 		const set = editor.requireSet();
 		const anim = animOf(animation);
 		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
@@ -1486,6 +1613,7 @@ const api = {
 			ex.download(url, `${base}.png`);
 			ex.downloadJSON(meta, `${base}.json`);
 		}
+		if (show) ex.show(url, `${base}.png`);
 		return { animation: anim.name, ...meta, url };
 	}),
 
@@ -1648,12 +1776,12 @@ const api = {
 			],
 			groups: {
 				structure: ['new_package', 'new_set', 'new_sprite', 'clone_sprite', 'select', 'delete_sprite', 'delete_set', 'delete_package'],
-				layers: ['new_layer', 'link_layer', 'unlink_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'tile_layer', 'scroll_layer', 'cycle_layers', 'flatten_sprite'],
+				layers: ['new_layer', 'link_layer', 'unlink_layer', 'select_layer', 'delete_layer', 'hide_layer', 'set_layers', 'tile_layer', 'scroll_layer', 'move_layers', 'cycle_layers', 'flatten_sprite'],
 				copying: ['copy_set', 'copy_sprite', 'copy_animation', 'copy_frames', 'copy_layer'],
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'project_face', 'reflect', 'rotate', 'shift', 'clear', 'ramp', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
-				exporting: ['export_zip', 'export_spritesheet', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico', 'sha256'],
+				exporting: ['export_zip', 'export_spritesheet', 'export_png', 'export_svg', 'export_animated_svg', 'export_apng', 'export_ico', 'sha256'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
 				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'diff_frames', 'contact_sheet', 'palette', 'color', 'iso_to_grid', 'background', 'silhouette', 'zoom', 'raw', 'help'],
 				history: ['undo', 'redo', 'history', 'batch'],
@@ -2025,6 +2153,16 @@ const shapes = {
 		assertAlbedo(t, normals);
 		const c = toIndex(color);
 		const o = odd === undefined ? undefined : toIndex(odd);
+		// Two colours that snap onto one palette entry are a checkerboard that is not there: the call
+		// succeeds, the floor comes out a flat field, and nothing in the return value says so. That is
+		// the same shape of failure `scroll_layer` refuses in a frozen scroll, so it is refused here.
+		if (o !== undefined && o === c)
+			throw new Error(
+				`iso_fill's odd colour ${JSON.stringify(odd)} snaps to the same palette entry as ` +
+					`${JSON.stringify(color)} (index ${c}), so the checkerboard would come out a flat field. ` +
+					`The cube steps 00, 33, 66, 99, cc, ff per channel — pick two colours at least one step ` +
+					`apart (color("#669933") tells you where any hex lands), or drop { odd } for a solid fill.`
+			);
 		const painted = shape.isoFill(px, t.grid, ox, oy, w, c, o, fill);
 		if (normals)
 			paintNormals(t, (n) =>
@@ -2073,7 +2211,16 @@ const shapes = {
 					...('right' in faces ? { right: faces.right ? ISO_FACE.right : 0 } : {})
 				})
 			);
-		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_box', painted };
+		// Faces that snap onto one entry draw a box with no form. Not refused, unlike `iso_fill`'s
+		// checkerboard — a one-shade box is a legitimate silhouette — but a `facets: 1` on a call that
+		// passed three colours is the box quietly losing its shading. The outline is a colour, not a
+		// surface, so it does not count; a flat tile (`h === 0`) has only its top to count.
+		const facets = new Set(
+			(h === 0 ? [faces.top] : [faces.top, faces.left, faces.right]).filter(
+				(i) => i !== undefined && i !== TRANSPARENT
+			)
+		).size;
+		return { sprite: t.sprite.name, layer: t.layer.name, shape: 'iso_box', painted, facets };
 	})
 };
 
