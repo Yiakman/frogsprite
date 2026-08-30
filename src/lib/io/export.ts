@@ -2,7 +2,8 @@ import { compose, progress, steps } from '../core/fx.ts';
 import type { Pixels } from '../core/grid.ts';
 import { flatten } from '../core/layers.ts';
 import { normalColors, remapLabels } from '../core/normals.ts';
-import { PALETTE, TRANSPARENT } from '../core/palette.ts';
+import { PALETTE, RGB, TRANSPARENT } from '../core/palette.ts';
+import { encodeAPNG, upscaleIndices, type APNGFrame } from './apng.ts';
 import { setPayload } from './storage.ts';
 import { zip, type ZipEntry } from './zip.ts';
 import type { Frame, Sprite, SpriteSet } from '../core/types.ts';
@@ -668,6 +669,50 @@ export function show(url: string, title: string) {
 	window.addEventListener('keydown', onKey);
 	document.body.append(box);
 	return title;
+}
+
+/**
+ * One animation as an **animated PNG** — the compact counterpart to `toAnimatedSVG`.
+ *
+ * The SVG holds every frame at once as vector rects and toggles them with CSS, so its size follows
+ * the *painted rect count*: fine for a 16px sprite, and a megabyte for a full scene. This is the same
+ * animation as indexed bitmaps, which is what these pixels already are.
+ *
+ * Transitions expand into sub-frames exactly as they do in the SVG, so the two exports play the same
+ * thing rather than one of them quietly dropping a scan.
+ */
+export async function toAPNG(
+	sprites: Sprite[],
+	frames: Frame[],
+	grid: number,
+	{ scale = 8, effects = true, transitions = true }: BakeOptions & { scale?: number } = {}
+): Promise<{ png: Uint8Array; frames: number; size: number }> {
+	if (!frames.length) throw new Error('animation has no frames');
+	const known = new Set(sprites.map((s) => s.name));
+	frames.forEach((f, i) => {
+		if (!known.has(f.sprite)) throw new Error(`frame ${i} references missing sprite "${f.sprite}"`);
+	});
+	const step = Math.max(1, Math.trunc(scale));
+	const out: APNGFrame[] = [];
+	frames.forEach((f, i) => {
+		const n = transitions ? steps(f, grid) : 1;
+		for (let p = 0; p < n; p++)
+			out.push({
+				indices: upscaleIndices(compose(frames, i, sprites, grid, progress(p, n), { effects, transitions }), grid, grid, step),
+				ms: f.ms / n
+			});
+	});
+	const size = grid * step;
+	const table = new Uint8Array(768);
+	RGB.forEach(([r, g, b], i) => table.set([r, g, b], i * 3));
+	return { png: await encodeAPNG(out, size, size, table, TRANSPARENT), frames: out.length, size };
+}
+
+/** Bytes as a `data:` URL, the same way the ICO is assembled — every export hands back one of these. */
+export function toDataURL(data: Uint8Array, mime: string) {
+	let bin = '';
+	for (const b of data) bin += String.fromCharCode(b);
+	return `data:${mime};base64,` + btoa(bin);
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

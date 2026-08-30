@@ -114,6 +114,12 @@
 					>
 					<button
 						disabled={!editor.frames.length}
+						title="The animation as one animated PNG — the same clip as the SVG at a fraction of the size, and what to send someone"
+						onclick={() => menuRun(exportMenu, () => fs.export_apng({ download: true }))}
+						data-testid="export-apng">Animated PNG</button
+					>
+					<button
+						disabled={!editor.frames.length}
 						title="The animation as one packed strip PNG plus its frame map — what a game engine loads"
 						onclick={() => menuRun(exportMenu, () => fs.export_spritesheet({ download: true }))}
 						data-testid="export-spritesheet">Spritesheet</button

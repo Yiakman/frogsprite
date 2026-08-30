@@ -1162,6 +1162,22 @@ Each returns its data (and also downloads a file when passed `{ download: true }
 - `export_ico({ sprite?, sizes = [16, 32, 48], download? })` → Promise of `data:image/x-icon;base64,…`
 - `export_animated_svg({ animation?, scale?, effects?, transitions?, download? })` → one animation
   as a self-contained looping SVG — the active one, or `animation` by name
+- `export_apng({ animation?, scale = 8, effects?, transitions?, download?, show?, dataUrl? })` → **one
+  animation as an animated PNG**, and the answer to "can I have this as a gif". Returns
+  `{ animation, file, frames, width, height, bytes }` — the file itself only for `dataUrl: true`,
+  since an animation is the one export big enough that a data URL would bury a console; `download`
+  and `show` build it for you. Measured on a 32-frame 64px scene: the animated SVG is **1.2 MB**,
+  this is **41 KB at `scale: 4`** and 16 KB at `scale: 1`, because an SVG holds every frame at once as
+  vector rects and its size follows the painted rect count (a 16px sprite: 12 KB of SVG, 2.3 KB of
+  APNG). The 256-entry palette is the PNG's `PLTE` verbatim and index 0 its `tRNS`, so nothing is
+  quantised or dithered, and a frame delay is `ms / 1000` — exact, where GIF rounds to centiseconds.
+  **Not GIF** because LZW has no platform equivalent and would be a hand-written coder for worse
+  compression; what GIF still buys is universal embedding, and an APNG's fallback wherever it is not
+  understood is its first frame, shown as an ordinary still PNG
+  ```js
+  frogsprite.export_apng({ show: true });                   // look at it
+  frogsprite.export_apng({ scale: 4, download: true });     // and keep it
+  ```
 - `contact_sheet({ animation?, cols = 4, scale = 2, gap?, effects?, transitions?, download?, show? })` →
   every frame as one numbered PNG grid. Playback shows one frame at a time and a screenshot catches
   whichever was up, so a fault in frame 9 stays invisible until it goes past; on a sheet it is

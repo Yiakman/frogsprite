@@ -1560,6 +1560,41 @@ const api = {
 	 * a CSS `steps()` background) needs nothing but the PNG. The JSON carries what the strip
 	 * cannot: which sprite each cell came from, and how long it is held.
 	 */
+	/**
+	 * One animation as an **animated PNG** — the same picture as `export_animated_svg`, at a fraction
+	 * of the size, and the answer to "can I have this as a gif".
+	 *
+	 *   export_apng({ show: true })                 // look at it
+	 *   export_apng({ scale: 4, download: true })   // and keep it
+	 *
+	 * An animated SVG holds every frame at once as vector rects, so its size follows the *painted
+	 * rect count*: a 16px sprite is 12 KB and a full 64px scene is over a megabyte. This writes the
+	 * frames as indexed bitmaps, which is what they already are — the 256-entry palette is the PNG's
+	 * `PLTE` verbatim and index 0 is its `tRNS`, so nothing is quantised and nothing is dithered.
+	 *
+	 * APNG rather than GIF because GIF's LZW has no platform equivalent and would be a hand-written
+	 * coder, where a PNG wants the zlib deflate `CompressionStream` already emits; because a frame
+	 * delay here is `ms / 1000` exactly rather than GIF's centiseconds; and because it comes out
+	 * smaller. What GIF still has is universal embedding — an APNG's fallback in anything that does
+	 * not know the format is its first frame, shown as an ordinary still PNG.
+	 *
+	 * Returns the size rather than the file: an animation is the one export big enough that handing
+	 * back a data URL by default would bury a console. `dataUrl: true` asks for it, the same way
+	 * `export_zip` takes `base64`.
+	 */
+	export_apng: ro(async function ({ animation, scale = 8, effects = true, transitions = true, download = false, show = false, dataUrl = false }: { animation?: string; scale?: number; effects?: boolean; transitions?: boolean; download?: boolean; show?: boolean; dataUrl?: boolean } = {}) {
+		const set = editor.requireSet();
+		const anim = animOf(animation);
+		if (!anim.frames.length) throw new Error(`animation "${anim.name}" has no frames`);
+		const { png, frames, size } = await ex.toAPNG(set.sprites, anim.frames, set.grid, { scale, effects, transitions });
+		const file = `${ex.safeFile(set.name)}-${ex.safeFile(anim.name)}.png`;
+		// built only when something asks for it — the string is four thirds of the file
+		const url = download || show || dataUrl ? ex.toDataURL(png, 'image/png') : undefined;
+		if (download) ex.download(url!, file);
+		if (show) ex.show(url!, `${anim.name} — ${frames} frames, ${(png.length / 1024).toFixed(1)} KB`);
+		return { animation: anim.name, file, frames, width: size, height: size, bytes: png.length, ...(dataUrl ? { url } : {}) };
+	}),
+
 	export_spritesheet: ro(function ({ animation, cols, scale = 8, effects = true, transitions = true, normals = false, download = false, show = false }: { animation?: string; cols?: number; scale?: number; effects?: boolean; transitions?: boolean; normals?: boolean; download?: boolean; show?: boolean } = {}) {
 		const set = editor.requireSet();
 		const anim = animOf(animation);
@@ -1746,7 +1781,7 @@ const api = {
 				painting: ['paint_map', 'paint_pixel', 'paint_row', 'paint_column', 'stamp', 'project_face', 'reflect', 'rotate', 'shift', 'clear', 'ramp', 'import_image'],
 				shapes: Object.keys(frogsprite.shapes).map((k) => `shapes.${k}`),
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
-				exporting: ['export_zip', 'export_spritesheet', 'export_png', 'export_svg', 'export_animated_svg', 'export_ico', 'sha256'],
+				exporting: ['export_zip', 'export_spritesheet', 'export_png', 'export_svg', 'export_animated_svg', 'export_apng', 'export_ico', 'sha256'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
 				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'diff_frames', 'contact_sheet', 'palette', 'color', 'iso_to_grid', 'background', 'silhouette', 'zoom', 'raw', 'help'],
 				history: ['undo', 'redo', 'history', 'batch'],

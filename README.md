@@ -127,6 +127,7 @@ short `/llms.txt` summary) so an agent that lands on a deployed instance can fin
 | --- | --- |
 | `export_zip` | the whole set: every sprite as PNG and SVG, one SVG per animation, a `sheet/` strip and frame map per animation, plus `set.json` with raw pixel data — the closest thing to a project file |
 | `export_spritesheet` | one animation as a packed strip PNG plus a frame map — uniform gapless cells, which is what a game engine loads |
+| `export_apng` | one animation as an animated PNG — ~30x smaller than the animated SVG, and the thing to send someone |
 | `export_svg` | one sprite, horizontal runs merged into single rects |
 | `export_animated_svg` | one animation as a self-contained looping SVG |
 | `contact_sheet` | every frame as one numbered PNG grid — a fault in frame 9 is invisible in playback and obvious here |
@@ -194,6 +195,11 @@ sharing between devices. That is the one feature that would genuinely require a 
   Entries that don't shrink fall back to stored. Validated against the real `unzip` binary. Reading
   is the same trick in reverse — walk the central directory, `DecompressionStream` the one entry
   asked for, check its CRC.
+- **APNG** — a PNG chunk wants zlib-wrapped deflate, which is exactly what
+  `CompressionStream('deflate')` emits, and its CRC-32 is the one the ZIP writer already carries. So
+  the animated-PNG encoder is ~150 lines with no compression code of its own, and the 256-entry
+  palette is its `PLTE` verbatim. GIF would have meant hand-writing LZW for worse compression and
+  centisecond timing.
 - **ICO** — a container around canvas-produced PNGs, which Windows has accepted since Vista.
 - **Image downscaling** — the browser handles the coarse reduction, then an explicit box average
   does the final step. Browser downscaling is not a defined box average and aliases badly at the
