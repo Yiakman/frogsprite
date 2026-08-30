@@ -16,6 +16,8 @@ frogsprite.print_sprite();               // read your own work back as ASCII
 await frogsprite.export_zip({ download: true });
 ```
 
+<img width="512" height="512" alt="world-animation" src="https://github.com/user-attachments/assets/bf6a55e4-ec8b-4c1a-8c70-edba0a6b444c" />
+
 ## Quick start
 
 Run directly without installing:
