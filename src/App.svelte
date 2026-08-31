@@ -37,6 +37,12 @@
 	const crumbs = $derived(
 		[editor.sel.pkg, editor.sel.set, editor.sel.sprite].filter(Boolean).join(' / ')
 	);
+
+	// Export follows the current selection with no extra picker — name it on the button so that is obvious.
+	const spriteName = $derived(editor.sprite?.name);
+	const animName = $derived(editor.anim?.name);
+	const setName = $derived(editor.set?.name);
+	const animFrames = $derived(editor.frames.length);
 </script>
 
 <svelte:window
@@ -130,37 +136,56 @@
 			<details name="topbar" bind:this={exportMenu}>
 				<summary>Export ▾</summary>
 				<div class="menu">
-					<button onclick={() => menuRun(exportMenu, () => fs.export_svg({ download: true }))}>SVG</button>
-					<button onclick={() => menuRun(exportMenu, () => fs.export_png({ scale: 16, download: true }))}>PNG</button>
-					<button onclick={() => menuRun(exportMenu, () => fs.export_ico({ download: true }))}>ICO</button>
+					<span class="note">this sprite</span>
 					<button
-						disabled={!editor.frames.length}
-						title="The animation shown in the timeline, with its frame effects"
-						onclick={() => menuRun(exportMenu, () => fs.export_animated_svg({ download: true }))}>Animated SVG</button
+						disabled={!spriteName}
+						title="Still of {spriteName} as vector"
+						onclick={() => menuRun(exportMenu, () => fs.export_svg({ download: true }))}
+						>SVG · {spriteName ?? '—'}</button
 					>
 					<button
-						disabled={!editor.frames.length}
-						title="The animation as one animated PNG — the same clip as the SVG at a fraction of the size, and what to send someone"
+						disabled={!spriteName}
+						title="Still of {spriteName} as PNG"
+						onclick={() => menuRun(exportMenu, () => fs.export_png({ scale: 16, download: true }))}
+						>PNG · {spriteName ?? '—'}</button
+					>
+					<button
+						disabled={!spriteName}
+						title="Still of {spriteName} as an .ico"
+						onclick={() => menuRun(exportMenu, () => fs.export_ico({ download: true }))}
+						>ICO · {spriteName ?? '—'}</button
+					>
+					<span class="note">this animation{animName ? ` · ${animFrames} frames` : ''}</span>
+					<button
+						disabled={!animFrames}
+						title="Looping SVG of {animName}, with its frame effects"
+						onclick={() => menuRun(exportMenu, () => fs.export_animated_svg({ download: true }))}
+						>Animated SVG · {animName ?? '—'}</button
+					>
+					<button
+						disabled={!animFrames}
+						title="The same clip as an animated PNG — smaller, what to send someone"
 						onclick={() => menuRun(exportMenu, () => fs.export_apng({ download: true }))}
-						data-testid="export-apng">Animated PNG</button
+						data-testid="export-apng">Animated PNG · {animName ?? '—'}</button
 					>
 					<button
-						disabled={!editor.frames.length}
-						title="The animation as one packed strip PNG plus its frame map — what a game engine loads"
+						disabled={!animFrames}
+						title="Packed strip PNG + frame map of {animName} — what a game engine loads, not the whole set"
 						onclick={() => menuRun(exportMenu, () => fs.export_spritesheet({ download: true }))}
-						data-testid="export-spritesheet">Spritesheet</button
+						data-testid="export-spritesheet">Spritesheet · {animName ?? '—'}</button
 					>
+					<span class="note">this set — every sprite</span>
 					<button
 						disabled={!editor.set?.sprites.length}
-						title="Every sprite as PNG and SVG, one SVG per animation, and the raw pixel data"
+						title="Every sprite in {setName} as PNG and SVG, one SVG per animation, and the raw pixel data"
 						onclick={() => menuRun(exportMenu, () => fs.export_zip({ download: true }))}
-						data-testid="export-zip">ZIP (whole set)</button
+						data-testid="export-zip">ZIP · {setName ?? '—'}</button
 					>
 					<button
-						disabled={!editor.set}
+						disabled={!setName}
 						title="The set's raw pixel data — the small file to hand to another browser"
 						onclick={() => menuRun(exportMenu, () => fs.export_json({ download: true }))}
-						data-testid="export-json">JSON (set)</button
+						data-testid="export-json">JSON · {setName ?? '—'}</button
 					>
 				</div>
 			</details>
@@ -169,7 +194,9 @@
 				<summary>Project ▾</summary>
 				<div class="menu">
 					<button
-						onclick={() => menuRun(projectMenu, () => fs.export_project({ download: true }))}>Save all…</button
+						title="Every package, exactly as saved"
+						onclick={() => menuRun(projectMenu, () => fs.export_project({ download: true }))}
+						>Save all… · every package</button
 					>
 					<button
 						onclick={() => {
@@ -278,7 +305,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
-		min-width: 11rem;
+		min-width: 14.5rem;
 		padding: 4px;
 		background: #1b1b1b;
 		border: 1px solid #444;
@@ -300,6 +327,11 @@
 		font-size: 0.7rem;
 		color: #666;
 		padding: 0.15rem 0.5rem 0.3rem;
+	}
+	.menu .note:not(:first-child) {
+		margin-top: 0.25rem;
+		padding-top: 0.4rem;
+		border-top: 1px solid #333;
 	}
 
 	/* ---- the four panes ---- */
