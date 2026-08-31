@@ -319,6 +319,7 @@ export function readTransition(v: any): Transition | undefined {
  * beside it alone. The validator does the dropping, so `false` and `0` clear their keys the same way.
  */
 export type FxPatch = { [K in keyof Fx]?: Fx[K] | null };
+export type LayerViewPatch = { [K in keyof LayerView]?: LayerView[K] | null };
 
 /** What `set_effects` may change about a frame. See `patchEffects` for what absent vs null means. */
 export type EffectPatch = {
@@ -326,7 +327,7 @@ export type EffectPatch = {
 	trail?: Trail | number | null;
 	transition?: Transition | string | null;
 	/** Per layer: an object merged key-by-key, a number as `dx` shorthand, or null to clear one. */
-	layers?: Record<string, LayerView | number | null> | null;
+	layers?: Record<string, LayerViewPatch | number | null> | null;
 };
 
 /**

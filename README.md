@@ -66,7 +66,8 @@ three are applied when the frame is *drawn*, so the sprite underneath stays exac
 the other animations sharing it are untouched. See [AGENTS.md](AGENTS.md#animation).
 
 The timeline is a horizontal strip under the canvas. Click a thumbnail to hold that frame; the
-inspector below it is the effect tray, with a `this frame | all frames` switch — effects are usually
+inspector below it is the effect tray (with per-layer overrides for `dx`/`dy`, `hidden`, `wrap`,
+`hue`, `flip`, `rotate` and `base`), with a `this frame | all frames` switch — effects are usually
 uniform across an animation, so one click can set the lot. A frame with a transition also gets a
 slider that scrubs through it. Clone pose, duplicate, drag-to-reorder, and a contact-sheet overlay
 (**sheet**) sit on the strip; onion skin (F3 / canvas **onion**) ghosts neighbouring frames under

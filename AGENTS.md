@@ -1141,7 +1141,8 @@ Transport — the canvas shows whichever frame you land on, and the sidebar sele
 `state().playback` reports `{ animation, frame, running, showing }` so you can check where you are.
 In the UI the timeline is a **horizontal strip** under the canvas — frames read left to right, like
 time. Click a thumbnail to `view_frame`; the **inspector** under the strip edits only that held
-frame (sprite, duration, the same `set_effects` tray as above, with a `this frame | all frames`
+frame (sprite, duration, the same `set_effects` tray as above with per-layer overrides for `dx`/`dy`,
+`hidden`, `wrap`, `hue`, `inv`, `flip`, `rotate` and `base`, plus a `this frame | all frames`
 switch). A frame with a transition also gets a **reveal** slider, which scrubs `phase` so you can
 see the middle of a scan or a dissolve while authoring it. **Clone pose** copies the drawing into a
 new sprite and appends it; **duplicate** inserts a copy of the frame; drag reorders. **sheet** opens

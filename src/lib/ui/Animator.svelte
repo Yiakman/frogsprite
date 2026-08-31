@@ -2,8 +2,9 @@
 	import { beginStroke, checkpoint, endStroke, frogsprite as fs } from '../api/commands';
 	import { form, notify } from './Dialog.svelte';
 	import { toSVG } from '../io/export';
-	import { compose, steps, TRANSITIONS, type EffectPatch } from '../core/fx';
-	import { HUES } from '../core/palette';
+	import { compose, steps, TRANSITIONS, type EffectPatch, type LayerViewPatch } from '../core/fx';
+	import { isLinked } from '../core/layers';
+	import { HUES, type Hue } from '../core/palette';
 	import { freeName } from '../core/names';
 	import type { Frame } from '../core/types';
 	import { editor } from '../state/store.svelte';
@@ -48,6 +49,65 @@
 	const held = $derived(editor.frame >= 0 ? frames[editor.frame] : undefined);
 	/** Sub-steps of the held frame — more than one only when it has a transition to scrub. */
 	const subSteps = $derived(held && set ? steps(held, set.grid) : 1);
+
+	// Held sprite's layers & active layer inspection
+	const heldSprite = $derived(
+		held && set ? set.sprites.find((s) => s.name === held.sprite) : undefined
+	);
+	const heldLayers = $derived(heldSprite?.layers ?? []);
+	let selectedLayerName = $state<string | null>(null);
+	const activeLayerName = $derived(
+		heldLayers.some((l) => l.name === selectedLayerName)
+			? selectedLayerName
+			: heldLayers[0]?.name
+	);
+	const activeLayer = $derived(heldLayers.find((l) => l.name === activeLayerName));
+	const activeView = $derived(
+		activeLayerName && held?.layers ? held.layers[activeLayerName] : undefined
+	);
+
+	const layerHasOverrides = (layerName: string) => {
+		const v = held?.layers?.[layerName];
+		return !!v && Object.keys(v).length > 0;
+	};
+
+	function patchLayer(name: string, patch: LayerViewPatch | null) {
+		apply({ layers: { [name]: patch } });
+	}
+
+	function toggleLayerFlag(key: 'invert' | 'flipX' | 'flipY') {
+		if (!activeLayerName) return;
+		patchLayer(activeLayerName, { [key]: !activeView?.[key] });
+	}
+
+	function spinLayer(back: boolean) {
+		if (!activeLayerName) return;
+		const cur = activeView?.rotate ?? 0;
+		const nextRot = (((cur + (back ? -30 : 30)) % 360) + 360) % 360;
+		patchLayer(activeLayerName, { rotate: nextRot || null });
+	}
+
+	function nudgeLayer(dx: number, dy: number) {
+		if (!activeLayerName) return;
+		patchLayer(activeLayerName, {
+			dx: (activeView?.dx ?? 0) + dx,
+			dy: (activeView?.dy ?? 0) + dy
+		});
+	}
+
+	function setLayerHue(hue: Hue | null) {
+		if (!activeLayerName) return;
+		patchLayer(activeLayerName, { hue });
+	}
+
+	function setLayerBase(val: number | null) {
+		if (!activeLayerName) return;
+		patchLayer(activeLayerName, { base: val });
+	}
+
+	function clearLayerOverrides(name: string) {
+		patchLayer(name, null);
+	}
 
 	/** Hue names to the palette entry a swatch should show, so the dot is the colour it applies. */
 	const HUE_SWATCH: Record<string, string> = {
@@ -104,7 +164,8 @@
 			f.fx?.rotate && `${f.fx.rotate}°`,
 			(f.fx?.dx || f.fx?.dy) && `${f.fx.dx ?? 0},${f.fx.dy ?? 0}`,
 			f.trail && `trail ${f.trail.frames}${f.trail.fade ? `@${f.trail.fade}` : ''}`,
-			f.transition?.kind
+			f.transition?.kind,
+			f.layers && `${Object.keys(f.layers).length} layer${Object.keys(f.layers).length === 1 ? '' : 's'}`
 		]
 			.filter(Boolean)
 			.join(' · ');
@@ -572,6 +633,195 @@
 					</div>
 				{/if}
 
+				{#if heldLayers.length > 0}
+					<div class="layer-section" data-testid="layer-section">
+						<div class="row layer-tabs" role="tablist" aria-label="Sprite layers">
+							<span class="lbl">layers</span>
+							<div class="layer-pills">
+								{#each heldLayers as l (l.name)}
+									<button
+										class="layer-pill"
+										class:sel={activeLayerName === l.name}
+										class:has-fx={layerHasOverrides(l.name)}
+										role="tab"
+										aria-selected={activeLayerName === l.name}
+										data-testid="layer-tab-{l.name}"
+										title="{l.name}{isLinked(l) ? ` (linked to ${l.from})` : ''}{layerHasOverrides(l.name) ? ' · has overrides' : ''}"
+										onclick={() => (selectedLayerName = l.name)}
+									>
+										{l.name}
+										{#if isLinked(l)}<span class="link-tag">link</span>{/if}
+										{#if layerHasOverrides(l.name)}<span class="fx-dot">●</span>{/if}
+									</button>
+								{/each}
+							</div>
+						</div>
+
+						{#if activeLayer && activeLayerName}
+							<div class="chips">
+								<span class="lbl">{activeLayerName}</span>
+								<button
+									class:on={activeView?.invert}
+									aria-pressed={!!activeView?.invert}
+									title="Invert layer colours"
+									onclick={() => toggleLayerFlag('invert')}
+									data-testid="layer-chip-invert">inv</button
+								>
+								<button
+									class:on={activeView?.flipX}
+									aria-pressed={!!activeView?.flipX}
+									title="Mirror layer left and right"
+									onclick={() => toggleLayerFlag('flipX')}
+									data-testid="layer-chip-flipx">↔</button
+								>
+								<button
+									class:on={activeView?.flipY}
+									aria-pressed={!!activeView?.flipY}
+									title="Mirror layer top and bottom"
+									onclick={() => toggleLayerFlag('flipY')}
+									data-testid="layer-chip-flipy">↕</button
+								>
+								<button
+									class:on={activeView?.rotate}
+									title="Turn layer 30° clockwise — shift-click to go back"
+									onclick={(e) => spinLayer(e.shiftKey)}
+									data-testid="layer-chip-rotate">↻{activeView?.rotate ?? 0}°</button
+								>
+								<button
+									class:on={activeView?.hidden === true}
+									aria-pressed={activeView?.hidden === true}
+									title="Hide this layer on this frame"
+									onclick={() =>
+										patchLayer(activeLayerName, {
+											hidden: activeView?.hidden === true ? (null as any) : true
+										})}
+									data-testid="layer-chip-hide">hide</button
+								>
+								<button
+									class:on={activeView?.hidden === false}
+									aria-pressed={activeView?.hidden === false}
+									title="Show this layer on this frame (overriding layer default hidden)"
+									onclick={() =>
+										patchLayer(activeLayerName, {
+											hidden: activeView?.hidden === false ? (null as any) : false
+										})}
+									data-testid="layer-chip-show">show</button
+								>
+								<button
+									class:on={activeView?.wrap === true}
+									aria-pressed={activeView?.wrap === true}
+									title="Wrap layer when scrolled past edges"
+									onclick={() =>
+										patchLayer(activeLayerName, {
+											wrap: activeView?.wrap === true ? (null as any) : true
+										})}
+									data-testid="layer-chip-wrap">wrap</button
+								>
+								<button
+									class:on={activeView?.wrap === false}
+									aria-pressed={activeView?.wrap === false}
+									title="Clip layer at edges (overriding link default wrap)"
+									onclick={() =>
+										patchLayer(activeLayerName, {
+											wrap: activeView?.wrap === false ? (null as any) : false
+										})}
+									data-testid="layer-chip-clip">clip</button
+								>
+							</div>
+
+							<div class="row">
+								<span class="lbl">layer hue</span>
+								{#each HUES as h (h)}
+									<button
+										class="dot"
+										class:on={activeView?.hue === h}
+										style:background={HUE_SWATCH[h]}
+										aria-pressed={activeView?.hue === h}
+										aria-label="{h} only for {activeLayerName}"
+										title="Reduce {activeLayerName} to {h}"
+										onclick={() => setLayerHue(activeView?.hue === h ? null : h)}
+									></button>
+								{/each}
+								<button
+									class="dot none"
+									class:on={!activeView?.hue}
+									aria-label="No hue reduction for {activeLayerName}"
+									title="Leave {activeLayerName} colours alone"
+									onclick={() => setLayerHue(null)}>⌀</button
+								>
+							</div>
+
+							<div class="row">
+								<span class="lbl">layer nudge</span>
+								<button onclick={() => nudgeLayer(-1, 0)} aria-label="Nudge layer left">←</button>
+								<button onclick={() => nudgeLayer(0, -1)} aria-label="Nudge layer up">↑</button>
+								<button onclick={() => nudgeLayer(0, 1)} aria-label="Nudge layer down">↓</button>
+								<button onclick={() => nudgeLayer(1, 0)} aria-label="Nudge layer right">→</button>
+								<input
+									type="number"
+									value={activeView?.dx ?? ''}
+									placeholder="dx"
+									aria-label="{activeLayerName} dx offset"
+									onchange={(e) => {
+										const v = e.currentTarget.value.trim();
+										patchLayer(activeLayerName, { dx: v !== '' ? Number(v) : (null as any) });
+									}}
+								/>
+								<input
+									type="number"
+									value={activeView?.dy ?? ''}
+									placeholder="dy"
+									aria-label="{activeLayerName} dy offset"
+									onchange={(e) => {
+										const v = e.currentTarget.value.trim();
+										patchLayer(activeLayerName, { dy: v !== '' ? Number(v) : (null as any) });
+									}}
+								/>
+								<button
+									disabled={activeView?.dx === undefined && activeView?.dy === undefined}
+									aria-label="Stop displacing {activeLayerName}"
+									title="Reset layer displacement"
+									onclick={() => patchLayer(activeLayerName, { dx: null as any, dy: null as any })}
+									>⌀</button
+								>
+							</div>
+
+							<div class="row">
+								<span class="lbl">layer base</span>
+								<input
+									type="number"
+									min="0"
+									value={activeView?.base ?? ''}
+									placeholder={activeLayer.base === true
+										? 'auto'
+										: activeLayer.base !== undefined
+											? String(activeLayer.base)
+											: 'none'}
+									aria-label="{activeLayerName} ground row depth override"
+									title="Ground row override for depth sorting"
+									onchange={(e) => {
+										const v = e.currentTarget.value.trim();
+										setLayerBase(v !== '' ? Number(v) : null);
+									}}
+								/>
+								<button
+									disabled={activeView?.base === undefined}
+									aria-label="Reset ground row override for {activeLayerName}"
+									title="Reset ground row override to layer default"
+									onclick={() => setLayerBase(null)}>⌀</button
+								>
+								<button
+									disabled={!layerHasOverrides(activeLayerName)}
+									class="reset-layer"
+									title="Clear all overrides for {activeLayerName} on this frame"
+									onclick={() => clearLayerOverrides(activeLayerName)}
+									data-testid="reset-layer-btn">reset {activeLayerName}</button
+								>
+							</div>
+						{/if}
+					</div>
+				{/if}
+
 				<div class="presets">
 					{#each PRESETS as p (p.name)}
 						<button class="preset" title={p.what} disabled={!editor.frames.length}
@@ -809,6 +1059,48 @@
 		margin-top: 2px;
 		padding-top: 4px;
 		border-top: 1px solid #2a4a5a;
+	}
+	.tray .layer-section {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		margin-top: 2px;
+		padding-top: 4px;
+		border-top: 1px solid #2a4a5a;
+	}
+	.tray .layer-pills {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 3px;
+		flex: 1;
+	}
+	.tray .layer-pill {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+		padding: 1px 6px;
+		border-radius: 3px;
+	}
+	.tray .layer-pill.sel {
+		background: #24506b;
+		border-color: #4c87ab;
+		color: #cfe9ff;
+	}
+	.tray .link-tag {
+		font-size: 0.58rem;
+		color: #7cf;
+		background: #1b2f3d;
+		padding: 0 2px;
+		border-radius: 2px;
+		line-height: 1.2;
+	}
+	.tray .fx-dot {
+		font-size: 0.5rem;
+		color: #8a7;
+		line-height: 1;
+	}
+	.tray .reset-layer {
+		margin-left: auto;
 	}
 	li.now {
 		background: #1d3a4d;
