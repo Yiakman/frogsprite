@@ -65,10 +65,11 @@ top or bottom, dissolve away, flatten to a silhouette with the next frame arrivi
 three are applied when the frame is *drawn*, so the sprite underneath stays exactly as painted and
 the other animations sharing it are untouched. See [AGENTS.md](AGENTS.md#animation).
 
-Click a frame's thumbnail in the timeline and it expands into an effect tray, with a
-`this frame | all frames` switch — effects are usually uniform across an animation, so one click can
-set the lot. A frame with a transition also gets a slider that scrubs through it. **Effects** in the
-sidebar holds one-click recipes (Comet, Ghost, Flash, Fade in, Hue cycle, Clear effects).
+The timeline is a horizontal strip under the canvas. Click a thumbnail to hold that frame; the
+inspector below it is the effect tray, with a `this frame | all frames` switch — effects are usually
+uniform across an animation, so one click can set the lot. A frame with a transition also gets a
+slider that scrubs through it. Clone pose, duplicate, and drag-to-reorder sit on the strip;
+one-click recipes (Comet, Ghost, Flash, Fade in, Hue cycle, Clear effects) live in the inspector.
 
 A sprite is a stack of **layers** composited bottom to top, and one layer is the ordinary case — a
 fresh sprite has a single `layer-0` and behaves exactly as it did before layers existed. Painting
@@ -104,9 +105,9 @@ a hex string (snapped to the nearest entry), or `null` for transparent.
 ## Two ways to drive it
 
 **The UI** — sidebar for packages/sets/sprites, click or drag to paint, a colour row showing the
-shades actually used in the current set, a frame timeline with thumbnails and transport controls
-(play / pause / step / stop), and export buttons. **⌘Z / Ctrl+Z** undoes, **⇧⌘Z** redoes — a whole
-drag is one step.
+shades actually used in the current set, a horizontal frame timeline under the canvas (play / pause
+/ step / stop, clone pose, duplicate), and export buttons. **⌘Z / Ctrl+Z** undoes, **⇧⌘Z** redoes —
+a whole drag is one step. Left/Right step a held clip; Enter plays.
 
 Under **Tools** in the sidebar: **Shapes** draws a line, square, circle, ellipse, triangle or
 polygon from one dialog, filled in the current colour; **View** holds the review controls — square

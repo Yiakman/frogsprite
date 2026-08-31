@@ -46,11 +46,13 @@
 	}}
 	onkeydown={(e) => {
 		// leave form fields to the browser's own undo — the frame editor has number inputs
-		if (/^(INPUT|SELECT|TEXTAREA)$/.test((e.target as HTMLElement)?.tagName)) return;
+		const tag = (e.target as HTMLElement)?.tagName;
+		if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag)) return;
+		const chord = e.metaKey || e.ctrlKey || e.altKey;
 		// Escape: the universal "leave this mode" gesture — drop a held or playing frame and go
 		// back to the selected sprite. No-op when nothing is held. The dialog stops its own
 		// Escape from propagating, so this never fires while a form is open.
-		if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+		if (e.key === 'Escape' && !chord && !e.shiftKey) {
 			if (editor.frame >= 0 && !e.repeat) {
 				e.preventDefault();
 				editor.stop();
@@ -63,6 +65,30 @@
 		// peek button — releasing either leaves the other's peek standing.
 		if (e.key === '\\' && !e.metaKey && !e.ctrlKey) {
 			if (!e.repeat) editor.peekKey = true;
+			return;
+		}
+		// Aseprite: Left/Right and ,/. step the held clip; Enter plays. Only while a frame is
+		// already on screen — arrows must not yank a painting session into the timeline. Enter
+		// on a focused button is that button, not play.
+		if (!chord && editor.frame >= 0 && (e.key === 'ArrowLeft' || e.key === ',')) {
+			e.preventDefault();
+			if (!e.repeat) editor.step(-1);
+			return;
+		}
+		if (!chord && editor.frame >= 0 && (e.key === 'ArrowRight' || e.key === '.')) {
+			e.preventDefault();
+			if (!e.repeat) editor.step(1);
+			return;
+		}
+		if (
+			e.key === 'Enter' &&
+			!chord &&
+			!e.repeat &&
+			editor.frames.length &&
+			!/^(BUTTON|SUMMARY|A)$/.test(tag)
+		) {
+			e.preventDefault();
+			editor.running ? editor.pause() : editor.play();
 			return;
 		}
 		if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
@@ -164,6 +190,8 @@
 
 	<section class="c-right">
 		<Palette />
+	</section>
+	<section class="c-anim">
 		<Animator />
 	</section>
 </main>
@@ -175,10 +203,11 @@
 	main {
 		display: grid;
 		grid-template-columns: 2.5rem 12rem 1fr 19rem;
-		grid-template-rows: auto 1fr;
+		grid-template-rows: auto 1fr auto;
 		grid-template-areas:
-			"top  top  top    top"
-			"tool side canvas right";
+			"top  top  top     top"
+			"tool side canvas  right"
+			"tool side anim    anim";
 		height: 100vh;
 	}
 
@@ -293,11 +322,20 @@
 	}
 	.c-right {
 		grid-area: right;
+		min-width: 0;
 		min-height: 0;
 		display: flex;
 		flex-direction: column;
 		overflow-y: auto;
 		border-left: 1px solid #333;
+	}
+	.c-anim {
+		grid-area: anim;
+		min-width: 0;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		border-top: 1px solid #333;
 	}
 
 	/* the collapse stacks the areas; the rail and the panels go flat */
@@ -309,7 +347,8 @@
 				"tool"
 				"side"
 				"canvas"
-				"right";
+				"right"
+				"anim";
 			height: auto;
 		}
 		.top {

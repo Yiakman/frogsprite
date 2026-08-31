@@ -24,7 +24,7 @@
 </script>
 
 <!-- The hierarchy, always: tools live in the rail, view settings in the canvas context bar,
-     effect recipes beside the timeline. Nothing here swaps the column for a sub-panel. -->
+     animation on the strip under the canvas. Nothing here swaps the column for a sub-panel. -->
 <aside>
 	<section>
 		<header>

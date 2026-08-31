@@ -1139,12 +1139,14 @@ Transport — the canvas shows whichever frame you land on, and the sidebar sele
 - `view_frame(i)` — jump straight to frame `i` (0-based) and hold there — the way to inspect one frame
 
 `state().playback` reports `{ animation, frame, running, showing }` so you can check where you are.
-In the UI, the timeline has a picker for the set's animations and a thumbnail per frame; clicking a
-thumbnail calls `view_frame`, and the frame it holds expands into an **effect tray** — the same
-`set_effects` calls documented above, with a `this frame | all frames` scope switch. A frame with a
-transition also gets a **reveal** slider there, which scrubs `phase` through the transition so you
-can see the middle of a scan or a dissolve while authoring it. Whole-animation recipes (Comet,
-Ghost, Flash, Fade in, Hue cycle, Clear effects) are the **Effects** buttons beside the timeline.
+In the UI the timeline is a **horizontal strip** under the canvas — frames read left to right, like
+time. Click a thumbnail to `view_frame`; the **inspector** under the strip edits only that held
+frame (sprite, duration, the same `set_effects` tray as above, with a `this frame | all frames`
+switch). A frame with a transition also gets a **reveal** slider, which scrubs `phase` so you can
+see the middle of a scan or a dissolve while authoring it. **Clone pose** copies the drawing into a
+new sprite and appends it; **duplicate** inserts a copy of the frame; drag reorders. Left/Right
+(or `,` / `.`) step while a frame is held; Enter plays or pauses. Whole-animation recipes (Comet,
+Ghost, Flash, Fade in, Hue cycle, Clear effects) live in the inspector.
 
 ### Export
 

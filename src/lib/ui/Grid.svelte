@@ -225,7 +225,7 @@
 					>· on {iso ? 'iso-grid' : backdrop ?? 'checkerboard'}{silhouette ? ` · silhouette ${silhouette}` : ''}</span
 				>
 				{#if editor.frame >= 0}
-					<span class="on" data-testid="esc-hint">· Esc leave frame</span>
+					<span class="on" data-testid="esc-hint">· Esc leave frame · ← → frames</span>
 				{/if}
 				<span class="on" data-testid="undo-hint">· {undoKey} undo · {redoKey} redo</span>
 			</p>
