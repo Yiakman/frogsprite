@@ -1783,7 +1783,7 @@ const api = {
 				animation: ['new_animation', 'select_animation', 'delete_animation', 'set_animation', 'set_effects', 'play', 'pause', 'stop', 'step', 'view_frame'],
 				exporting: ['export_zip', 'export_spritesheet', 'export_png', 'export_svg', 'export_animated_svg', 'export_apng', 'export_ico', 'sha256'],
 				interchange: ['export_json', 'import_set', 'export_project', 'import_project'],
-				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'diff_frames', 'contact_sheet', 'palette', 'color', 'iso_to_grid', 'background', 'silhouette', 'zoom', 'raw', 'help'],
+				inspecting: ['state', 'print_sprite', 'read_sprite', 'print_frame', 'read_frame', 'diff_frames', 'contact_sheet', 'palette', 'color', 'iso_to_grid', 'background', 'silhouette', 'zoom', 'raw', 'onion', 'help'],
 				history: ['undo', 'redo', 'history', 'batch'],
 				storage: ['flush', 'reset']
 			},
@@ -1817,6 +1817,17 @@ const api = {
 	raw: ro(function (on: boolean = !editor.raw) {
 		editor.peekApi = !!on;
 		return { raw: editor.raw };
+	}),
+
+	/**
+	 * Ghost the previous and next frames under the held one — an authoring overlay, not a drawn
+	 * effect. Distinct from `trail`, which bakes into the frame. A view setting: nothing is painted
+	 * or saved. Off while playing or peaking `raw`. In the UI: the **onion** button under the canvas,
+	 * or F3.
+	 */
+	onion: ro(function (on: boolean = !editor.onion) {
+		editor.onion = !!on;
+		return { onion: editor.onion };
 	}),
 
 	/**

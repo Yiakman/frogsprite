@@ -110,6 +110,24 @@ test('the head wins where it overlaps its own trail', () => {
 	assert.deepEqual(rows(compose(frames, 1, sprites, 2)), [216, 216, 0, 0]);
 });
 
+test('trails: false keeps fx but drops the baked motion trail', () => {
+	const sprites = [
+		sp('a', Uint8Array.of(216, 0, 0, 0)),
+		sp('b', Uint8Array.of(0, 216, 0, 0)),
+		sp('c', Uint8Array.of(0, 0, 216, 0))
+	];
+	const frames = [
+		{ sprite: 'a', ms: 100 },
+		{ sprite: 'b', ms: 100 },
+		{ sprite: 'c', ms: 100, trail: { frames: 2, fade: 0.5 } }
+	];
+	assert.deepEqual(
+		rows(compose(frames, 2, sprites, 2, 1, { trails: false })),
+		[0, 0, 216, 0],
+		'onion skin wants the pose alone'
+	);
+});
+
 test('trail wraps at the loop seam, and never eats its own frame', () => {
 	const sprites = [
 		sp('a', Uint8Array.of(216, 0, 0, 0)),

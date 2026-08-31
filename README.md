@@ -68,8 +68,10 @@ the other animations sharing it are untouched. See [AGENTS.md](AGENTS.md#animati
 The timeline is a horizontal strip under the canvas. Click a thumbnail to hold that frame; the
 inspector below it is the effect tray, with a `this frame | all frames` switch — effects are usually
 uniform across an animation, so one click can set the lot. A frame with a transition also gets a
-slider that scrubs through it. Clone pose, duplicate, and drag-to-reorder sit on the strip;
-one-click recipes (Comet, Ghost, Flash, Fade in, Hue cycle, Clear effects) live in the inspector.
+slider that scrubs through it. Clone pose, duplicate, drag-to-reorder, and a contact-sheet overlay
+(**sheet**) sit on the strip; onion skin (F3 / canvas **onion**) ghosts neighbouring frames under
+the held one. One-click recipes (Comet, Ghost, Flash, Fade in, Hue cycle, Clear effects) live in the
+inspector.
 
 A sprite is a stack of **layers** composited bottom to top, and one layer is the ordinary case — a
 fresh sprite has a single `layer-0` and behaves exactly as it did before layers existed. Painting

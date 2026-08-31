@@ -19,6 +19,11 @@ class Editor {
 	/** Show every painted pixel as this index instead of its own colour. 0 is off. Also a view setting. */
 	silhouette = $state(0);
 	/**
+	 * Ghost the previous and next frames under the held one — an authoring overlay, not a drawn
+	 * effect. Distinct from `trail`, which bakes into the frame. Off while playing or peaking raw.
+	 */
+	onion = $state(false);
+	/**
 	 * Name of the active working palette, or '' for all 256. The list itself lives in palette.ts,
 	 * which has to stay framework-free; this is the bump that tells Svelte to look again — the same
 	 * arrangement `revision` uses for pixel writes. Also a view setting: nothing is painted or saved.
@@ -295,7 +300,8 @@ class Editor {
 							: 'checkerboard',
 				silhouette: this.silhouette ? PALETTE[this.silhouette] : 'off',
 				palette: this.swatchSet || 'cube',
-				raw: this.raw
+				raw: this.raw,
+				onion: this.onion
 			},
 			packages: this.packages.map((p) => ({
 				name: p.name,

@@ -97,6 +97,12 @@
 			editor.running ? editor.pause() : editor.play();
 			return;
 		}
+		// Aseprite F3 — onion skin. Harmless with fewer than two frames (ghosts need a neighbour).
+		if (e.key === 'F3' && !chord && !e.repeat) {
+			e.preventDefault();
+			fs.onion(!editor.onion);
+			return;
+		}
 		if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
 		e.preventDefault();
 		(e.shiftKey ? fs.redo : fs.undo)();
@@ -173,6 +179,12 @@
 						title="Packed strip PNG + frame map of {animName} — what a game engine loads, not the whole set"
 						onclick={() => menuRun(exportMenu, () => fs.export_spritesheet({ download: true }))}
 						data-testid="export-spritesheet">Spritesheet · {animName ?? '—'}</button
+					>
+					<button
+						disabled={!animFrames}
+						title="Every frame of {animName} as one numbered grid — on screen, gone on click"
+						onclick={() => menuRun(exportMenu, () => fs.contact_sheet({ show: true }))}
+						data-testid="export-contact-sheet">Contact sheet · {animName ?? '—'}</button
 					>
 					<span class="note">this set — every sprite</span>
 					<button

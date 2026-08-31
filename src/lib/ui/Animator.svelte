@@ -393,6 +393,18 @@
 					title="Insert a copy of this frame after it"
 					data-testid="duplicate-frame">duplicate</button
 				>
+				<button
+					onclick={() => {
+						try {
+							fs.contact_sheet({ show: true });
+						} catch (e) {
+							notify((e as Error).message);
+						}
+					}}
+					disabled={!has}
+					title="Every frame of this animation as one numbered grid — on screen"
+					data-testid="contact-sheet">sheet</button
+				>
 			</div>
 		</div>
 

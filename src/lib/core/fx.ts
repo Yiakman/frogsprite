@@ -83,11 +83,17 @@ export function compose(
 	sprites: Sprite[],
 	grid: number,
 	t = 1,
-	{ effects = true, transitions = true }: { effects?: boolean; transitions?: boolean } = {}
+	{
+		effects = true,
+		transitions = true,
+		trails
+	}: { effects?: boolean; transitions?: boolean; trails?: boolean } = {}
 ): Uint8Array {
 	const cells = grid * grid;
 	const frame = frames[i];
 	if (!frame) return new Uint8Array(cells);
+	// onion skin wants the pose (fx + layers) without the baked trail — otherwise ghosts of ghosts
+	const useTrail = trails ?? effects;
 
 	// indexed once: a trail resolves a sprite per ghost, and `silhouette` reaches for another frame,
 	// so a linear scan per lookup would be repeated work on every tick
@@ -115,7 +121,7 @@ export function compose(
 
 	// The trail goes *under* the frame, so it is built before any transition — a scan reveals the
 	// ghosts along with the head, which is what a trail moving behind something looks like.
-	const trail = effects ? frame.trail : undefined;
+	const trail = useTrail ? frame.trail : undefined;
 	if (trail) {
 		// never more ghosts than there are other frames: past that, the loop wraps onto this frame
 		// and a ghost lands exactly under the head, which is just wasted work

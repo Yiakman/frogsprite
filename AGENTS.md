@@ -1144,9 +1144,12 @@ time. Click a thumbnail to `view_frame`; the **inspector** under the strip edits
 frame (sprite, duration, the same `set_effects` tray as above, with a `this frame | all frames`
 switch). A frame with a transition also gets a **reveal** slider, which scrubs `phase` so you can
 see the middle of a scan or a dissolve while authoring it. **Clone pose** copies the drawing into a
-new sprite and appends it; **duplicate** inserts a copy of the frame; drag reorders. Left/Right
-(or `,` / `.`) step while a frame is held; Enter plays or pauses. Whole-animation recipes (Comet,
-Ghost, Flash, Fade in, Hue cycle, Clear effects) live in the inspector.
+new sprite and appends it; **duplicate** inserts a copy of the frame; drag reorders. **sheet** opens
+a contact-sheet overlay of the whole clip (`contact_sheet({ show: true })`). Left/Right (or `,` /
+`.`) step while a frame is held; Enter plays or pauses; **F3** / the canvas **onion** button ghosts
+the previous (red) and next (blue) frames under the held one — an authoring overlay, not a drawn
+`trail`. Whole-animation recipes (Comet, Ghost, Flash, Fade in, Hue cycle, Clear effects) live in
+the inspector.
 
 ### Export
 
@@ -1382,10 +1385,14 @@ with your work, and none affects exports or `print_sprite()`.
   ```js
   frogsprite.zoom(4, { x: 40, y: 60 });   // magnify, and put (40, 60) in the middle of the pane
   ```
+- `onion(on?)` — ghost the previous and next frames under the held one (red / blue). Distinct from
+  `trail`, which bakes into the drawn frame. Off while playing or peaking `raw`. In the UI: the
+  **onion** button under the canvas, or F3.
 - `contact_sheet({ show: true })` — every frame at once, on screen. The canvas shows one frame and
   playback shows whichever went past; a sheet is the only view that shows them together, and `show`
-  is what makes looking at one a single call rather than a download. `export_png` and
-  `export_spritesheet` take it too — see [Export](#export)
+  is what makes looking at one a single call rather than a download. Export → Contact sheet and the
+  timeline **sheet** button call this. `export_png` and `export_spritesheet` take `show` too — see
+  [Export](#export)
 - `raw(on?)` — draw the sprite **as it is stored**, ignoring the held frame's `fx`, `trail` and
   `transition`. This is the answer to "is that shape mine, or did an effect do it?" — and to "what
   would a brush stroke here actually land on?"
@@ -1404,8 +1411,8 @@ also how you check that two animation frames differ where you meant them to. Pic
 contrasts with the background you're on; black on the default checkerboard is deliberately dim.
 
 **If you review by screenshot, read the view back before you judge the pixels.** Both
-`state().view` and the caption under the canvas name the background, the silhouette and whether
-`raw` is on, so a magenta field or a black frog is never mistaken for something you painted.
+`state().view` and the caption under the canvas name the background, the silhouette, onion and
+whether `raw` is on, so a magenta field or a black frog is never mistaken for something you painted.
 
 `raw` is the one to reach for while a frame with effects is held, because there the canvas is
 showing a *composite* rather than any sprite you can edit — which is why painting is off. The UI
