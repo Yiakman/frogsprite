@@ -363,6 +363,126 @@
 			endStroke();
 		}
 	}
+
+	function scrollRecipe() {
+		const sprite = heldSprite;
+		if (!sprite || !sprite.layers.length) return;
+		const layerOptions = sprite.layers.map((l) => l.name);
+		form({
+			title: 'Scroll layer across animation',
+			fields: [
+				{
+					name: 'layer',
+					options: layerOptions,
+					value: activeLayerName ?? layerOptions[0],
+					required: true
+				},
+				{
+					name: 'speed',
+					type: 'number',
+					value: -2,
+					step: 1,
+					required: true,
+					placeholder: 'px / frame (-2)'
+				},
+				{ name: 'wrap', options: ['yes', 'no'], value: 'yes' },
+				{ name: 'seamless', options: ['yes', 'no'], value: 'yes' }
+			],
+			submit: (v) => {
+				fs.scroll_layer(v.layer, {
+					speed: Number(v.speed),
+					wrap: v.wrap !== 'no',
+					seamless: v.seamless !== 'no'
+				});
+			}
+		});
+	}
+
+	function cycleRecipe() {
+		const sprite = heldSprite;
+		if (!sprite || sprite.layers.length < 2) return;
+		const layerNames = sprite.layers.map((l) => l.name).join(', ');
+		form({
+			title: 'Cycle layer poses across animation',
+			fields: [
+				{
+					name: 'layers',
+					value: layerNames,
+					required: true,
+					placeholder: 'layer-0, layer-1, ...'
+				},
+				{
+					name: 'every',
+					type: 'number',
+					value: 1,
+					step: 1,
+					required: true,
+					placeholder: 'frames per pose (1)'
+				},
+				{ name: 'seamless', options: ['yes', 'no'], value: 'yes' }
+			],
+			submit: (v) => {
+				const list = v.layers.split(',').map((s) => s.trim()).filter(Boolean);
+				if (list.length < 2) throw new Error('cycle_layers needs at least two layer names');
+				fs.cycle_layers(list, {
+					every: Number(v.every) || 1,
+					seamless: v.seamless !== 'no'
+				});
+			}
+		});
+	}
+
+	function moveRecipe() {
+		const sprite = heldSprite;
+		if (!sprite || !sprite.layers.length) return;
+		form({
+			title: 'Move layers along path across animation',
+			fields: [
+				{
+					name: 'layers',
+					value: activeLayerName ?? sprite.layers[0]?.name,
+					required: true,
+					placeholder: 'layer names (comma-separated)'
+				},
+				{
+					name: 'path',
+					value: '0,0; 1,0; 1,1; 0,1; 0,0',
+					required: true,
+					placeholder: 'x1,y1; x2,y2; ...'
+				},
+				{
+					name: 'unit',
+					type: 'number',
+					value: 1,
+					step: 1,
+					required: true,
+					placeholder: 'pixels per unit (1)'
+				},
+				{ name: 'wrap', options: ['no', 'yes'], value: 'no' },
+				{ name: 'seamless', options: ['yes', 'no'], value: 'yes' }
+			],
+			submit: (v) => {
+				const list = v.layers.split(',').map((s) => s.trim()).filter(Boolean);
+				if (!list.length) throw new Error('move_layers needs at least one layer name');
+				const pts = v.path
+					.split(/[\s;]+/)
+					.filter(Boolean)
+					.map((pair, idx) => {
+						const parts = pair.split(',').map(Number);
+						if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n)))
+							throw new Error(`Waypoint ${idx + 1} "${pair}" is not an x,y pair of numbers`);
+						return parts as [number, number];
+					});
+				if (!pts.length) throw new Error('move_layers needs at least one waypoint');
+				fs.move_layers(list, {
+					path: pts,
+					unit: Number(v.unit) || 1,
+					wrap: v.wrap === 'yes',
+					seamless: v.seamless !== 'no'
+				});
+			}
+		});
+	}
 </script>
 
 {#if set}
@@ -827,6 +947,31 @@
 						<button class="preset" title={p.what} disabled={!editor.frames.length}
 							onclick={() => preset(p)}>{p.name}</button>
 					{/each}
+				</div>
+
+				<div class="presets motion-presets" data-testid="motion-presets">
+					<span class="lbl">motion</span>
+					<button
+						class="preset"
+						title="Scroll a repeating layer seamlessly across this animation (scroll_layer)"
+						disabled={!editor.frames.length || !heldLayers.length}
+						onclick={scrollRecipe}
+						data-testid="motion-scroll">Scroll layer…</button
+					>
+					<button
+						class="preset"
+						title="Cycle through a ring of layers/poses across this animation (cycle_layers)"
+						disabled={!editor.frames.length || heldLayers.length < 2}
+						onclick={cycleRecipe}
+						data-testid="motion-cycle">Cycle poses…</button
+					>
+					<button
+						class="preset"
+						title="Move layer(s) along a waypoint path across this animation (move_layers)"
+						disabled={!editor.frames.length || !heldLayers.length}
+						onclick={moveRecipe}
+						data-testid="motion-move">Move path…</button
+					>
 				</div>
 			</div>
 		{:else if !frames.length}

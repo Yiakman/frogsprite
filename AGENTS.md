@@ -1156,6 +1156,12 @@ the inspector.
 
 Each returns its data (and also downloads a file when passed `{ download: true }`).
 
+Exports operate at three distinct scopes — know which you want:
+- **Sprite stills** (`export_png`, `export_svg`, `export_ico`): the **currently selected sprite** (or `sprite` by name).
+- **Animation clips** (`export_spritesheet`, `export_apng`, `export_animated_svg`, `contact_sheet`): the **active animation's sequence of composed frames** (or `animation` by name) — **not** the set's sprites.
+- **Set packages** (`export_zip`, `export_json`): the **entire set** (every sprite with all layers, and every animation).
+- **Project** (`export_project`): every package and set.
+
 - `sha256(data)` → **async**, hex. A data URL hashes as its **decoded bytes** — the PNG file, not
   the base64 text — so the digest matches `shasum -a 256` of what arrives on the other side; a
   plain string as its UTF-8 bytes. `export_zip` returns one of itself for free, so moving a set
@@ -1185,7 +1191,7 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   frogsprite.export_apng({ scale: 4, download: true });     // and keep it
   ```
 - `contact_sheet({ animation?, cols = 4, scale = 2, gap?, effects?, transitions?, download?, show? })` →
-  every frame as one numbered PNG grid. Playback shows one frame at a time and a screenshot catches
+  every frame of the active animation as one numbered PNG grid. Playback shows one frame at a time and a screenshot catches
   whichever was up, so a fault in frame 9 stays invisible until it goes past; on a sheet it is
   obvious at a glance. Reach for it before believing an animation is finished
 
@@ -1198,7 +1204,7 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   frogsprite.contact_sheet({ cols: 8, scale: 3, show: true });   // every frame, on screen, now
   ```
 - `export_spritesheet({ animation?, cols?, scale = 8, effects?, transitions?, normals?, download?, show? })` → **one
-  animation as a packed strip PNG plus its frame map** — the hand-off to a game engine, which wants
+  animation as a packed strip PNG plus its frame map** (the active animation, or `animation` by name — **not the set's sprites**; to export every sprite in a set, use `export_zip`) — the hand-off to a game engine, which wants
   one image with uniform cells rather than the ZIP's one file per sprite. Cells are the same size,
   in reading order, gapless, on a transparent background, so anything that asks only for a frame
   size (Phaser, Godot, LÖVE, a CSS `steps()` background) needs nothing but the PNG. Returns

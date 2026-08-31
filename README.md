@@ -129,18 +129,18 @@ short `/llms.txt` summary) so an agent that lands on a deployed instance can fin
 
 ## Exporting
 
-| | |
-| --- | --- |
-| `export_zip` | the whole set: every sprite as PNG and SVG, one SVG per animation, a `sheet/` strip and frame map per animation, plus `set.json` with raw pixel data — the closest thing to a project file |
-| `export_spritesheet` | one animation as a packed strip PNG plus a frame map — uniform gapless cells, which is what a game engine loads |
-| `export_apng` | one animation as an animated PNG — ~30x smaller than the animated SVG, and the thing to send someone |
-| `export_svg` | one sprite, horizontal runs merged into single rects |
-| `export_animated_svg` | one animation as a self-contained looping SVG |
-| `contact_sheet` | every frame as one numbered PNG grid — a fault in frame 9 is invisible in playback and obvious here |
-| `export_png` | one sprite at any scale |
-| `export_ico` | multi-size icon |
-| `export_json` | the set's raw pixel data on its own — no pictures, no archive |
-| `export_project` | every package, in the shape the editor persists |
+| | Scope | What it exports |
+| --- | --- | --- |
+| `export_spritesheet` | active animation | one animation as a packed strip PNG plus a frame map — uniform gapless cells, which is what a game engine loads (**not** the set's sprites) |
+| `export_apng` | active animation | one animation as an animated PNG — ~30x smaller than the animated SVG, and the thing to send someone |
+| `export_animated_svg` | active animation | one animation as a self-contained looping SVG |
+| `contact_sheet` | active animation | every frame as one numbered PNG grid — a fault in frame 9 is invisible in playback and obvious here |
+| `export_png` | active sprite | one sprite still at any scale |
+| `export_svg` | active sprite | one sprite still, horizontal runs merged into single rects |
+| `export_ico` | active sprite | multi-size icon |
+| `export_zip` | whole set | the whole set: every sprite as PNG and SVG, one SVG per animation, a `sheet/` strip and frame map per animation, plus `set.json` with raw pixel data — the closest thing to a project file |
+| `export_json` | whole set | the set's raw pixel data on its own — no pictures, no archive |
+| `export_project` | whole project | every package and set, in the shape the editor persists |
 
 `import_set()` takes back an `export_json` payload **or a whole export ZIP** (it reads `set.json`
 out of it), and `import_project()` takes back a project. Both accept an object, JSON text or a
