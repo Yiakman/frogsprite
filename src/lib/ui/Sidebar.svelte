@@ -32,7 +32,7 @@
 		</header>
 		{#each editor.packages as p (p.name)}
 			<button class="row" class:sel={editor.sel.pkg === p.name} onclick={() => fs.select(p.name)}>
-				{p.name}<span>{p.sets.length}</span>
+				{p.name}<span class="meta">{p.sets.length}</span>
 			</button>
 		{:else}
 			<p class="none">none yet</p>
@@ -51,7 +51,7 @@
 					class:sel={editor.sel.set === s.name}
 					onclick={() => fs.select(undefined, s.name)}
 				>
-					{s.name}<span>{s.grid}×{s.grid}</span>
+					{s.name}<span class="meta">{s.grid}×{s.grid}</span>
 				</button>
 			{:else}
 				<p class="none">none yet</p>
@@ -71,7 +71,7 @@
 					class:sel={editor.sel.sprite === s.name}
 					onclick={() => fs.select(undefined, undefined, s.name)}
 				>
-					<span class="sprite-name">{s.name}</span>
+					<span class="sprite-name" title={s.name}>{s.name}</span>
 					{#if s.layers.length > 1}
 						<span class="layer-badge" title="{s.layers.length} layers">{s.layers.length}L</span>
 					{/if}
@@ -136,7 +136,9 @@
 		background: #1d3a4d;
 		color: #cfe9ff;
 	}
-	.row span {
+	/* metadata beside a label — counts, grid size. Scoped to .meta so a named span
+	   (.sprite-name, .layer-badge) inherits the row instead of shrinking to this. */
+	.row .meta {
 		color: #777;
 		font-size: 0.75rem;
 	}
@@ -148,7 +150,7 @@
 	.layer-badge {
 		font-size: 0.65rem;
 		background: #1e3342;
-		color: #7cf !important;
+		color: #7cf;
 		padding: 1px 4px;
 		border-radius: 3px;
 		margin-left: 0.3rem;
