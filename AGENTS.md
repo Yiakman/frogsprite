@@ -271,7 +271,10 @@ palette *indices*, so there is nothing meaningful to average between index 3 and
 - `link_layer(from, { name, dx, dy, wrap, at, above, below, sprite, base })` — show another sprite as a
   layer of this one, **live**. Repaint that sprite and every layer linked to it changes with it, which
   is the whole difference from `stamp`. `dx`/`dy` place it, so the same drawing appears as many times
-  as you like at different offsets
+  as you like at different offsets. An explicit `name` that already names a link updates it in place:
+  its stack slot, `hidden` and `base` are kept (moving a link doesn't un-entity it), `dx`/`dy`/`wrap`
+  reset when left out, and `base: null` strips the ground row — the same convention `set_layers`
+  takes
 - `unlink_layer(name?, { sprite })` — turn one link back into ordinary pixels: the picture it is
   showing, at the offset it is showing it, copied in and disconnected. The escape hatch for editing
   one instance without touching the others
