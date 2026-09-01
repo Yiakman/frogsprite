@@ -78,37 +78,32 @@
 		render(canvas.getContext('2d')!, pixels, grid, grid, silhouette ?? undefined);
 	});
 
-	// Onion is a second pass under the head — not baked into shownPixels, so paint and exports stay clean.
+	// Onion is a second pass under the head — not baked into shownPixels, so paint and exports stay
+	// clean. Both ghosts are marked into one buffer with two sentinel indices and drawn by the same
+	// paint() as the head above — one renderer, one clear, no parallel fill loop to keep honest.
+	const GHOST_COLORS = Array(256).fill('');
+	GHOST_COLORS[254] = '#e06060'; // previous — warm
+	GHOST_COLORS[255] = '#6090e0'; // next — cool
+
 	$effect(() => {
 		const ctx = onionCanvas?.getContext('2d');
 		if (!ctx) return;
-		ctx.clearRect(0, 0, grid, grid);
-		if (!onionOn || !set) return;
-		void editor.revision;
-		const sprites = set.sprites;
+		if (!onionOn || !set) {
+			ctx.clearRect(0, 0, grid, grid);
+			return;
+		}
+		void editor.revision; // compose reads pixel buffers, which Svelte cannot see on its own
 		const g = set.grid;
 		const n = frames.length;
-		const at = editor.frame;
-		const ghost = (i: number, color: string) => {
-			const px = compose(frames, i, sprites, g, 1, { transitions: false, trails: false });
-			ctx.fillStyle = color;
-			for (let y = 0; y < g; y++) {
-				let x = 0;
-				while (x < g) {
-					if (px[y * g + x] === TRANSPARENT) {
-						x++;
-						continue;
-					}
-					let end = x + 1;
-					while (end < g && px[y * g + end] !== TRANSPARENT) end++;
-					ctx.fillRect(x, y, end - x, 1);
-					x = end;
-				}
-			}
+		const overlay = new Uint8Array(g * g);
+		const mark = (i: number, idx: number) => {
+			const px = compose(frames, i, set.sprites, g, 1, { transitions: false, trails: false });
+			for (let k = 0; k < px.length; k++) if (px[k] !== TRANSPARENT) overlay[k] = idx;
 		};
+		mark((editor.frame - 1 + n) % n, 254);
+		if (n > 2) mark((editor.frame + 1) % n, 255); // a 2-frame loop shares its only neighbour
 		ctx.globalAlpha = 0.4;
-		ghost((at - 1 + n) % n, '#e06060'); // previous — warm
-		if (n > 2) ghost((at + 1) % n, '#6090e0'); // next — cool (a 2-frame loop shares its only neighbour)
+		render(ctx, overlay, g, g, undefined, GHOST_COLORS);
 		ctx.globalAlpha = 1;
 	});
 

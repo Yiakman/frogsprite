@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { frogsprite as fs } from '../api/commands';
-	import { form } from './Dialog.svelte';
+	import { form, notify } from './Dialog.svelte';
 	import { GRIDS, type GridSize } from '../core/grid';
 	import { isLinked } from '../core/layers';
 	import { editor } from '../state/store.svelte';
@@ -37,11 +37,7 @@
 			.filter((s) => s.name !== editor.sprite?.name)
 			.map((s) => s.name);
 		if (!otherSprites.length) {
-			form({
-				title: 'No other sprites in this set to link to. Create another sprite first.',
-				fields: [],
-				submit: () => {}
-			});
+			notify('No other sprites in this set to link to. Create another sprite first.');
 			return;
 		}
 		form({

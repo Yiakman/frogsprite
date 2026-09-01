@@ -813,7 +813,7 @@
 									title="Hide this layer on this frame"
 									onclick={() =>
 										patchLayer(activeLayerName, {
-											hidden: activeView?.hidden === true ? (null as any) : true
+											hidden: activeView?.hidden === true ? null : true
 										})}
 									data-testid="layer-chip-hide">hide</button
 								>
@@ -823,7 +823,7 @@
 									title="Show this layer on this frame (overriding layer default hidden)"
 									onclick={() =>
 										patchLayer(activeLayerName, {
-											hidden: activeView?.hidden === false ? (null as any) : false
+											hidden: activeView?.hidden === false ? null : false
 										})}
 									data-testid="layer-chip-show">show</button
 								>
@@ -833,7 +833,7 @@
 									title="Wrap layer when scrolled past edges"
 									onclick={() =>
 										patchLayer(activeLayerName, {
-											wrap: activeView?.wrap === true ? (null as any) : true
+											wrap: activeView?.wrap === true ? null : true
 										})}
 									data-testid="layer-chip-wrap">wrap</button
 								>
@@ -843,7 +843,7 @@
 									title="Clip layer at edges (overriding link default wrap)"
 									onclick={() =>
 										patchLayer(activeLayerName, {
-											wrap: activeView?.wrap === false ? (null as any) : false
+											wrap: activeView?.wrap === false ? null : false
 										})}
 									data-testid="layer-chip-clip">clip</button
 								>
@@ -884,7 +884,7 @@
 									aria-label="{activeLayerName} dx offset"
 									onchange={(e) => {
 										const v = e.currentTarget.value.trim();
-										patchLayer(activeLayerName, { dx: v !== '' ? Number(v) : (null as any) });
+										patchLayer(activeLayerName, { dx: v !== '' ? Number(v) : null });
 									}}
 								/>
 								<input
@@ -894,14 +894,14 @@
 									aria-label="{activeLayerName} dy offset"
 									onchange={(e) => {
 										const v = e.currentTarget.value.trim();
-										patchLayer(activeLayerName, { dy: v !== '' ? Number(v) : (null as any) });
+										patchLayer(activeLayerName, { dy: v !== '' ? Number(v) : null });
 									}}
 								/>
 								<button
 									disabled={activeView?.dx === undefined && activeView?.dy === undefined}
 									aria-label="Stop displacing {activeLayerName}"
 									title="Reset layer displacement"
-									onclick={() => patchLayer(activeLayerName, { dx: null as any, dy: null as any })}
+									onclick={() => patchLayer(activeLayerName, { dx: null, dy: null })}
 									>⌀</button
 								>
 							</div>
