@@ -4,7 +4,7 @@
 	import { frogsprite as fs, importFiles } from './lib/api/commands';
 	import Dialog, { notify } from './lib/ui/Dialog.svelte';
 	import Grid from './lib/ui/Grid.svelte';
-	import Palette from './lib/ui/Palette.svelte';
+	import RightPanel from './lib/ui/RightPanel.svelte';
 	import Sidebar from './lib/ui/Sidebar.svelte';
 	import { editor } from './lib/state/store.svelte';
 
@@ -224,7 +224,7 @@
 	<div class="c-canvas"><Grid /></div>
 
 	<section class="c-right">
-		<Palette />
+		<RightPanel />
 	</section>
 	<section class="c-anim">
 		<Animator />

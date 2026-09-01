@@ -751,11 +751,14 @@ const api = {
 	 * Because it replaces rather than merges, `dx`, `dy` and `wrap` go back to `0`, `0` and `false`
 	 * when you leave them out — the same defaults `stamp` takes, and unlike `set_effects`, which
 	 * merges. A frame can still nudge a link on top of this: `set_animation`'s `layers` adds its `dx`
-	 * to the one here, so `scroll_layer` drives a linked layer like any other.
+	 * to the one here, so `scroll_layer` drives a linked layer like any other. `base` is the one
+	 * exception, because it is entity-ness rather than placement: updating in place keeps it — moving
+	 * a link doesn't un-entity it — and `base: null` strips it, the same convention `set_layers`
+	 * takes.
 	 *
 	 * Same set only, so both sprites share a grid. `copy_sprite` brings art in from another set first.
 	 */
-	link_layer: mut(function (from: string, { name, dx = 0, dy = 0, wrap = false, at, above, below, sprite, base }: { name?: string; dx?: number; dy?: number; wrap?: boolean; at?: 'top' | 'bottom'; above?: string; below?: string; sprite?: string; base?: number | true } = {}) {
+	link_layer: mut(function (from: string, { name, dx = 0, dy = 0, wrap = false, at, above, below, sprite, base }: { name?: string; dx?: number; dy?: number; wrap?: boolean; at?: 'top' | 'bottom'; above?: string; below?: string; sprite?: string; base?: number | true | null } = {}) {
 		const ground = readGround(base);
 		const t = target(sprite);
 		const src = t.sprites.find((sp) => sp.name === from);
@@ -776,12 +779,21 @@ const api = {
 		// zeroes stay off the object: settle() charges no undo step when the document serialises
 		// unchanged, and a `dx: 0` written here would not survive the round-trip through storage
 		const geometry = {
-			...(ground !== undefined && { base: ground }),
 			...(Math.round(dx) && { dx: Math.round(dx) }),
 			...(Math.round(dy) && { dy: Math.round(dy) }),
 			...(wrap && { wrap: true as const })
 		};
 		const existing = name ? t.sprite.layers.find((l) => l.name === name) : undefined;
+		// `base` merges where the placement replaces: updating in place keeps it (an entity is not
+		// un-entity-ed by moving), `null` strips it — set_layers' convention — and only a fresh link
+		// starts without one when the call says nothing
+		const finalBase =
+			ground !== undefined
+				? ground
+				: existing && base === undefined
+					? existing.base
+					: undefined;
+		const placed = { ...geometry, ...(finalBase !== undefined && { base: finalBase }) };
 		if (existing) {
 			if (!isLinked(existing))
 				throw new Error(
@@ -791,15 +803,15 @@ const api = {
 			// in place, so the stack order and `hidden` survive a re-run. `at`/`above`/`below` are
 			// ignored rather than honoured: keeping the position is the whole point of updating one.
 			const i = t.sprite.layers.findIndex((l) => l.name === name);
-			t.sprite.layers[i] = { name: existing.name, from, ...geometry, ...(existing.hidden && { hidden: true }) };
+			t.sprite.layers[i] = { name: existing.name, from, ...placed, ...(existing.hidden && { hidden: true }) };
 			editor.sel = { ...editor.sel, layer: existing.name };
-			return { sprite: t.sprite.name, layer: existing.name, from, ...geometry, updated: true };
+			return { sprite: t.sprite.name, layer: existing.name, from, ...placed, updated: true };
 		}
 		const named = name ?? freeName(t.sprite.layers, from);
 		taken(t.sprite.layers, named, 'layer');
-		t.sprite.layers.splice(placeAt(t.sprite, t.layer.name, { at, above, below }), 0, { name: named, from, ...geometry });
+		t.sprite.layers.splice(placeAt(t.sprite, t.layer.name, { at, above, below }), 0, { name: named, from, ...placed });
 		editor.sel = { ...editor.sel, layer: named };
-		return { sprite: t.sprite.name, layer: named, from, ...geometry, updated: false };
+		return { sprite: t.sprite.name, layer: named, from, ...placed, updated: false };
 	}),
 
 	/**
@@ -876,9 +888,11 @@ const api = {
 	 *   set_layers([{ name: 'sketch', hidden: true }, …])  // reorder and hide together
 	 *
 	 * Every existing layer must appear exactly once: this rearranges a stack, it never destroys one.
-	 * Use `new_layer` / `delete_layer` to change what is in it.
+	 * Use `new_layer` / `delete_layer` to change what is in it. Entries also take `base`, which
+	 * **merges** where `hidden` replaces: an entry that says nothing keeps the layer's ground row,
+	 * and `base: null` is the one way back to scenery.
 	 */
-	set_layers: mut(function (layers: (string | { name: string; hidden?: boolean; base?: number | true })[]) {
+	set_layers: mut(function (layers: (string | { name: string; hidden?: boolean; base?: number | true | null })[]) {
 		const t = target();
 		const sprite = t.sprite;
 		if (!Array.isArray(layers) || !layers.length) throw new Error('layers must be a non-empty array');
@@ -900,14 +914,16 @@ const api = {
 			// key entirely when false, so a no-op reorder serialises unchanged and costs no undo step.
 			// Spread everything else — naming `pixels` here would silently unlink every linked layer
 			// the moment anyone reordered the stack.
-			const { hidden: _was, ...rest } = found;
+			const { hidden: _was, base: had, ...rest } = found;
 			// `base` merges where `hidden` replaces: an entry that says nothing about it keeps what the
-			// layer had, so a plain reorder cannot silently turn an entity back into scenery
+			// layer had, so a plain reorder cannot silently turn an entity back into scenery. `null` is
+			// the explicit opposite — back to scenery — because absent already spends "leave it alone".
 			const ground = readGround(l.base);
 			return {
 				...rest,
 				...(l.hidden && { hidden: true as const }),
-				...(ground !== undefined && { base: ground })
+				...(ground !== undefined && { base: ground }),
+				...(l.base !== null && ground === undefined && had !== undefined && { base: had })
 			};
 		});
 		sprite.layers = next;
