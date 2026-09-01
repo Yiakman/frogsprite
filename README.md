@@ -65,10 +65,14 @@ top or bottom, dissolve away, flatten to a silhouette with the next frame arrivi
 three are applied when the frame is *drawn*, so the sprite underneath stays exactly as painted and
 the other animations sharing it are untouched. See [AGENTS.md](AGENTS.md#animation).
 
-Click a frame's thumbnail in the timeline and it expands into an effect tray, with a
-`this frame | all frames` switch — effects are usually uniform across an animation, so one click can
-set the lot. A frame with a transition also gets a slider that scrubs through it. **Effects** in the
-sidebar holds one-click recipes (Comet, Ghost, Flash, Fade in, Hue cycle, Clear effects).
+The timeline is a horizontal strip under the canvas. Click a thumbnail to hold that frame; the
+inspector below it is the effect tray (with per-layer overrides for `dx`/`dy`, `hidden`, `wrap`,
+`hue`, `flip`, `rotate` and `base`), with a `this frame | all frames` switch — effects are usually
+uniform across an animation, so one click can set the lot. A frame with a transition also gets a
+slider that scrubs through it. Clone pose, duplicate, drag-to-reorder, and a contact-sheet overlay
+(**sheet**) sit on the strip; onion skin (F3 / canvas **onion**) ghosts neighbouring frames under
+the held one. One-click recipes (Comet, Ghost, Flash, Fade in, Hue cycle, Clear effects) live in the
+inspector.
 
 A sprite is a stack of **layers** composited bottom to top, and one layer is the ordinary case — a
 fresh sprite has a single `layer-0` and behaves exactly as it did before layers existed. Painting
@@ -104,9 +108,9 @@ a hex string (snapped to the nearest entry), or `null` for transparent.
 ## Two ways to drive it
 
 **The UI** — sidebar for packages/sets/sprites, click or drag to paint, a colour row showing the
-shades actually used in the current set, a frame timeline with thumbnails and transport controls
-(play / pause / step / stop), and export buttons. **⌘Z / Ctrl+Z** undoes, **⇧⌘Z** redoes — a whole
-drag is one step.
+shades actually used in the current set, a horizontal frame timeline under the canvas (play / pause
+/ step / stop, clone pose, duplicate), and export buttons. **⌘Z / Ctrl+Z** undoes, **⇧⌘Z** redoes —
+a whole drag is one step. Left/Right step a held clip; Enter plays.
 
 Under **Tools** in the sidebar: **Shapes** draws a line, square, circle, ellipse, triangle or
 polygon from one dialog, filled in the current colour; **View** holds the review controls — square
@@ -125,18 +129,18 @@ short `/llms.txt` summary) so an agent that lands on a deployed instance can fin
 
 ## Exporting
 
-| | |
-| --- | --- |
-| `export_zip` | the whole set: every sprite as PNG and SVG, one SVG per animation, a `sheet/` strip and frame map per animation, plus `set.json` with raw pixel data — the closest thing to a project file |
-| `export_spritesheet` | one animation as a packed strip PNG plus a frame map — uniform gapless cells, which is what a game engine loads |
-| `export_apng` | one animation as an animated PNG — ~30x smaller than the animated SVG, and the thing to send someone |
-| `export_svg` | one sprite, horizontal runs merged into single rects |
-| `export_animated_svg` | one animation as a self-contained looping SVG |
-| `contact_sheet` | every frame as one numbered PNG grid — a fault in frame 9 is invisible in playback and obvious here |
-| `export_png` | one sprite at any scale |
-| `export_ico` | multi-size icon |
-| `export_json` | the set's raw pixel data on its own — no pictures, no archive |
-| `export_project` | every package, in the shape the editor persists |
+| | Scope | What it exports |
+| --- | --- | --- |
+| `export_spritesheet` | active animation | one animation as a packed strip PNG plus a frame map — uniform gapless cells, which is what a game engine loads (**not** the set's sprites) |
+| `export_apng` | active animation | one animation as an animated PNG — ~30x smaller than the animated SVG, and the thing to send someone |
+| `export_animated_svg` | active animation | one animation as a self-contained looping SVG |
+| `contact_sheet` | active animation | every frame as one numbered PNG grid — a fault in frame 9 is invisible in playback and obvious here |
+| `export_png` | active sprite | one sprite still at any scale |
+| `export_svg` | active sprite | one sprite still, horizontal runs merged into single rects |
+| `export_ico` | active sprite | multi-size icon |
+| `export_zip` | whole set | the whole set: every sprite as PNG and SVG, one SVG per animation, a `sheet/` strip and frame map per animation, plus `set.json` with raw pixel data — the closest thing to a project file |
+| `export_json` | whole set | the set's raw pixel data on its own — no pictures, no archive |
+| `export_project` | whole project | every package and set, in the shape the editor persists |
 
 `import_set()` takes back an `export_json` payload **or a whole export ZIP** (it reads `set.json`
 out of it), and `import_project()` takes back a project. Both accept an object, JSON text or a

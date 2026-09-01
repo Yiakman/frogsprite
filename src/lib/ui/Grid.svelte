@@ -2,7 +2,8 @@
 	import { beginStroke, endStroke, frogsprite as fs, importFiles } from '../api/commands';
 	import { notify } from './Dialog.svelte';
 	import { paint as render } from '../io/export';
-	import { PALETTE } from '../core/palette';
+	import { compose } from '../core/fx';
+	import { PALETTE, TRANSPARENT } from '../core/palette';
 	import { line } from '../core/shapes';
 	import { isLinked } from '../core/layers';
 	import { editor } from '../state/store.svelte';
@@ -21,6 +22,7 @@
 	let painting = $state(false);
 	let dropping = $state(false);
 	let canvas: HTMLCanvasElement | undefined = $state();
+	let onionCanvas: HTMLCanvasElement | undefined = $state();
 	/** cell under the pointer, or -1 — drawn as one moving outline instead of a :hover per cell */
 	let hover = $state(-1);
 
@@ -51,6 +53,7 @@
 	const set = $derived(editor.set);
 	const sprite = $derived(editor.shown);
 	const grid = $derived(set?.grid ?? 16);
+	const frames = $derived(editor.frames);
 	// A paused frame is still editable — only the running timer locks the canvas. A frame carrying
 	// effects is the exception: the canvas is showing a transformed view, so a stroke would land
 	// somewhere else on the sprite underneath it. A linked active layer is the other: it has no
@@ -63,11 +66,45 @@
 	 */
 	const showingComposite = $derived(editor.transformed && !editor.raw);
 
+	/** Prev/next ghosts under the held frame — only while paused and looking at the composed clip. */
+	const onionOn = $derived(
+		editor.onion && editor.frame >= 0 && !editor.running && !editor.raw && frames.length > 1
+	);
+
 	// The canvas is one element whatever the grid size, so a redraw costs the same at 128 as at 8.
 	$effect(() => {
 		const pixels = editor.shownPixels; // already reads `revision`, which Svelte cannot see for it
 		if (!canvas || !pixels) return;
 		render(canvas.getContext('2d')!, pixels, grid, grid, silhouette ?? undefined);
+	});
+
+	// Onion is a second pass under the head — not baked into shownPixels, so paint and exports stay
+	// clean. Both ghosts are marked into one buffer with two sentinel indices and drawn by the same
+	// paint() as the head above — one renderer, one clear, no parallel fill loop to keep honest.
+	const GHOST_COLORS = Array(256).fill('');
+	GHOST_COLORS[254] = '#e06060'; // previous — warm
+	GHOST_COLORS[255] = '#6090e0'; // next — cool
+
+	$effect(() => {
+		const ctx = onionCanvas?.getContext('2d');
+		if (!ctx) return;
+		if (!onionOn || !set) {
+			ctx.clearRect(0, 0, grid, grid);
+			return;
+		}
+		void editor.revision; // compose reads pixel buffers, which Svelte cannot see on its own
+		const g = set.grid;
+		const n = frames.length;
+		const overlay = new Uint8Array(g * g);
+		const mark = (i: number, idx: number) => {
+			const px = compose(frames, i, set.sprites, g, 1, { transitions: false, trails: false });
+			for (let k = 0; k < px.length; k++) if (px[k] !== TRANSPARENT) overlay[k] = idx;
+		};
+		mark((editor.frame - 1 + n) % n, 254);
+		if (n > 2) mark((editor.frame + 1) % n, 255); // a 2-frame loop shares its only neighbour
+		ctx.globalAlpha = 0.4;
+		render(ctx, overlay, g, g, undefined, GHOST_COLORS);
+		ctx.globalAlpha = 1;
 	});
 
 	/**
@@ -159,6 +196,13 @@
 				aria-label="{grid} by {grid} pixel canvas showing {sprite.name}"
 			>
 				<canvas
+					class="onion"
+					bind:this={onionCanvas}
+					width={grid}
+					height={grid}
+					aria-hidden="true"
+				></canvas>
+				<canvas
 					bind:this={canvas}
 					data-testid="grid"
 					width={grid}
@@ -225,7 +269,9 @@
 					>· on {iso ? 'iso-grid' : backdrop ?? 'checkerboard'}{silhouette ? ` · silhouette ${silhouette}` : ''}</span
 				>
 				{#if editor.frame >= 0}
-					<span class="on" data-testid="esc-hint">· Esc leave frame</span>
+					<span class="on" data-testid="esc-hint"
+						>· Esc leave frame · ← → frames{#if editor.onion} · onion{/if}</span
+					>
 				{/if}
 				<span class="on" data-testid="undo-hint">· {undoKey} undo · {redoKey} redo</span>
 			</p>
@@ -250,6 +296,18 @@
 					<button class="fit" onclick={() => fs.zoom(1)} title="Fit the pane again">fit</button>
 				{/if}
 			</div>
+
+			<span class="split" aria-hidden="true"></span>
+
+			<button
+				class="onion-btn"
+				class:on={editor.onion}
+				disabled={frames.length < 2}
+				data-testid="onion"
+				aria-pressed={editor.onion}
+				title="Onion skin — ghost the previous (red) and next (blue) frames under this one (F3)"
+				onclick={() => fs.onion(!editor.onion)}>onion</button
+			>
 
 			<span class="split" aria-hidden="true"></span>
 
@@ -339,10 +397,15 @@
 		box-shadow: 0 0 0 2px #d8b46a33;
 	}
 	.grid canvas {
+		position: absolute;
+		inset: 0;
 		display: block;
 		width: 100%;
 		height: 100%;
 		image-rendering: pixelated;
+	}
+	.grid canvas.onion {
+		pointer-events: none;
 	}
 	/* one cell rule per column and row, instead of an inset shadow on every cell */
 	.grid::after {
@@ -461,6 +524,25 @@
 		width: 1px;
 		height: 1.1rem;
 		background: #444;
+	}
+	.onion-btn {
+		padding: 1px 7px;
+		font: inherit;
+		font-size: 0.72rem;
+		background: #1b1b1b;
+		color: #aaa;
+		border: 1px solid #3a3a3a;
+		border-radius: 4px;
+		cursor: pointer;
+	}
+	.onion-btn:disabled {
+		opacity: 0.35;
+		cursor: default;
+	}
+	.onion-btn.on {
+		background: #1d3a4d;
+		border-color: #7cf;
+		color: #cfe9ff;
 	}
 	.backdrops {
 		display: flex;

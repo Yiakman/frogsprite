@@ -37,6 +37,12 @@
 	const crumbs = $derived(
 		[editor.sel.pkg, editor.sel.set, editor.sel.sprite].filter(Boolean).join(' / ')
 	);
+
+	// Export follows the current selection with no extra picker — name it on the button so that is obvious.
+	const spriteName = $derived(editor.sprite?.name);
+	const animName = $derived(editor.anim?.name);
+	const setName = $derived(editor.set?.name);
+	const animFrames = $derived(editor.frames.length);
 </script>
 
 <svelte:window
@@ -46,11 +52,13 @@
 	}}
 	onkeydown={(e) => {
 		// leave form fields to the browser's own undo — the frame editor has number inputs
-		if (/^(INPUT|SELECT|TEXTAREA)$/.test((e.target as HTMLElement)?.tagName)) return;
+		const tag = (e.target as HTMLElement)?.tagName;
+		if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag)) return;
+		const chord = e.metaKey || e.ctrlKey || e.altKey;
 		// Escape: the universal "leave this mode" gesture — drop a held or playing frame and go
 		// back to the selected sprite. No-op when nothing is held. The dialog stops its own
 		// Escape from propagating, so this never fires while a form is open.
-		if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+		if (e.key === 'Escape' && !chord && !e.shiftKey) {
 			if (editor.frame >= 0 && !e.repeat) {
 				e.preventDefault();
 				editor.stop();
@@ -63,6 +71,32 @@
 		// peek button — releasing either leaves the other's peek standing.
 		if (e.key === '\\' && !e.metaKey && !e.ctrlKey) {
 			if (!e.repeat) editor.peekKey = true;
+			return;
+		}
+		// Aseprite: Left/Right and ,/. step the held clip; Enter plays. Only while a frame is
+		// already on screen — arrows must not yank a painting session into the timeline. Enter
+		// on a focused button is that button, not play.
+		const delta = e.key === 'ArrowLeft' || e.key === ',' ? -1 : e.key === 'ArrowRight' || e.key === '.' ? 1 : 0;
+		if (delta && !chord && editor.frame >= 0) {
+			e.preventDefault();
+			if (!e.repeat) editor.step(delta);
+			return;
+		}
+		if (
+			e.key === 'Enter' &&
+			!chord &&
+			!e.repeat &&
+			editor.frames.length &&
+			!/^(BUTTON|SUMMARY|A)$/.test(tag)
+		) {
+			e.preventDefault();
+			editor.running ? editor.pause() : editor.play();
+			return;
+		}
+		// Aseprite F3 — onion skin. Harmless with fewer than two frames (ghosts need a neighbour).
+		if (e.key === 'F3' && !chord && !e.repeat) {
+			e.preventDefault();
+			fs.onion(!editor.onion);
 			return;
 		}
 		if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
@@ -104,37 +138,62 @@
 			<details name="topbar" bind:this={exportMenu}>
 				<summary>Export ▾</summary>
 				<div class="menu">
-					<button onclick={() => menuRun(exportMenu, () => fs.export_svg({ download: true }))}>SVG</button>
-					<button onclick={() => menuRun(exportMenu, () => fs.export_png({ scale: 16, download: true }))}>PNG</button>
-					<button onclick={() => menuRun(exportMenu, () => fs.export_ico({ download: true }))}>ICO</button>
+					<span class="note">this sprite</span>
 					<button
-						disabled={!editor.frames.length}
-						title="The animation shown in the timeline, with its frame effects"
-						onclick={() => menuRun(exportMenu, () => fs.export_animated_svg({ download: true }))}>Animated SVG</button
+						disabled={!spriteName}
+						title="Still of {spriteName} as vector"
+						onclick={() => menuRun(exportMenu, () => fs.export_svg({ download: true }))}
+						>SVG · {spriteName ?? '—'}</button
 					>
 					<button
-						disabled={!editor.frames.length}
-						title="The animation as one animated PNG — the same clip as the SVG at a fraction of the size, and what to send someone"
+						disabled={!spriteName}
+						title="Still of {spriteName} as PNG"
+						onclick={() => menuRun(exportMenu, () => fs.export_png({ scale: 16, download: true }))}
+						>PNG · {spriteName ?? '—'}</button
+					>
+					<button
+						disabled={!spriteName}
+						title="Still of {spriteName} as an .ico"
+						onclick={() => menuRun(exportMenu, () => fs.export_ico({ download: true }))}
+						>ICO · {spriteName ?? '—'}</button
+					>
+					<span class="note">this animation{animName ? ` · ${animFrames} frames` : ''}</span>
+					<button
+						disabled={!animFrames}
+						title="Looping SVG of {animName}, with its frame effects"
+						onclick={() => menuRun(exportMenu, () => fs.export_animated_svg({ download: true }))}
+						>Animated SVG · {animName ?? '—'}</button
+					>
+					<button
+						disabled={!animFrames}
+						title="The same clip as an animated PNG — smaller, what to send someone"
 						onclick={() => menuRun(exportMenu, () => fs.export_apng({ download: true }))}
-						data-testid="export-apng">Animated PNG</button
+						data-testid="export-apng">Animated PNG · {animName ?? '—'}</button
 					>
 					<button
-						disabled={!editor.frames.length}
-						title="The animation as one packed strip PNG plus its frame map — what a game engine loads"
+						disabled={!animFrames}
+						title="Packed strip PNG + frame map of {animName} — what a game engine loads, not the whole set"
 						onclick={() => menuRun(exportMenu, () => fs.export_spritesheet({ download: true }))}
-						data-testid="export-spritesheet">Spritesheet</button
+						data-testid="export-spritesheet">Spritesheet · {animName ?? '—'}</button
 					>
+					<button
+						disabled={!animFrames}
+						title="Every frame of {animName} as one numbered grid — on screen, gone on click"
+						onclick={() => menuRun(exportMenu, () => fs.contact_sheet({ show: true }))}
+						data-testid="export-contact-sheet">Contact sheet · {animName ?? '—'}</button
+					>
+					<span class="note">this set — every sprite</span>
 					<button
 						disabled={!editor.set?.sprites.length}
-						title="Every sprite as PNG and SVG, one SVG per animation, and the raw pixel data"
+						title="Every sprite in {setName} as PNG and SVG, one SVG per animation, and the raw pixel data"
 						onclick={() => menuRun(exportMenu, () => fs.export_zip({ download: true }))}
-						data-testid="export-zip">ZIP (whole set)</button
+						data-testid="export-zip">ZIP · {setName ?? '—'}</button
 					>
 					<button
-						disabled={!editor.set}
+						disabled={!setName}
 						title="The set's raw pixel data — the small file to hand to another browser"
 						onclick={() => menuRun(exportMenu, () => fs.export_json({ download: true }))}
-						data-testid="export-json">JSON (set)</button
+						data-testid="export-json">JSON · {setName ?? '—'}</button
 					>
 				</div>
 			</details>
@@ -143,7 +202,9 @@
 				<summary>Project ▾</summary>
 				<div class="menu">
 					<button
-						onclick={() => menuRun(projectMenu, () => fs.export_project({ download: true }))}>Save all…</button
+						title="Every package, exactly as saved"
+						onclick={() => menuRun(projectMenu, () => fs.export_project({ download: true }))}
+						>Save all… · every package</button
 					>
 					<button
 						onclick={() => {
@@ -164,6 +225,8 @@
 
 	<section class="c-right">
 		<Palette />
+	</section>
+	<section class="c-anim">
 		<Animator />
 	</section>
 </main>
@@ -175,10 +238,11 @@
 	main {
 		display: grid;
 		grid-template-columns: 2.5rem 12rem 1fr 19rem;
-		grid-template-rows: auto 1fr;
+		grid-template-rows: auto 1fr auto;
 		grid-template-areas:
-			"top  top  top    top"
-			"tool side canvas right";
+			"top  top  top     top"
+			"tool side canvas  right"
+			"tool side anim    anim";
 		height: 100vh;
 	}
 
@@ -249,7 +313,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
-		min-width: 11rem;
+		min-width: 14.5rem;
 		padding: 4px;
 		background: #1b1b1b;
 		border: 1px solid #444;
@@ -272,6 +336,11 @@
 		color: #666;
 		padding: 0.15rem 0.5rem 0.3rem;
 	}
+	.menu .note:not(:first-child) {
+		margin-top: 0.25rem;
+		padding-top: 0.4rem;
+		border-top: 1px solid #333;
+	}
 
 	/* ---- the four panes ---- */
 	.c-rail {
@@ -293,11 +362,20 @@
 	}
 	.c-right {
 		grid-area: right;
+		min-width: 0;
 		min-height: 0;
 		display: flex;
 		flex-direction: column;
 		overflow-y: auto;
 		border-left: 1px solid #333;
+	}
+	.c-anim {
+		grid-area: anim;
+		min-width: 0;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		border-top: 1px solid #333;
 	}
 
 	/* the collapse stacks the areas; the rail and the panels go flat */
@@ -309,7 +387,8 @@
 				"tool"
 				"side"
 				"canvas"
-				"right";
+				"right"
+				"anim";
 			height: auto;
 		}
 		.top {

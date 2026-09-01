@@ -83,11 +83,17 @@ export function compose(
 	sprites: Sprite[],
 	grid: number,
 	t = 1,
-	{ effects = true, transitions = true }: { effects?: boolean; transitions?: boolean } = {}
+	{
+		effects = true,
+		transitions = true,
+		trails
+	}: { effects?: boolean; transitions?: boolean; trails?: boolean } = {}
 ): Uint8Array {
 	const cells = grid * grid;
 	const frame = frames[i];
 	if (!frame) return new Uint8Array(cells);
+	// onion skin wants the pose (fx + layers) without the baked trail — otherwise ghosts of ghosts
+	const useTrail = trails ?? effects;
 
 	// indexed once: a trail resolves a sprite per ghost, and `silhouette` reaches for another frame,
 	// so a linear scan per lookup would be repeated work on every tick
@@ -115,7 +121,7 @@ export function compose(
 
 	// The trail goes *under* the frame, so it is built before any transition — a scan reveals the
 	// ghosts along with the head, which is what a trail moving behind something looks like.
-	const trail = effects ? frame.trail : undefined;
+	const trail = useTrail ? frame.trail : undefined;
 	if (trail) {
 		// never more ghosts than there are other frames: past that, the loop wraps onto this frame
 		// and a ghost lands exactly under the head, which is just wasted work
@@ -313,6 +319,7 @@ export function readTransition(v: any): Transition | undefined {
  * beside it alone. The validator does the dropping, so `false` and `0` clear their keys the same way.
  */
 export type FxPatch = { [K in keyof Fx]?: Fx[K] | null };
+export type LayerViewPatch = { [K in keyof LayerView]?: LayerView[K] | null };
 
 /** What `set_effects` may change about a frame. See `patchEffects` for what absent vs null means. */
 export type EffectPatch = {
@@ -320,7 +327,7 @@ export type EffectPatch = {
 	trail?: Trail | number | null;
 	transition?: Transition | string | null;
 	/** Per layer: an object merged key-by-key, a number as `dx` shorthand, or null to clear one. */
-	layers?: Record<string, LayerView | number | null> | null;
+	layers?: Record<string, LayerViewPatch | number | null> | null;
 };
 
 /**

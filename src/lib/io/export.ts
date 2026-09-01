@@ -630,6 +630,7 @@ A.src=${JSON.stringify(albedo)}; N.src=${JSON.stringify(normal)};
 
 /** One overlay at a time: a second `show` replaces the first rather than stacking on it. */
 const PEEK = 'frogsprite-peek';
+let activeClose: (() => void) | undefined;
 
 /**
  * Put a rendered image on screen, over the app, until it is dismissed — the counterpart to
@@ -645,7 +646,7 @@ const PEEK = 'frogsprite-peek';
  * function. The caption is `textContent`, since a set name is user input.
  */
 export function show(url: string, title: string) {
-	document.getElementById(PEEK)?.remove();
+	activeClose?.();
 	const box = document.createElement('div');
 	box.id = PEEK;
 	box.style.cssText =
@@ -660,13 +661,20 @@ export function show(url: string, title: string) {
 	box.append(img, caption);
 	const close = () => {
 		box.remove();
-		window.removeEventListener('keydown', onKey);
+		window.removeEventListener('keydown', onKey, true);
+		if (activeClose === close) activeClose = undefined;
 	};
 	const onKey = (e: KeyboardEvent) => {
-		if (e.key === 'Escape') close();
+		// Esc closes the peek — stop it reaching the app's "leave held frame" handler underneath
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			close();
+		}
 	};
+	activeClose = close;
 	box.addEventListener('click', close);
-	window.addEventListener('keydown', onKey);
+	window.addEventListener('keydown', onKey, true);
 	document.body.append(box);
 	return title;
 }

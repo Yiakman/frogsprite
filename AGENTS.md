@@ -1139,16 +1139,28 @@ Transport — the canvas shows whichever frame you land on, and the sidebar sele
 - `view_frame(i)` — jump straight to frame `i` (0-based) and hold there — the way to inspect one frame
 
 `state().playback` reports `{ animation, frame, running, showing }` so you can check where you are.
-In the UI, the timeline has a picker for the set's animations and a thumbnail per frame; clicking a
-thumbnail calls `view_frame`, and the frame it holds expands into an **effect tray** — the same
-`set_effects` calls documented above, with a `this frame | all frames` scope switch. A frame with a
-transition also gets a **reveal** slider there, which scrubs `phase` through the transition so you
-can see the middle of a scan or a dissolve while authoring it. Whole-animation recipes (Comet,
-Ghost, Flash, Fade in, Hue cycle, Clear effects) are the **Effects** buttons beside the timeline.
+In the UI the timeline is a **horizontal strip** under the canvas — frames read left to right, like
+time. Click a thumbnail to `view_frame`; the **inspector** under the strip edits only that held
+frame (sprite, duration, the same `set_effects` tray as above with per-layer overrides for `dx`/`dy`,
+`hidden`, `wrap`, `hue`, `inv`, `flip`, `rotate` and `base`, plus a `this frame | all frames`
+switch). A frame with a transition also gets a **reveal** slider, which scrubs `phase` so you can
+see the middle of a scan or a dissolve while authoring it. **Clone pose** copies the drawing into a
+new sprite and appends it; **duplicate** inserts a copy of the frame; drag reorders. **sheet** opens
+a contact-sheet overlay of the whole clip (`contact_sheet({ show: true })`). Left/Right (or `,` /
+`.`) step while a frame is held; Enter plays or pauses; **F3** / the canvas **onion** button ghosts
+the previous (red) and next (blue) frames under the held one — an authoring overlay, not a drawn
+`trail`. Whole-animation recipes (Comet, Ghost, Flash, Fade in, Hue cycle, Clear effects) live in
+the inspector.
 
 ### Export
 
 Each returns its data (and also downloads a file when passed `{ download: true }`).
+
+Exports operate at three distinct scopes — know which you want:
+- **Sprite stills** (`export_png`, `export_svg`, `export_ico`): the **currently selected sprite** (or `sprite` by name).
+- **Animation clips** (`export_spritesheet`, `export_apng`, `export_animated_svg`, `contact_sheet`): the **active animation's sequence of composed frames** (or `animation` by name) — **not** the set's sprites.
+- **Set packages** (`export_zip`, `export_json`): the **entire set** (every sprite with all layers, and every animation).
+- **Project** (`export_project`): every package and set.
 
 - `sha256(data)` → **async**, hex. A data URL hashes as its **decoded bytes** — the PNG file, not
   the base64 text — so the digest matches `shasum -a 256` of what arrives on the other side; a
@@ -1179,7 +1191,7 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   frogsprite.export_apng({ scale: 4, download: true });     // and keep it
   ```
 - `contact_sheet({ animation?, cols = 4, scale = 2, gap?, effects?, transitions?, download?, show? })` →
-  every frame as one numbered PNG grid. Playback shows one frame at a time and a screenshot catches
+  every frame of the active animation as one numbered PNG grid. Playback shows one frame at a time and a screenshot catches
   whichever was up, so a fault in frame 9 stays invisible until it goes past; on a sheet it is
   obvious at a glance. Reach for it before believing an animation is finished
 
@@ -1192,7 +1204,7 @@ Each returns its data (and also downloads a file when passed `{ download: true }
   frogsprite.contact_sheet({ cols: 8, scale: 3, show: true });   // every frame, on screen, now
   ```
 - `export_spritesheet({ animation?, cols?, scale = 8, effects?, transitions?, normals?, download?, show? })` → **one
-  animation as a packed strip PNG plus its frame map** — the hand-off to a game engine, which wants
+  animation as a packed strip PNG plus its frame map** (the active animation, or `animation` by name — **not the set's sprites**; to export every sprite in a set, use `export_zip`) — the hand-off to a game engine, which wants
   one image with uniform cells rather than the ZIP's one file per sprite. Cells are the same size,
   in reading order, gapless, on a transparent background, so anything that asks only for a frame
   size (Phaser, Godot, LÖVE, a CSS `steps()` background) needs nothing but the PNG. Returns
@@ -1380,10 +1392,14 @@ with your work, and none affects exports or `print_sprite()`.
   ```js
   frogsprite.zoom(4, { x: 40, y: 60 });   // magnify, and put (40, 60) in the middle of the pane
   ```
+- `onion(on?)` — ghost the previous and next frames under the held one (red / blue). Distinct from
+  `trail`, which bakes into the drawn frame. Off while playing or peaking `raw`. In the UI: the
+  **onion** button under the canvas, or F3.
 - `contact_sheet({ show: true })` — every frame at once, on screen. The canvas shows one frame and
   playback shows whichever went past; a sheet is the only view that shows them together, and `show`
-  is what makes looking at one a single call rather than a download. `export_png` and
-  `export_spritesheet` take it too — see [Export](#export)
+  is what makes looking at one a single call rather than a download. Export → Contact sheet and the
+  timeline **sheet** button call this. `export_png` and `export_spritesheet` take `show` too — see
+  [Export](#export)
 - `raw(on?)` — draw the sprite **as it is stored**, ignoring the held frame's `fx`, `trail` and
   `transition`. This is the answer to "is that shape mine, or did an effect do it?" — and to "what
   would a brush stroke here actually land on?"
@@ -1402,8 +1418,8 @@ also how you check that two animation frames differ where you meant them to. Pic
 contrasts with the background you're on; black on the default checkerboard is deliberately dim.
 
 **If you review by screenshot, read the view back before you judge the pixels.** Both
-`state().view` and the caption under the canvas name the background, the silhouette and whether
-`raw` is on, so a magenta field or a black frog is never mistaken for something you painted.
+`state().view` and the caption under the canvas name the background, the silhouette, onion and
+whether `raw` is on, so a magenta field or a black frog is never mistaken for something you painted.
 
 `raw` is the one to reach for while a frame with effects is held, because there the canvas is
 showing a *composite* rather than any sprite you can edit — which is why painting is off. The UI
