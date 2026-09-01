@@ -5,8 +5,12 @@
 	import { isLinked } from '../core/layers';
 	import { editor, pixelsOf } from '../state/store.svelte';
 
-	// this component is the tab's only reader and writer, so it stays out of the store
-	let tab = $state<'palette' | 'layers'>('palette');
+	// Exclusive accordion: only one section open at a time
+	let openSection = $state<'palette' | 'layers'>('palette');
+
+	const toggle = (section: 'palette' | 'layers') => {
+		openSection = section;
+	};
 
 	const working = $derived.by(() => (editor.swatchSet ? activeSwatches() : null));
 
@@ -68,36 +72,49 @@
 		{/if}
 	</header>
 
-	<!-- Tab Switcher Bar -->
-	<nav class="tabs" aria-label="Right Panel View">
-		<button
-			class="tab-btn"
-			class:active={tab === 'palette'}
-			onclick={() => (tab = 'palette')}
-			data-testid="tab-palette"
-		>
-			🎨 Palette
-		</button>
-		<button
-			class="tab-btn"
-			class:active={tab === 'layers'}
-			onclick={() => (tab = 'layers')}
-			data-testid="tab-layers"
-		>
-			📑 Layers
-			{#if layerCount > 0}
-				<span class="tab-badge">{layerCount}</span>
+	<!-- Accordion: only one section is open at a time -->
+	<div class="accordion">
+		<!-- Section: Palette -->
+		<section class="section palette-section" class:open={openSection === 'palette'}>
+			<button
+				class="section-header"
+				class:active={openSection === 'palette'}
+				onclick={() => toggle('palette')}
+				data-testid="section-palette"
+				aria-expanded={openSection === 'palette'}
+			>
+				<span class="arrow">{openSection === 'palette' ? '▾' : '▸'}</span>
+				<span class="title">🎨 Palette</span>
+				<span class="meta-hint">256 colours</span>
+			</button>
+			{#if openSection === 'palette'}
+				<div class="section-content">
+					<Palette />
+				</div>
 			{/if}
-		</button>
-	</nav>
+		</section>
 
-	<!-- Scrollable Tab Content -->
-	<div class="panel-body">
-		{#if tab === 'palette'}
-			<Palette />
-		{:else}
-			<LayersPanel />
-		{/if}
+		<!-- Section: Layers -->
+		<section class="section layers-section" class:open={openSection === 'layers'}>
+			<button
+				class="section-header"
+				class:active={openSection === 'layers'}
+				onclick={() => toggle('layers')}
+				data-testid="section-layers"
+				aria-expanded={openSection === 'layers'}
+			>
+				<span class="arrow">{openSection === 'layers' ? '▾' : '▸'}</span>
+				<span class="title">📑 Layers</span>
+				{#if layerCount > 0}
+					<span class="badge" title="{layerCount} layer{layerCount === 1 ? '' : 's'}">{layerCount}</span>
+				{/if}
+			</button>
+			{#if openSection === 'layers'}
+				<div class="section-content">
+					<LayersPanel />
+				</div>
+			{/if}
+		</section>
 	</div>
 </div>
 
@@ -152,11 +169,13 @@
 		align-items: center;
 		min-height: 1.4rem;
 	}
-	/* the base .swatch (unset, cursor, inset ring) lives in app.css; this adds the big size */
 	.swatch {
+		all: unset;
 		width: 1.25rem;
 		height: 1.25rem;
 		border-radius: 3px;
+		cursor: pointer;
+		box-shadow: inset 0 0 0 1px #0006;
 	}
 	.swatch.sel {
 		box-shadow:
@@ -164,7 +183,9 @@
 			0 0 0 2px #7cf;
 	}
 	.none {
-		background: var(--checker) 0 0 / 8px 8px !important;
+		background:
+			conic-gradient(#3a3a3a 90deg, #262626 90deg 180deg, #3a3a3a 180deg 270deg, #262626 270deg)
+			0 0 / 8px 8px !important;
 	}
 	.hint {
 		font-size: 0.72rem;
@@ -186,48 +207,80 @@
 		letter-spacing: 0.06em;
 	}
 
-	/* Tab switcher */
-	.tabs {
+	/* Accordion */
+	.accordion {
 		display: flex;
-		background: #141414;
+		flex-direction: column;
+		flex: 1;
+		min-height: 0;
+	}
+	.section {
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
 		border-bottom: 1px solid #282828;
+	}
+	.palette-section {
 		flex: none;
 	}
-	.tab-btn {
-		all: unset;
+	.palette-section.open .section-content {
+		flex: none;
+	}
+	.layers-section.open {
 		flex: 1;
+		min-height: 0;
+	}
+	.section-header {
+		all: unset;
 		display: flex;
 		align-items: center;
-		justify-content: center;
 		gap: 0.4rem;
-		padding: 0.45rem 0.5rem;
+		padding: 0.45rem 0.75rem;
+		background: #141414;
+		cursor: pointer;
 		font-size: 0.75rem;
 		font-weight: 500;
-		color: #777;
-		cursor: pointer;
-		text-align: center;
-		border-bottom: 2px solid transparent;
-		transition: all 0.15s ease;
+		color: #888;
+		user-select: none;
+		border-bottom: 1px solid #222;
+		transition: background 0.1s ease, color 0.1s ease;
 	}
-	.tab-btn:hover {
+	.section-header:hover {
+		background: #1c1c1c;
 		color: #ccc;
-		background: #1a1a1a;
 	}
-	.tab-btn.active {
+	.section-header.active {
+		background: #18252f;
 		color: #cfe9ff;
-		background: #1b2832;
-		border-bottom-color: #7cf;
+		border-bottom-color: #233b4d;
 	}
-	.tab-badge {
+	.arrow {
+		font-size: 0.75rem;
+		color: #666;
+		width: 0.8rem;
+	}
+	.section-header.active .arrow {
+		color: #7cf;
+	}
+	.title {
+		font-weight: 600;
+	}
+	.meta-hint {
+		margin-left: auto;
+		font-size: 0.65rem;
+		color: #666;
+	}
+	.badge {
+		margin-left: auto;
 		font-size: 0.65rem;
 		background: #253946;
 		color: #7cf;
-		padding: 0 4px;
-		border-radius: 10px;
-		line-height: 1.3;
+		padding: 1px 5px;
+		border-radius: 8px;
+		line-height: 1.2;
 	}
 
-	.panel-body {
+	.section-content {
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;

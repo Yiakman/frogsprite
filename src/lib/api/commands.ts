@@ -876,9 +876,11 @@ const api = {
 	 *   set_layers([{ name: 'sketch', hidden: true }, …])  // reorder and hide together
 	 *
 	 * Every existing layer must appear exactly once: this rearranges a stack, it never destroys one.
-	 * Use `new_layer` / `delete_layer` to change what is in it.
+	 * Use `new_layer` / `delete_layer` to change what is in it. Entries also take `base`, which
+	 * **merges** where `hidden` replaces: an entry that says nothing keeps the layer's ground row,
+	 * and `base: null` is the one way back to scenery.
 	 */
-	set_layers: mut(function (layers: (string | { name: string; hidden?: boolean; base?: number | true })[]) {
+	set_layers: mut(function (layers: (string | { name: string; hidden?: boolean; base?: number | true | null })[]) {
 		const t = target();
 		const sprite = t.sprite;
 		if (!Array.isArray(layers) || !layers.length) throw new Error('layers must be a non-empty array');
@@ -900,14 +902,16 @@ const api = {
 			// key entirely when false, so a no-op reorder serialises unchanged and costs no undo step.
 			// Spread everything else — naming `pixels` here would silently unlink every linked layer
 			// the moment anyone reordered the stack.
-			const { hidden: _was, ...rest } = found;
+			const { hidden: _was, base: had, ...rest } = found;
 			// `base` merges where `hidden` replaces: an entry that says nothing about it keeps what the
-			// layer had, so a plain reorder cannot silently turn an entity back into scenery
+			// layer had, so a plain reorder cannot silently turn an entity back into scenery. `null` is
+			// the explicit opposite — back to scenery — because absent already spends "leave it alone".
 			const ground = readGround(l.base);
 			return {
 				...rest,
 				...(l.hidden && { hidden: true as const }),
-				...(ground !== undefined && { base: ground })
+				...(ground !== undefined && { base: ground }),
+				...(l.base !== null && ground === undefined && had !== undefined && { base: had })
 			};
 		});
 		sprite.layers = next;

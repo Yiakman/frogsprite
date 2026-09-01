@@ -236,7 +236,7 @@ palette *indices*, so there is nothing meaningful to average between index 3 and
 - `set_layers([...])` — reorder, and show/hide several at once, bottom first. Every existing layer
   must appear exactly once: this rearranges the stack, it never destroys part of it. Entries also
   take `base`, which **merges** where `hidden` replaces — a plain reorder cannot quietly turn an
-  entity back into scenery
+  entity back into scenery, and `base: null` is the one way back
 - `tile_layer(name?, { period, from })` — repeat the layer's leftmost `period` columns across the
   grid. Draw one motif, get the rest; `period` must divide the grid. Use it before `scroll_layer`,
   because it makes the repeat a **guarantee** rather than a hope
@@ -361,7 +361,8 @@ frogsprite.link_layer('pillar', { dx: 72, dy: 40, base: true });
 
 - **No `base` is scenery.** It draws first, in stack order, exactly as every layer did before this
   existed. A floor belongs here — its own lowest painted row is the bottom of the canvas, so a floor
-  that derived a ground row would sort in front of everything standing on it.
+  that derived a ground row would sort in front of everything standing on it. An entity goes back to
+  scenery with `set_layers([{ name, base: null }])` — leaving `base` out is *not* that, it keeps it.
 - **A `base` makes it an entity**, drawn after all the scenery and ordered against the other
   entities by `base + dy`. `true` derives the row from the lowest painted pixel, which is what a
   sprite drawn standing already gives you; a number says it outright.

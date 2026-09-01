@@ -320,6 +320,9 @@ class Editor {
 						layers: sp.layers.map((l) => ({
 							name: l.name,
 							hidden: !!l.hidden,
+							// the ground row, when the layer depth-sorts — readable so a script can tell an
+							// entity from scenery, and clear it with set_layers' `base: null`
+							...(l.base !== undefined && { base: l.base }),
 							...(isLinked(l) && {
 								from: l.from,
 								...(l.dx && { dx: l.dx }),

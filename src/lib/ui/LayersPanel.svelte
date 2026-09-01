@@ -117,14 +117,10 @@
 		}
 	};
 
-	// bare names for everyone else: their base carries over through the same set_layers merge
-	const setBase = (name: string, base: number | true | undefined) => {
+	// `null` is the explicit "back to scenery"; everyone else goes as a bare name and keeps their base
+	const setBase = (name: string, base: number | true | null) => {
 		if (!sprite) return;
-		fs.set_layers(
-			sprite.layers.map((l) =>
-				l.name === name && base !== undefined ? { name, base } : l.name
-			)
-		);
+		fs.set_layers(sprite.layers.map((l) => (l.name === name ? { name, base } : l.name)));
 	};
 
 	const tileLayer = (name: string) => {
@@ -339,7 +335,7 @@
 						<button
 							class="chip-opt"
 							class:active={activeLayer.base === undefined}
-							onclick={() => setBase(activeLayer.name, undefined)}
+							onclick={() => setBase(activeLayer.name, null)}
 							title="Scenery: drawn in stack order (e.g. floors, backgrounds)"
 						>
 							Scenery
