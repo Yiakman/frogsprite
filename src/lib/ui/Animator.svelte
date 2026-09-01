@@ -4,7 +4,7 @@
 	import { toSVG } from '../io/export';
 	import { compose, steps, TRANSITIONS, type EffectPatch, type LayerViewPatch } from '../core/fx';
 	import { isLinked } from '../core/layers';
-	import { HUES, type Hue } from '../core/palette';
+	import { HUES } from '../core/palette';
 	import { freeName } from '../core/names';
 	import type { Frame } from '../core/types';
 	import { editor } from '../state/store.svelte';
@@ -26,6 +26,15 @@
 	/** Keep the playhead in view without a bind:this + $effect loop on the strip. */
 	const follow = (node: HTMLElement) => {
 		node.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+	};
+
+	/** Run one frogsprite command, showing its error in the dialog instead of the console. */
+	const run = (fn: () => void) => {
+		try {
+			fn();
+		} catch (e) {
+			notify((e as Error).message);
+		}
 	};
 
 	// ponytail: thumbnails reuse the SVG exporter rather than a second renderer, handed to
@@ -71,43 +80,22 @@
 		return !!v && Object.keys(v).length > 0;
 	};
 
-	function patchLayer(name: string, patch: LayerViewPatch | null) {
-		apply({ layers: { [name]: patch } });
+	/** Every layer control writes through this one guarded writer — no target layer, no write. */
+	function layerPatch(patch: LayerViewPatch | null) {
+		if (activeLayerName) apply({ layers: { [activeLayerName]: patch } });
 	}
 
-	function toggleLayerFlag(key: 'invert' | 'flipX' | 'flipY') {
-		if (!activeLayerName) return;
-		patchLayer(activeLayerName, { [key]: !activeView?.[key] });
-	}
+	/** 30° steps either way, wrapped through 360, where landing on 0 means "no turn at all". */
+	const turn = (cur: number, back: boolean) => (((cur + (back ? -30 : 30)) % 360) + 360) % 360;
 
-	function spinLayer(back: boolean) {
-		if (!activeLayerName) return;
-		const cur = activeView?.rotate ?? 0;
-		const nextRot = (((cur + (back ? -30 : 30)) % 360) + 360) % 360;
-		patchLayer(activeLayerName, { rotate: nextRot || null });
-	}
+	const spinLayer = (back: boolean) =>
+		layerPatch({ rotate: turn(activeView?.rotate ?? 0, back) || null });
 
-	function nudgeLayer(dx: number, dy: number) {
-		if (!activeLayerName) return;
-		patchLayer(activeLayerName, {
+	const nudgeLayer = (dx: number, dy: number) =>
+		layerPatch({
 			dx: (activeView?.dx ?? 0) + dx,
 			dy: (activeView?.dy ?? 0) + dy
 		});
-	}
-
-	function setLayerHue(hue: Hue | null) {
-		if (!activeLayerName) return;
-		patchLayer(activeLayerName, { hue });
-	}
-
-	function setLayerBase(val: number | null) {
-		if (!activeLayerName) return;
-		patchLayer(activeLayerName, { base: val });
-	}
-
-	function clearLayerOverrides(name: string) {
-		patchLayer(name, null);
-	}
 
 	/** Hue names to the palette entry a swatch should show, so the dot is the colour it applies. */
 	const HUE_SWATCH: Record<string, string> = {
@@ -148,8 +136,7 @@
 		apply({ fx: { [key]: !held?.fx?.[key] } });
 
 	/** Step the turn by 30°, or back with shift. Wrapping through 360 lands on 0, which clears it. */
-	const spin = (back: boolean) =>
-		apply({ fx: { rotate: (((held?.fx?.rotate ?? 0) + (back ? -30 : 30)) % 360 + 360) % 360 } });
+	const spin = (back: boolean) => apply({ fx: { rotate: turn(held?.fx?.rotate ?? 0, back) } });
 
 	const nudge = (dx: number, dy: number) =>
 		apply({ fx: { dx: (held?.fx?.dx ?? 0) + dx, dy: (held?.fx?.dy ?? 0) + dy } });
@@ -191,11 +178,7 @@
 	function copyAnimation() {
 		const anim = editor.anim;
 		if (!anim) return;
-		try {
-			fs.copy_animation(anim.name);
-		} catch (e) {
-			notify((e as Error).message);
-		}
+		run(() => fs.copy_animation(anim.name));
 	}
 
 	function deleteAnimation() {
@@ -254,12 +237,10 @@
 		const anim = editor.anim;
 		if (!anim || editor.frame < 0) return;
 		const at = editor.frame;
-		try {
+		run(() => {
 			fs.copy_frames(anim.name, { which: at, to: anim.name, at: at + 1 });
 			editor.viewFrame(at + 1);
-		} catch (e) {
-			notify((e as Error).message);
-		}
+		});
 	}
 
 	function reorder(from: number, to: number) {
@@ -575,13 +556,7 @@
 					data-testid="duplicate-frame">duplicate</button
 				>
 				<button
-					onclick={() => {
-						try {
-							fs.contact_sheet({ show: true });
-						} catch (e) {
-							notify((e as Error).message);
-						}
-					}}
+					onclick={() => run(() => fs.contact_sheet({ show: true }))}
 					disabled={!has}
 					title="Every frame of this animation as one numbered grid — on screen"
 					data-testid="contact-sheet">sheet</button
@@ -784,21 +759,21 @@
 									class:on={activeView?.invert}
 									aria-pressed={!!activeView?.invert}
 									title="Invert layer colours"
-									onclick={() => toggleLayerFlag('invert')}
+									onclick={() => layerPatch({ invert: !activeView?.invert })}
 									data-testid="layer-chip-invert">inv</button
 								>
 								<button
 									class:on={activeView?.flipX}
 									aria-pressed={!!activeView?.flipX}
 									title="Mirror layer left and right"
-									onclick={() => toggleLayerFlag('flipX')}
+									onclick={() => layerPatch({ flipX: !activeView?.flipX })}
 									data-testid="layer-chip-flipx">↔</button
 								>
 								<button
 									class:on={activeView?.flipY}
 									aria-pressed={!!activeView?.flipY}
 									title="Mirror layer top and bottom"
-									onclick={() => toggleLayerFlag('flipY')}
+									onclick={() => layerPatch({ flipY: !activeView?.flipY })}
 									data-testid="layer-chip-flipy">↕</button
 								>
 								<button
@@ -811,40 +786,28 @@
 									class:on={activeView?.hidden === true}
 									aria-pressed={activeView?.hidden === true}
 									title="Hide this layer on this frame"
-									onclick={() =>
-										patchLayer(activeLayerName, {
-											hidden: activeView?.hidden === true ? null : true
-										})}
+									onclick={() => layerPatch({ hidden: activeView?.hidden === true ? null : true })}
 									data-testid="layer-chip-hide">hide</button
 								>
 								<button
 									class:on={activeView?.hidden === false}
 									aria-pressed={activeView?.hidden === false}
 									title="Show this layer on this frame (overriding layer default hidden)"
-									onclick={() =>
-										patchLayer(activeLayerName, {
-											hidden: activeView?.hidden === false ? null : false
-										})}
+									onclick={() => layerPatch({ hidden: activeView?.hidden === false ? null : false })}
 									data-testid="layer-chip-show">show</button
 								>
 								<button
 									class:on={activeView?.wrap === true}
 									aria-pressed={activeView?.wrap === true}
 									title="Wrap layer when scrolled past edges"
-									onclick={() =>
-										patchLayer(activeLayerName, {
-											wrap: activeView?.wrap === true ? null : true
-										})}
+									onclick={() => layerPatch({ wrap: activeView?.wrap === true ? null : true })}
 									data-testid="layer-chip-wrap">wrap</button
 								>
 								<button
 									class:on={activeView?.wrap === false}
 									aria-pressed={activeView?.wrap === false}
 									title="Clip layer at edges (overriding link default wrap)"
-									onclick={() =>
-										patchLayer(activeLayerName, {
-											wrap: activeView?.wrap === false ? null : false
-										})}
+									onclick={() => layerPatch({ wrap: activeView?.wrap === false ? null : false })}
 									data-testid="layer-chip-clip">clip</button
 								>
 							</div>
@@ -859,7 +822,7 @@
 										aria-pressed={activeView?.hue === h}
 										aria-label="{h} only for {activeLayerName}"
 										title="Reduce {activeLayerName} to {h}"
-										onclick={() => setLayerHue(activeView?.hue === h ? null : h)}
+										onclick={() => layerPatch({ hue: activeView?.hue === h ? null : h })}
 									></button>
 								{/each}
 								<button
@@ -867,7 +830,7 @@
 									class:on={!activeView?.hue}
 									aria-label="No hue reduction for {activeLayerName}"
 									title="Leave {activeLayerName} colours alone"
-									onclick={() => setLayerHue(null)}>⌀</button
+									onclick={() => layerPatch({ hue: null })}>⌀</button
 								>
 							</div>
 
@@ -884,7 +847,7 @@
 									aria-label="{activeLayerName} dx offset"
 									onchange={(e) => {
 										const v = e.currentTarget.value.trim();
-										patchLayer(activeLayerName, { dx: v !== '' ? Number(v) : null });
+										layerPatch({ dx: v !== '' ? Number(v) : null });
 									}}
 								/>
 								<input
@@ -894,14 +857,14 @@
 									aria-label="{activeLayerName} dy offset"
 									onchange={(e) => {
 										const v = e.currentTarget.value.trim();
-										patchLayer(activeLayerName, { dy: v !== '' ? Number(v) : null });
+										layerPatch({ dy: v !== '' ? Number(v) : null });
 									}}
 								/>
 								<button
 									disabled={activeView?.dx === undefined && activeView?.dy === undefined}
 									aria-label="Stop displacing {activeLayerName}"
 									title="Reset layer displacement"
-									onclick={() => patchLayer(activeLayerName, { dx: null, dy: null })}
+									onclick={() => layerPatch({ dx: null, dy: null })}
 									>⌀</button
 								>
 							</div>
@@ -921,20 +884,20 @@
 									title="Ground row override for depth sorting"
 									onchange={(e) => {
 										const v = e.currentTarget.value.trim();
-										setLayerBase(v !== '' ? Number(v) : null);
+										layerPatch({ base: v !== '' ? Number(v) : null });
 									}}
 								/>
 								<button
 									disabled={activeView?.base === undefined}
 									aria-label="Reset ground row override for {activeLayerName}"
 									title="Reset ground row override to layer default"
-									onclick={() => setLayerBase(null)}>⌀</button
+									onclick={() => layerPatch({ base: null })}>⌀</button
 								>
 								<button
 									disabled={!layerHasOverrides(activeLayerName)}
 									class="reset-layer"
 									title="Clear all overrides for {activeLayerName} on this frame"
-									onclick={() => clearLayerOverrides(activeLayerName)}
+									onclick={() => layerPatch(null)}
 									data-testid="reset-layer-btn">reset {activeLayerName}</button
 								>
 							</div>

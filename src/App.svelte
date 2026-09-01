@@ -76,14 +76,10 @@
 		// Aseprite: Left/Right and ,/. step the held clip; Enter plays. Only while a frame is
 		// already on screen — arrows must not yank a painting session into the timeline. Enter
 		// on a focused button is that button, not play.
-		if (!chord && editor.frame >= 0 && (e.key === 'ArrowLeft' || e.key === ',')) {
+		const delta = e.key === 'ArrowLeft' || e.key === ',' ? -1 : e.key === 'ArrowRight' || e.key === '.' ? 1 : 0;
+		if (delta && !chord && editor.frame >= 0) {
 			e.preventDefault();
-			if (!e.repeat) editor.step(-1);
-			return;
-		}
-		if (!chord && editor.frame >= 0 && (e.key === 'ArrowRight' || e.key === '.')) {
-			e.preventDefault();
-			if (!e.repeat) editor.step(1);
+			if (!e.repeat) editor.step(delta);
 			return;
 		}
 		if (
