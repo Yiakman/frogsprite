@@ -13,7 +13,6 @@ const find = <T extends { name: string }>(list: T[], name: string) =>
 class Editor {
 	packages = $state<Package[]>([]);
 	sel = $state({ pkg: '', set: '', sprite: '', anim: '', layer: '' });
-	tab = $state<'palette' | 'layers'>('palette');
 	color = $state(1);
 	/** Canvas backdrop: a palette index, 0 for the checkerboard, or `'iso-grid'`. A view setting, not persisted. */
 	background = $state<number | 'iso-grid'>(0);

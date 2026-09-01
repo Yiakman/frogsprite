@@ -5,6 +5,9 @@
 	import { isLinked } from '../core/layers';
 	import { editor, pixelsOf } from '../state/store.svelte';
 
+	// this component is the tab's only reader and writer, so it stays out of the store
+	let tab = $state<'palette' | 'layers'>('palette');
+
 	const working = $derived.by(() => (editor.swatchSet ? activeSwatches() : null));
 
 	const used = $derived.by(() => {
@@ -36,7 +39,7 @@
 		<div class="quick-row" data-testid="quick-colors">
 			{#each [0, ...used] as i (i)}
 				<button
-					class="sw"
+					class="swatch"
 					class:sel={editor.color === i}
 					class:none={i === 0}
 					title={i === 0 ? '0 · transparent (eraser)' : `${i} · ${PALETTE[i]}`}
@@ -53,7 +56,7 @@
 				<span class="hint">{editor.swatchSet} · {working.length}</span>
 				{#each working as i (i)}
 					<button
-						class="sw"
+						class="swatch"
 						class:sel={editor.color === i}
 						title="{i} · {PALETTE[i]}"
 						aria-label="colour {i} {PALETTE[i]}"
@@ -69,16 +72,16 @@
 	<nav class="tabs" aria-label="Right Panel View">
 		<button
 			class="tab-btn"
-			class:active={editor.tab === 'palette'}
-			onclick={() => (editor.tab = 'palette')}
+			class:active={tab === 'palette'}
+			onclick={() => (tab = 'palette')}
 			data-testid="tab-palette"
 		>
 			🎨 Palette
 		</button>
 		<button
 			class="tab-btn"
-			class:active={editor.tab === 'layers'}
-			onclick={() => (editor.tab = 'layers')}
+			class:active={tab === 'layers'}
+			onclick={() => (tab = 'layers')}
 			data-testid="tab-layers"
 		>
 			📑 Layers
@@ -90,7 +93,7 @@
 
 	<!-- Scrollable Tab Content -->
 	<div class="panel-body">
-		{#if editor.tab === 'palette'}
+		{#if tab === 'palette'}
 			<Palette />
 		{:else}
 			<LayersPanel />
@@ -149,23 +152,19 @@
 		align-items: center;
 		min-height: 1.4rem;
 	}
-	.sw {
-		all: unset;
+	/* the base .swatch (unset, cursor, inset ring) lives in app.css; this adds the big size */
+	.swatch {
 		width: 1.25rem;
 		height: 1.25rem;
 		border-radius: 3px;
-		cursor: pointer;
-		box-shadow: inset 0 0 0 1px #0006;
 	}
-	.sw.sel {
+	.swatch.sel {
 		box-shadow:
 			inset 0 0 0 1px #0006,
 			0 0 0 2px #7cf;
 	}
 	.none {
-		background:
-			conic-gradient(#3a3a3a 90deg, #262626 90deg 180deg, #3a3a3a 180deg 270deg, #262626 270deg)
-			0 0 / 8px 8px !important;
+		background: var(--checker) 0 0 / 8px 8px !important;
 	}
 	.hint {
 		font-size: 0.72rem;

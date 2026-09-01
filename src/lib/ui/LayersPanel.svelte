@@ -65,7 +65,7 @@
 	};
 
 	const flattenSprite = () => {
-		if (!sprite || sprite.layers.length <= 1) return;
+		if (!sprite) return;
 		form({
 			title: `Flatten "${sprite.name}"?`,
 			fields: [],
@@ -81,25 +81,15 @@
 		});
 	};
 
+	// names only: set_layers keeps each layer's hidden/base when an entry leaves them out
 	const moveLayer = (name: string, direction: 'up' | 'down') => {
 		if (!sprite) return;
-		const idx = sprite.layers.findIndex((l) => l.name === name);
-		if (idx === -1) return;
-		const targetIdx = direction === 'up' ? idx + 1 : idx - 1;
-		if (targetIdx < 0 || targetIdx >= sprite.layers.length) return;
-
-		const next = [...sprite.layers];
-		const temp = next[idx];
-		next[idx] = next[targetIdx];
-		next[targetIdx] = temp;
-
-		fs.set_layers(
-			next.map((l) => ({
-				name: l.name,
-				...(l.hidden && { hidden: true }),
-				...(l.base !== undefined && { base: l.base })
-			}))
-		);
+		const names = sprite.layers.map((l) => l.name);
+		const idx = names.indexOf(name);
+		const target = direction === 'up' ? idx + 1 : idx - 1;
+		if (idx < 0 || target < 0 || target >= names.length) return;
+		[names[idx], names[target]] = [names[target], names[idx]];
+		fs.set_layers(names);
 	};
 
 	const unlinkLayer = (name: string) => {
@@ -127,14 +117,13 @@
 		}
 	};
 
+	// bare names for everyone else: their base carries over through the same set_layers merge
 	const setBase = (name: string, base: number | true | undefined) => {
 		if (!sprite) return;
 		fs.set_layers(
-			sprite.layers.map((l) => ({
-				name: l.name,
-				...(l.hidden && { hidden: true }),
-				base: l.name === name ? base : l.base
-			}))
+			sprite.layers.map((l) =>
+				l.name === name && base !== undefined ? { name, base } : l.name
+			)
 		);
 	};
 
@@ -199,9 +188,6 @@
 		<!-- Top-to-bottom visual layer stack: highest index (top of stack) first -->
 		<div class="stack" role="list" aria-label="Layer Stack" data-testid="layer-stack">
 			{#each [...layers].reverse() as l, reverseIdx (l.name)}
-				{@const actualIdx = layers.length - 1 - reverseIdx}
-				{@const isTop = actualIdx === layers.length - 1}
-				{@const isBottom = actualIdx === 0}
 				{@const isSelected = activeLayer?.name === l.name}
 
 				<div
@@ -256,7 +242,7 @@
 					<div class="row-actions">
 						<button
 							class="icon-btn"
-							disabled={isTop}
+							disabled={reverseIdx === 0}
 							title="Move up (draw higher)"
 							onclick={(e) => {
 								e.stopPropagation();
@@ -268,7 +254,7 @@
 						</button>
 						<button
 							class="icon-btn"
-							disabled={isBottom}
+							disabled={reverseIdx === layers.length - 1}
 							title="Move down (draw lower)"
 							onclick={(e) => {
 								e.stopPropagation();
@@ -394,9 +380,6 @@
 					<button class="sub-btn" onclick={() => tileLayer(activeLayer.name)} title="Repeat layer horizontally">
 						Tile layer…
 					</button>
-					<button class="sub-btn" onclick={() => duplicateLayer(activeLayer.name)} title="Duplicate layer">
-						Duplicate
-					</button>
 				</div>
 			</section>
 		{/if}
@@ -499,9 +482,7 @@
 		border-radius: 2px;
 		overflow: hidden;
 		box-shadow: inset 0 0 0 1px #000a;
-		background:
-			conic-gradient(#3a3a3a 90deg, #262626 90deg 180deg, #3a3a3a 180deg 270deg, #262626 270deg)
-			0 0 / 6px 6px;
+		background: var(--checker) 0 0 / 6px 6px;
 		display: grid;
 		place-items: center;
 	}
