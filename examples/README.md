@@ -29,6 +29,15 @@ scripts are in the five case studies:
 
 Final count: **5 packages, 11 sets, 44 sprites, 32 animations.**
 
+## Templates
+
+Not every set should be drawn from a blank grid. **[The anthro8 paint-over template](iso-anthro8-template.md)**
+is a committed starting point: an 8-direction chibi mannequin (72 sprites, 16 animations) imported
+from existing spritesheets with `import_set`, then repainted pose by pose — every animation
+follows the repaint. Measured anatomy, the facing/eye ladder, two verified build paths (in-page
+and dependency-free Node), and the mirroring facts that decide when to paint four directions and
+when to paint eight.
+
 ## The constraint that shaped the whole run
 
 The obvious way to build several packages is several agents at once. That does
