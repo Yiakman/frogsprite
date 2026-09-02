@@ -6,7 +6,7 @@ added in `c105f40`. Ranked within each section by what actually cost time, not b
 
 ## Docs upgrade — API discovery
 
-**Done.** All four applied to [AGENTS.md](AGENTS.md), and every snippet added was run before it was
+**Done.** All four applied to [AGENTS.md](../AGENTS.md), and every snippet added was run before it was
 written down — the `iso_to_grid` one against the floor it claims to build.
 
 - **`zoom(n, { x, y })` takes a centre** — added to **Reviewing what you drew**, with the point that
@@ -20,7 +20,7 @@ written down — the `iso_to_grid` one against the floor it claims to build.
   `iso_to_grid(i * W, …)` doubles the step and gaps the tiles, `iso_to_grid(i, …)` quarters it and
   smears them. The first draft of that sentence had it backwards; checking against the running app
   is what caught it.
-- **`print_sprite`'s `rect`** — this one was **already documented**, under [Inspection](AGENTS.md#inspection),
+- **`print_sprite`'s `rect`** — this one was **already documented**, under [Inspection](../AGENTS.md#inspection),
   shape and example and all. The gap was narrower than filed: **Isometric** warned that
   `print_sprite` is cartesian and then stopped, without pointing at the window that solves it. Now
   it points, and pairs it with the `zoom` aim, since wanting one usually means wanting both.
@@ -29,7 +29,7 @@ written down — the `iso_to_grid` one against the floor it claims to build.
 
 1. ~~**No depth sorting.**~~ **Done** — a layer takes a `base`, the row in its own art where it
    meets the ground, and `flatten` composites entities by `base + dy` after the scenery. See
-   [Depth](AGENTS.md#depth). Sorting on the ground row is exact rather than approximate here, which
+   [Depth](../docs/layers.md#depth). Sorting on the ground row is exact rather than approximate here, which
    the section explains, so nothing needs to know `i` or `j`.
 
    Two things it left open, deliberately:
@@ -54,7 +54,7 @@ written down — the `iso_to_grid` one against the floor it claims to build.
    noted at the deferral in `shapes.ts`.
 
 3. ~~**`iso_box`'s `outline` is unusable on a tessellated run.**~~ **Done — docs only.** The note
-   now lives in the `iso_box` bullet under [Isometric](AGENTS.md#isometric), mirrored in the JSDoc.
+   now lives in the `iso_box` bullet under [Isometric](../docs/isometric.md), mirrored in the JSDoc.
    No code changed: `outline` is already optional, and omitting it is already the fix.
 
    **Both code options were rejected, and the first one was measured rather than argued.** Three runs

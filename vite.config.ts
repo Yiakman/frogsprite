@@ -11,15 +11,20 @@ const read = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url
  *
  * README.md leads; the rest are alphabetical.
  */
-const exampleDocs = (): string[] =>
-  readdirSync(new URL('./examples', import.meta.url))
+const dirDocs = (dir: string): string[] =>
+  readdirSync(new URL(`./${dir}`, import.meta.url))
     .filter((f) => f.endsWith('.md'))
     .sort((a, b) => (a === 'README.md' ? -1 : b === 'README.md' ? 1 : a.localeCompare(b)))
-    .map((f) => `examples/${f}`)
+    .map((f) => `${dir}/${f}`)
+
+/** Worked examples and topical reference pages, discovered the same way — a directory that has a
+ *  README leads with it; otherwise plain alphabetical. */
+const exampleDocs = (): string[] => dirDocs('examples')
+const referenceDocs = (): string[] => dirDocs('docs')
 
 /**
- * One llms.txt bullet per example, read out of the file itself: the `# title`, and the `> summary`
- * under it. That is the shape llms.txt already uses for the site as a whole, so an example carries
+ * One llms.txt bullet per document, read out of the file itself: the `# title`, and the `> summary`
+ * under it. That is the shape llms.txt already uses for the site as a whole, so a document carries
  * its own index entry rather than having one written about it somewhere else.
  */
 const indexEntry = (name: string): string => {
@@ -42,9 +47,12 @@ const llmsTxt = (): string => `# frogsprite
 Open the page and call commands on the global \`window.frogsprite\`. There is no API key, no server,
 and no build step — the editor runs entirely in the page and saves to localStorage.
 
-- [AGENTS.md](/AGENTS.md): the full command reference — packages, sets, sprites, painting, shapes,
-  grids, the 256-colour palette, animation, undo, image import, and the SVG/PNG/ICO/ZIP/
-  spritesheet exports.
+- [AGENTS.md](/AGENTS.md): the command reference — packages, sets, sprites, painting, shapes,
+  grids, the 256-colour palette, undo, and inspection.
+
+Reference — the deep material, one topic per page:
+
+${referenceDocs().map(indexEntry).join('\n')}
 
 Worked examples — complete sprite packages, each with the script that built it and notes on what the
 API rewards and where it pushes back:
@@ -73,7 +81,7 @@ Call \`frogsprite.help()\` in the page for the command list without leaving the 
  */
 function agentDocs(): Plugin {
   const files = (): Record<string, string> => ({
-    ...Object.fromEntries(['AGENTS.md', ...exampleDocs()].map((name) => [name, read(name)])),
+    ...Object.fromEntries(['AGENTS.md', ...referenceDocs(), ...exampleDocs()].map((name) => [name, read(name)])),
     'llms.txt': llmsTxt(),
   })
   return {

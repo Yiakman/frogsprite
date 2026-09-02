@@ -63,7 +63,7 @@ A frame can also carry an **effect** (invert, reduce to one hue, rotate, flip, d
 trail** (the frames before it, drawn underneath and dimmed), and a **transition** (scan in from the
 top or bottom, dissolve away, flatten to a silhouette with the next frame arriving over it). All
 three are applied when the frame is *drawn*, so the sprite underneath stays exactly as painted and
-the other animations sharing it are untouched. See [AGENTS.md](AGENTS.md#animation).
+the other animations sharing it are untouched. See [docs/animation.md](docs/animation.md).
 
 The timeline is a horizontal strip under the canvas. Click a thumbnail to hold that frame; the
 inspector below it is the effect tray (with per-layer overrides for `dx`/`dy`, `hidden`, `wrap`,
@@ -80,7 +80,7 @@ lands on the active layer; reading and exporting always show the whole stack. Hi
 where they overlap, and transparent is the hole that lets the layer below show through. There is no
 opacity or blend mode, because pixels are palette *indices* — there is nothing to average between
 index 3 and index 9. Reach for a layer when you want an outline you can redraw without disturbing
-the fill under it. See [AGENTS.md](AGENTS.md#layers).
+the fill under it. See [docs/layers.md](docs/layers.md).
 
 A layer can also hold a **sprite name** instead of pixels, and draw whatever that sprite currently
 looks like — `link_layer('tree', { dx: 8 })`. Repaint the tree and every layer linked to it follows,
@@ -93,7 +93,7 @@ parallax scroll is one sprite instead of one per frame: give each depth a layer,
 say where each one sits. A layer no frame mentions never moves, and a per-layer `rotate` turns a
 wheel without drawing a pose per frame. `tile_layer` makes a layer's repeat exact and `scroll_layer`
 writes the offsets, refusing any speed that would make the loop jump. See
-[AGENTS.md](AGENTS.md#moving-layers-per-frame--parallax).
+[docs/layers.md](docs/layers.md#moving-layers-per-frame--parallax).
 
 Sets, sprites, animations, frames and layers can all be **copied**. A copy lands in whatever is
 selected and takes an optional new name. `copy_sprite` is the only one that crosses sets, and only
@@ -124,8 +124,9 @@ the fastest way to draw a sprite; `shapes.circle()` and friends fill a whole for
 one undo step), with `{ fill: false }` for outlines; `reflect()` mirrors half the grid onto the
 other half; `print_sprite()` renders a sprite back as ASCII so an agent can check its own work.
 
-**[AGENTS.md](AGENTS.md) is the full command reference.** It is also served at `/AGENTS.md` (with a
-short `/llms.txt` summary) so an agent that lands on a deployed instance can find it.
+**[AGENTS.md](AGENTS.md) is the command reference**, with the deep material split by topic into
+[docs/](docs). Both are also served at `/AGENTS.md` and `/docs/…` (with a short `/llms.txt` index)
+so an agent that lands on a deployed instance can find them.
 
 ## Exporting
 

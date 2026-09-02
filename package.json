@@ -8,6 +8,7 @@
   "files": [
     "bin",
     "dist",
+    "docs",
     "README.md",
     "AGENTS.md"
   ],
