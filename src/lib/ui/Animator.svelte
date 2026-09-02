@@ -11,7 +11,16 @@
 	const frames = $derived(editor.frames);
 	const total = $derived(frames.reduce((a, f) => a + f.ms, 0));
 	const has = $derived(!!frames.length);
-	/** The frame under the playhead — what the canvas holds, and what clone pose copies. */
+	/** The frame under the playhead, or the frame inspected in the right panel if playback is stopped. */
+	const activeFrameIndex = $derived(
+		editor.frame >= 0
+			? editor.frame
+			: editor.inspectIndex >= 0 && editor.inspectIndex < frames.length
+				? editor.inspectIndex
+				: -1
+	);
+	const activeFrame = $derived(activeFrameIndex >= 0 ? frames[activeFrameIndex] : undefined);
+	/** The frame under the playhead — what the canvas holds. */
 	const held = $derived(editor.frame >= 0 ? frames[editor.frame] : undefined);
 
 	// object identity, so a drag-reorder moves the same cell rather than recycling by index
@@ -103,7 +112,7 @@
 	function clonePose() {
 		const anim = editor.anim;
 		if (!set || !anim) return;
-		const src = held?.sprite ?? editor.shown?.name;
+		const src = activeFrame?.sprite ?? editor.shown?.name;
 		if (!src) return;
 		const suggested = freeName(set.sprites, src);
 		form({
@@ -111,7 +120,7 @@
 			fields: [{ name: 'name', required: true, value: suggested, placeholder: suggested }],
 			submit: (v) => {
 				const name = v.name.trim();
-				const ms = held?.ms ?? 120;
+				const ms = activeFrame?.ms ?? 120;
 				fs.batch(() => {
 					fs.clone_sprite(src, name);
 					anim.frames.push({ sprite: name, ms });
@@ -123,8 +132,8 @@
 
 	function duplicateFrame() {
 		const anim = editor.anim;
-		if (!anim || editor.frame < 0) return;
-		const at = editor.frame;
+		if (!anim || activeFrameIndex < 0) return;
+		const at = activeFrameIndex;
 		run(() => {
 			fs.copy_frames(anim.name, { which: at, to: anim.name, at: at + 1 });
 			editor.viewFrame(at + 1);
@@ -274,13 +283,13 @@
 				>
 				<button
 					onclick={clonePose}
-					disabled={!editor.anim || !(held?.sprite || editor.shown)}
+					disabled={!editor.anim || !(activeFrame?.sprite || editor.shown)}
 					title="Copy this pose into a new sprite and append it as the next frame"
 					data-testid="clone-pose">clone pose</button
 				>
 				<button
 					onclick={duplicateFrame}
-					disabled={editor.frame < 0}
+					disabled={activeFrameIndex < 0}
 					title="Insert a copy of this frame after it"
 					data-testid="duplicate-frame">duplicate</button
 				>
