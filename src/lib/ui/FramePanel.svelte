@@ -637,6 +637,11 @@
 			<h2>Frame</h2>
 			<p class="none">Click a frame in the timeline to inspect and configure it here.</p>
 		</div>
+	{:else}
+		<div class="wrap">
+			<h2>Frame</h2>
+			<p class="none">No frames in this animation. Add a frame to inspect and configure effects.</p>
+		</div>
 	{/if}
 {/if}
 
