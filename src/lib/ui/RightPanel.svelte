@@ -1,15 +1,15 @@
 <script lang="ts">
 	import Palette from './Palette.svelte';
 	import LayersPanel from './LayersPanel.svelte';
+	import FramePanel from './FramePanel.svelte';
 	import { activeSwatches, PALETTE } from '../core/palette';
 	import { isLinked } from '../core/layers';
 	import { editor, pixelsOf } from '../state/store.svelte';
 
-	// Exclusive accordion: only one section open at a time
-	let openSection = $state<'palette' | 'layers'>('palette');
-
-	const toggle = (section: 'palette' | 'layers') => {
-		openSection = section;
+	// Exclusive accordion: only one section open at a time. Which one lives in the store (a view
+	// setting) so picking a frame can bring the Frame section forward from where the pick happens.
+	const toggle = (section: 'palette' | 'frame' | 'layers') => {
+		editor.panelSection = section;
 	};
 
 	const working = $derived.by(() => (editor.swatchSet ? activeSwatches() : null));
@@ -75,41 +75,65 @@
 	<!-- Accordion: only one section is open at a time -->
 	<div class="accordion">
 		<!-- Section: Palette -->
-		<section class="section palette-section" class:open={openSection === 'palette'}>
+		<section class="section palette-section" class:open={editor.panelSection === 'palette'}>
 			<button
 				class="section-header"
-				class:active={openSection === 'palette'}
+				class:active={editor.panelSection === 'palette'}
 				onclick={() => toggle('palette')}
 				data-testid="section-palette"
-				aria-expanded={openSection === 'palette'}
+				aria-expanded={editor.panelSection === 'palette'}
 			>
-				<span class="arrow">{openSection === 'palette' ? '▾' : '▸'}</span>
+				<span class="arrow">{editor.panelSection === 'palette' ? '▾' : '▸'}</span>
 				<span class="title">🎨 Palette</span>
 				<span class="meta-hint">256 colours</span>
 			</button>
-			{#if openSection === 'palette'}
+			{#if editor.panelSection === 'palette'}
 				<div class="section-content">
 					<Palette />
 				</div>
 			{/if}
 		</section>
 
-		<!-- Section: Layers -->
-		<section class="section layers-section" class:open={openSection === 'layers'}>
+		<!-- Section: Frame -->
+		<section class="section frame-section" class:open={editor.panelSection === 'frame'}>
 			<button
 				class="section-header"
-				class:active={openSection === 'layers'}
+				class:active={editor.panelSection === 'frame'}
+				onclick={() => toggle('frame')}
+				data-testid="section-frame"
+				aria-expanded={editor.panelSection === 'frame'}
+			>
+				<span class="arrow">{editor.panelSection === 'frame' ? '▾' : '▸'}</span>
+				<span class="title">🎞 Frame</span>
+				{#if editor.inspectIndex >= 0}
+					<span class="badge" title="Frame {editor.inspectIndex + 1} is open for inspection"
+						>#{editor.inspectIndex + 1}</span
+					>
+				{/if}
+			</button>
+			{#if editor.panelSection === 'frame'}
+				<div class="section-content">
+					<FramePanel />
+				</div>
+			{/if}
+		</section>
+
+		<!-- Section: Layers -->
+		<section class="section layers-section" class:open={editor.panelSection === 'layers'}>
+			<button
+				class="section-header"
+				class:active={editor.panelSection === 'layers'}
 				onclick={() => toggle('layers')}
 				data-testid="section-layers"
-				aria-expanded={openSection === 'layers'}
+				aria-expanded={editor.panelSection === 'layers'}
 			>
-				<span class="arrow">{openSection === 'layers' ? '▾' : '▸'}</span>
+				<span class="arrow">{editor.panelSection === 'layers' ? '▾' : '▸'}</span>
 				<span class="title">📑 Layers</span>
 				{#if layerCount > 0}
 					<span class="badge" title="{layerCount} layer{layerCount === 1 ? '' : 's'}">{layerCount}</span>
 				{/if}
 			</button>
-			{#if openSection === 'layers'}
+			{#if editor.panelSection === 'layers'}
 				<div class="section-content">
 					<LayersPanel />
 				</div>
@@ -225,6 +249,10 @@
 	}
 	.palette-section.open .section-content {
 		flex: none;
+	}
+	.frame-section.open {
+		flex: 1;
+		min-height: 0;
 	}
 	.layers-section.open {
 		flex: 1;

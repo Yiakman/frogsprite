@@ -63,6 +63,23 @@ class Editor {
 	}
 	/** index into the active animation's frames, or -1 when not looking at the animation at all */
 	frame = $state(-1);
+	/**
+	 * The frame whose details the right panel shows, held by object identity rather than index so a
+	 * drag-reorder keeps pointing at the same frame and an undo or delete that rebuilds the list
+	 * closes the panel instead of silently re-pointing it. Deliberately separate from `frame`:
+	 * playback moves the playhead, the panel keeps showing the frame you clicked.
+	 */
+	inspect = $state<Frame | undefined>(undefined);
+	/** Index of `inspect` in the active animation, or -1 once it is not on the list any more. */
+	get inspectIndex(): number {
+		return this.inspect ? this.frames.indexOf(this.inspect) : -1;
+	}
+	/**
+	 * Which right-panel accordion section is open — a view setting like `zoom`, not persisted.
+	 * Picking a frame flips it to 'frame' (in viewFrame/step), so the details follow the click
+	 * without any component having to watch the store.
+	 */
+	panelSection = $state<'palette' | 'frame' | 'layers'>('palette');
 	/** sub-step within the current frame — only a frame with a transition ever has more than one */
 	phase = $state(0);
 	/** true only while the timer is advancing frames — paused still holds a frame */
@@ -265,10 +282,12 @@ class Editor {
 		const n = anim.frames.length;
 		this.frame = this.frame < 0 ? (delta > 0 ? 0 : n - 1) : ((this.frame + delta) % n + n) % n;
 		this.#hold(anim.frames[this.frame]);
+		this.inspect = anim.frames[this.frame];
+		this.panelSection = 'frame';
 		this.#syncSelection();
 	}
 
-	/** Jump straight to one frame and hold there. */
+	/** Jump straight to one frame and hold there — and inspect it in the frame panel. */
 	viewFrame(i: number) {
 		const anim = this.#requireFrames();
 		if (!Number.isInteger(i) || i < 0 || i >= anim.frames.length)
@@ -277,6 +296,8 @@ class Editor {
 		this.running = false;
 		this.frame = i;
 		this.#hold(anim.frames[i]);
+		this.inspect = anim.frames[i];
+		this.panelSection = 'frame';
 		this.#syncSelection();
 	}
 
@@ -287,6 +308,7 @@ class Editor {
 			playback: {
 				animation: this.anim?.name ?? null,
 				frame: this.frame,
+				inspecting: this.inspectIndex,
 				running: this.running,
 				showing: this.shown?.name ?? null
 			},
