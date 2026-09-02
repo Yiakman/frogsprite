@@ -20,8 +20,6 @@
 				: -1
 	);
 	const activeFrame = $derived(activeFrameIndex >= 0 ? frames[activeFrameIndex] : undefined);
-	/** The frame under the playhead — what the canvas holds. */
-	const held = $derived(editor.frame >= 0 ? frames[editor.frame] : undefined);
 
 	// object identity, so a drag-reorder moves the same cell rather than recycling by index
 	const ids = new WeakMap<Frame, number>();

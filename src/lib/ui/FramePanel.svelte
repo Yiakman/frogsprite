@@ -76,7 +76,14 @@
 		if (target < 0) return;
 		try {
 			fs.set_effects(scope === 'all' ? '*' : target, patch);
-			// If this frame is currently held on canvas, keep transition phase in sync with sub-steps
+			// When playback is off, hold the edited frame on the canvas so every change previews
+			// there. While playing, leave the loop alone — the panel edits the frame without
+			// hijacking the run; the change shows when the loop reaches that frame.
+			if (!editor.running && editor.frame !== target) editor.viewFrame(target);
+			// A held frame shows its transition finished, so a transition you just set is judged at
+			// the one moment it looks like none at all — land in the middle once; the scrubber (and
+			// the loop) take over from there. Gaining a transition also changes the sub-step count,
+			// which can leave `phase` stranded past the new end.
 			if (editor.frame === target) {
 				const f = editor.frames[target];
 				if (patch.transition && f && set) editor.phase = Math.floor((steps(f, set.grid) - 1) / 2);
@@ -633,12 +640,12 @@
 			</div>
 		</div>
 	{:else if frames.length}
-		<div class="wrap">
+		<div class="wrap" data-testid="frame-panel">
 			<h2>Frame</h2>
 			<p class="none">Click a frame in the timeline to inspect and configure it here.</p>
 		</div>
 	{:else}
-		<div class="wrap">
+		<div class="wrap" data-testid="frame-panel">
 			<h2>Frame</h2>
 			<p class="none">No frames in this animation. Add a frame to inspect and configure effects.</p>
 		</div>
