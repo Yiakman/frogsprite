@@ -63,6 +63,24 @@ class Editor {
 	}
 	/** index into the active animation's frames, or -1 when not looking at the animation at all */
 	frame = $state(-1);
+	/**
+	 * Index of the frame whose details the right panel shows, or -1 when none is inspected.
+	 * Deliberately separate from `frame`: playback moves the playhead, the panel keeps showing
+	 * the frame you clicked. Survives edits, batch effects, presets, and undo/redo.
+	 */
+	inspectIndex = $state(-1);
+	/** The frame currently inspected in the right panel, or undefined if outside range. */
+	get inspect(): Frame | undefined {
+		return this.inspectIndex >= 0 && this.inspectIndex < this.frames.length
+			? this.frames[this.inspectIndex]
+			: undefined;
+	}
+	/**
+	 * Which right-panel accordion section is open — a view setting like `zoom`, not persisted.
+	 * Picking a frame flips it to 'frame' (in viewFrame/step), so the details follow the click
+	 * without any component having to watch the store.
+	 */
+	panelSection = $state<'palette' | 'frame' | 'layers'>('palette');
 	/** sub-step within the current frame — only a frame with a transition ever has more than one */
 	phase = $state(0);
 	/** true only while the timer is advancing frames — paused still holds a frame */
@@ -265,10 +283,12 @@ class Editor {
 		const n = anim.frames.length;
 		this.frame = this.frame < 0 ? (delta > 0 ? 0 : n - 1) : ((this.frame + delta) % n + n) % n;
 		this.#hold(anim.frames[this.frame]);
+		this.inspectIndex = this.frame;
+		this.panelSection = 'frame';
 		this.#syncSelection();
 	}
 
-	/** Jump straight to one frame and hold there. */
+	/** Jump straight to one frame and hold there — and inspect it in the frame panel. */
 	viewFrame(i: number) {
 		const anim = this.#requireFrames();
 		if (!Number.isInteger(i) || i < 0 || i >= anim.frames.length)
@@ -277,6 +297,8 @@ class Editor {
 		this.running = false;
 		this.frame = i;
 		this.#hold(anim.frames[i]);
+		this.inspectIndex = i;
+		this.panelSection = 'frame';
 		this.#syncSelection();
 	}
 
@@ -287,6 +309,7 @@ class Editor {
 			playback: {
 				animation: this.anim?.name ?? null,
 				frame: this.frame,
+				inspecting: this.inspectIndex,
 				running: this.running,
 				showing: this.shown?.name ?? null
 			},

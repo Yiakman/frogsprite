@@ -1054,8 +1054,8 @@ into what is there — so `{ fx: { hue: 'red' } }` keeps the `flipX` sitting bes
 `{ fx: { invert: false } }` turns off just that one key. Effects are uniform across an animation far
 more often than not, so reach for `'*'` before writing a per-frame loop.
 
-This is exactly what the timeline's effect tray calls, so anything you can do by hand you can do from
-here, with the same undo and the same validation.
+This is exactly what the frame panel in the right column calls, so anything you can do by hand you
+can do from here, with the same undo and the same validation.
 
 #### Frame effects
 
@@ -1142,10 +1142,12 @@ Transport — the canvas shows whichever frame you land on, and the sidebar sele
 - `step(delta = 1)` — move one frame at a time, wrapping at both ends; `step(-1)` goes back
 - `view_frame(i)` — jump straight to frame `i` (0-based) and hold there — the way to inspect one frame
 
-`state().playback` reports `{ animation, frame, running, showing }` so you can check where you are.
+`state().playback` reports `{ animation, frame, inspecting, running, showing }` so you can check
+where you are — `frame` is the playhead, `inspecting` the frame the panel has open.
 In the UI the timeline is a **horizontal strip** under the canvas — frames read left to right, like
-time. Click a thumbnail to `view_frame`; the **inspector** under the strip edits only that held
-frame (sprite, duration, the same `set_effects` tray as above with per-layer overrides for `dx`/`dy`,
+time. Click a thumbnail to `view_frame`; the **frame panel** in the right column then shows that
+frame's details (sprite, duration, the same `set_effects` controls as above with per-layer overrides
+for `dx`/`dy`,
 `hidden`, `wrap`, `hue`, `inv`, `flip`, `rotate` and `base`, plus a `this frame | all frames`
 switch). A frame with a transition also gets a **reveal** slider, which scrubs `phase` so you can
 see the middle of a scan or a dissolve while authoring it. **Clone pose** copies the drawing into a
@@ -1154,7 +1156,7 @@ a contact-sheet overlay of the whole clip (`contact_sheet({ show: true })`). Lef
 `.`) step while a frame is held; Enter plays or pauses; **F3** / the canvas **onion** button ghosts
 the previous (red) and next (blue) frames under the held one — an authoring overlay, not a drawn
 `trail`. Whole-animation recipes (Comet, Ghost, Flash, Fade in, Hue cycle, Clear effects) live in
-the inspector.
+the frame panel.
 
 ### Export
 
