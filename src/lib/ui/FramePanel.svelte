@@ -411,7 +411,7 @@
 			</div>
 
 			{#if picked.trail && picked.transition?.kind === 'silhouette'}
-				<!-- documented in AGENTS.md, which is no use at the moment you click it -->
+				<!-- documented in docs/animation.md, which is no use at the moment you click it -->
 				<p class="warn" data-testid="trail-silhouette-warning">
 					Silhouette flattens the trail too — these {picked.trail.frames} ghosts go flat, not
 					dim. Put the trail on the frames either side to keep a visible tail.

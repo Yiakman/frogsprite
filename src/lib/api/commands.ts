@@ -1334,7 +1334,7 @@ const api = {
 	 *   (the frame flattened to one colour with the next one dissolving in over it;
 	 *   `{ kind: 'silhouette', color }` picks the colour)
 	 *
-	 * See AGENTS.md §Animation for the full rules.
+	 * See docs/animation.md for the full rules.
 	 */
 	set_animation: mut(function (frames: Frame[], name?: string) {
 		const set = editor.requireSet();
@@ -2206,7 +2206,7 @@ const shapes = {
 	 * tessellated run of them reads as separate objects — omit it there and let the face shades
 	 * carry the form. `{ normals: true }` writes the `.n` sibling as three facets (`flat` / `SW` /
 	 * `SE`); a transparent face punches a hole, same as the art. `normals_from_sprite` would bevel
-	 * the silhouette into a pillow. See Isometric in AGENTS.md.
+	 * the silhouette into a pillow. See docs/isometric.md.
 	 */
 	iso_box: mut(function (
 		cx: number,
