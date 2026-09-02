@@ -12,7 +12,7 @@
 	/** The frame this panel shows — whatever was last clicked in the timeline, not the playhead.
 	 * While playback runs the playhead moves; this stays put, so the panel never flickers. */
 	const at = $derived(editor.inspectIndex);
-	const picked = $derived(at >= 0 ? frames[at] : undefined);
+	const picked = $derived(at >= 0 && at < frames.length ? frames[at] : undefined);
 	const subSteps = $derived(picked && set ? steps(picked, set.grid) : 1);
 
 	// Inspected sprite's layers & active layer inspection
@@ -72,22 +72,15 @@
 	 * validation and persistence. `all` sends '*', which is one undo step for the batch.
 	 */
 	function apply(patch: EffectPatch) {
-		// One read, up front: set_effects swaps the frame object, which would make a *second* read of
-		// the `at` derived (index of the held object) see -1 before viewFrame has re-picked the new one.
 		const target = at;
 		if (target < 0) return;
 		try {
 			fs.set_effects(scope === 'all' ? '*' : target, patch);
-			// Editing holds the frame on the canvas, so every change previews there — and picking a
-			// different frame below re-holds with it. Gaining or losing a transition changes how many
-			// sub-steps the frame has, which leaves `phase` stale — re-hold so a held frame keeps
-			// showing its transition *finished* rather than stranded part-way through one it acquired.
-			editor.viewFrame(target);
-			// …except right after setting one. A held frame shows its transition finished, so judging
-			// a transition you have only ever seen completed is judging the one moment it looks like
-			// no transition at all. Land in the middle once; the scrubber is yours after that.
-			const f = editor.frames[target];
-			if (patch.transition && f && set) editor.phase = Math.floor((steps(f, set.grid) - 1) / 2);
+			// If this frame is currently held on canvas, keep transition phase in sync with sub-steps
+			if (editor.frame === target) {
+				const f = editor.frames[target];
+				if (patch.transition && f && set) editor.phase = Math.floor((steps(f, set.grid) - 1) / 2);
+			}
 		} catch (e) {
 			notify((e as Error).message);
 		}
@@ -168,6 +161,9 @@
 		checkpoint();
 		anim.frames.splice(i, 1);
 		if (editor.frame >= anim.frames.length) editor.stop();
+		if (editor.inspectIndex >= anim.frames.length) {
+			editor.inspectIndex = anim.frames.length - 1;
+		}
 		editor.save();
 	}
 

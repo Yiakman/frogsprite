@@ -135,16 +135,25 @@
 		const anim = editor.anim;
 		if (!anim || from === to) return;
 		const heldAt = editor.frame;
+		const inspectAt = editor.inspectIndex;
 		checkpoint();
 		const [item] = anim.frames.splice(from, 1);
 		anim.frames.splice(to, 0, item);
 		editor.save();
-		if (heldAt < 0) return;
-		let next = heldAt;
-		if (heldAt === from) next = to;
-		else if (from < to && heldAt > from && heldAt <= to) next = heldAt - 1;
-		else if (from > to && heldAt >= to && heldAt < from) next = heldAt + 1;
-		if (next !== heldAt) editor.viewFrame(next);
+		if (heldAt >= 0) {
+			let next = heldAt;
+			if (heldAt === from) next = to;
+			else if (from < to && heldAt > from && heldAt <= to) next = heldAt - 1;
+			else if (from > to && heldAt >= to && heldAt < from) next = heldAt + 1;
+			if (next !== heldAt) editor.viewFrame(next);
+		}
+		if (inspectAt >= 0) {
+			let nextInspect = inspectAt;
+			if (inspectAt === from) nextInspect = to;
+			else if (from < to && inspectAt > from && inspectAt <= to) nextInspect = inspectAt - 1;
+			else if (from > to && inspectAt >= to && inspectAt < from) nextInspect = inspectAt + 1;
+			editor.inspectIndex = nextInspect;
+		}
 	}
 
 	let dragging = $state<number | null>(null);

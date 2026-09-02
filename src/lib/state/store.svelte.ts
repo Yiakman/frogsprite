@@ -64,15 +64,16 @@ class Editor {
 	/** index into the active animation's frames, or -1 when not looking at the animation at all */
 	frame = $state(-1);
 	/**
-	 * The frame whose details the right panel shows, held by object identity rather than index so a
-	 * drag-reorder keeps pointing at the same frame and an undo or delete that rebuilds the list
-	 * closes the panel instead of silently re-pointing it. Deliberately separate from `frame`:
-	 * playback moves the playhead, the panel keeps showing the frame you clicked.
+	 * Index of the frame whose details the right panel shows, or -1 when none is inspected.
+	 * Deliberately separate from `frame`: playback moves the playhead, the panel keeps showing
+	 * the frame you clicked. Survives edits, batch effects, presets, and undo/redo.
 	 */
-	inspect = $state<Frame | undefined>(undefined);
-	/** Index of `inspect` in the active animation, or -1 once it is not on the list any more. */
-	get inspectIndex(): number {
-		return this.inspect ? this.frames.indexOf(this.inspect) : -1;
+	inspectIndex = $state(-1);
+	/** The frame currently inspected in the right panel, or undefined if outside range. */
+	get inspect(): Frame | undefined {
+		return this.inspectIndex >= 0 && this.inspectIndex < this.frames.length
+			? this.frames[this.inspectIndex]
+			: undefined;
 	}
 	/**
 	 * Which right-panel accordion section is open — a view setting like `zoom`, not persisted.
@@ -282,7 +283,7 @@ class Editor {
 		const n = anim.frames.length;
 		this.frame = this.frame < 0 ? (delta > 0 ? 0 : n - 1) : ((this.frame + delta) % n + n) % n;
 		this.#hold(anim.frames[this.frame]);
-		this.inspect = anim.frames[this.frame];
+		this.inspectIndex = this.frame;
 		this.panelSection = 'frame';
 		this.#syncSelection();
 	}
@@ -296,7 +297,7 @@ class Editor {
 		this.running = false;
 		this.frame = i;
 		this.#hold(anim.frames[i]);
-		this.inspect = anim.frames[i];
+		this.inspectIndex = i;
 		this.panelSection = 'frame';
 		this.#syncSelection();
 	}
