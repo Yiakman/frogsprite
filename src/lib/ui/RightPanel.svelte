@@ -10,6 +10,14 @@
 	// setting) so picking a frame can bring the Frame section forward from where the pick happens.
 	const toggle = (section: 'palette' | 'frame' | 'layers') => {
 		editor.panelSection = section;
+		if (
+			section === 'frame' &&
+			(editor.inspectIndex < 0 || editor.inspectIndex >= editor.frames.length) &&
+			editor.frames.length
+		) {
+			editor.inspectIndex =
+				editor.frame >= 0 && editor.frame < editor.frames.length ? editor.frame : 0;
+		}
 	};
 
 	const working = $derived.by(() => (editor.swatchSet ? activeSwatches() : null));
@@ -105,7 +113,7 @@
 			>
 				<span class="arrow">{editor.panelSection === 'frame' ? '▾' : '▸'}</span>
 				<span class="title">🎞 Frame</span>
-				{#if editor.inspectIndex >= 0}
+				{#if editor.inspectIndex >= 0 && editor.inspectIndex < editor.frames.length}
 					<span class="badge" title="Frame {editor.inspectIndex + 1} is open for inspection"
 						>#{editor.inspectIndex + 1}</span
 					>
