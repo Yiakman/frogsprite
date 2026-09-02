@@ -58,6 +58,18 @@ clip (`fx` and layer arrangements are invisible to `print_sprite`).
 Layers, motion trails, transitions and parallax are not the default — see [Layers](#layers) and [Animation](#animation).
 `frogsprite.help()` lists every command. The rest of this file is the reference.
 
+**If a stock template fits the task, start from it instead of a blank grid.** The repo ships an
+8-direction chibi mannequin — 8 standing poses and an 8-frame walk per direction, 72 sprites and
+16 animations, two colours, importable in one line. Repaint the pose sprites and every animation
+follows, because frames reference sprites by name:
+
+```js
+await frogsprite.import_set(await (await fetch('/templates/anthro8.json')).text());
+```
+
+[examples/iso-anthro8-template.md](examples/iso-anthro8-template.md) has the measured anatomy, the
+facing/eye ladder, and the paint-over workflow.
+
 ## Colours
 
 256 fixed entries:
@@ -897,6 +909,17 @@ the lift the section's last note is about.
 
 A floor larger than the grid is cut into sections and composed, one lattice shared between them —
 see [Scenes bigger than the canvas](#scenes-bigger-than-the-canvas).
+
+**A stock paint-over template** ships with the repo: an 8-direction chibi mannequin (8 standing
+poses + 8-frame walk per direction, 72 sprites / 16 animations) at
+`/templates/anthro8.json` — import it and repaint the pose sprites; every animation follows:
+
+```js
+await frogsprite.import_set(await (await fetch('/templates/anthro8.json')).text());
+```
+
+See [examples/iso-anthro8-template.md](examples/iso-anthro8-template.md) for the measured anatomy,
+the facing/eye ladder, the sheet-to-set pipeline and the verification record.
 
 ### Importing an image
 
