@@ -2,8 +2,6 @@
 
 > 2:1 dimetric drawing: floors, boxes, face projection and lattice placement — plus the template built on them.
 
-#### Isometric
-
 2:1 dimetric: two pixels across per one pixel down. Draw a floor with `iso_fill`; a single diamond
 or a box with `iso_tile` / `iso_box`; texture a face with `project_face`; place with `iso_to_grid`.
 

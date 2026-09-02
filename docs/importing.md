@@ -2,8 +2,6 @@
 
 > Getting raster art onto the palette grid: the options, cropping, flat backgrounds, and the two routes an agent with no file picker can use.
 
-### Importing an image
-
 ```js
 await frogsprite.import_image(source, { fit: 'cover', newSprite: 'logo' });
 ```
@@ -15,7 +13,7 @@ palette. **Async — always `await` it.**
 GIF, WebP and SVG all work; an SVG needs `width` and `height` on its `<svg>` tag, since a lone
 `viewBox` gives nothing to size the import from.
 
-#### Getting an image in when you have no file picker
+## Getting an image in when you have no file picker
 
 You cannot operate the file dialog, so use one of these two. Both are verified to work.
 
@@ -69,7 +67,7 @@ an image"*; and a random image URL off the web, which needs CORS headers and usu
 Returns `{ sprite, grid, colours }`. In the UI: the **Import image…** button, or drop/paste an image
 onto the canvas — those create a new sprite named after the file.
 
-#### Importing part of an image
+## Importing part of an image
 
 `crop` names the region to take, in the coordinates of the source image itself (before any internal
 downscaling), and stands in for `trim` — a region you chose by hand is not one an auto-trim should
@@ -84,7 +82,7 @@ await frogsprite.import_image(sheet, { crop: { x: 64, y: 0, w: 32, h: 32 }, newS
 That is also how you slice a sprite sheet: one call per cell, same source, a different `crop` and
 `newSprite` each time.
 
-#### Art on a flat background
+## Art on a flat background
 
 A JPEG or a PNG saved without alpha has no transparency to read, so the page it was drawn on comes in
 as an opaque slab. `transparent` names that background colour and drops those source pixels *before*

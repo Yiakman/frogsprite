@@ -2,8 +2,6 @@
 
 > One drawing in many places: the layer stack, linked layers, depth sorting, parallax that loops, and maps bigger than the canvas.
 
-### Layers
-
 A sprite is a stack of layers composited bottom to top, and **one layer is the ordinary case**. A
 fresh sprite has a single `layer-0` and behaves exactly as sprites did before layers existed, so you
 can ignore this whole section until you want an outline you can redraw without disturbing the fill
@@ -89,7 +87,7 @@ frogsprite.print_sprite();                          // always the composited sta
 frogsprite.print_sprite(undefined, 'outline');      // …unless you name a layer
 ```
 
-#### Linked layers — one drawing, many places
+## Linked layers — one drawing, many places
 
 A layer normally holds pixels. A **linked** layer holds a sprite *name* instead, and draws whatever
 that sprite currently looks like. Change the original and every layer linked to it changes too —
@@ -146,7 +144,7 @@ Reach for `stamp` instead when you want a one-off you will then paint over: it c
 the connection is gone. `link_layer` is for anything you will still edit, or repeat.
 
 
-#### Depth
+## Depth
 
 A stack composites bottom to top, which is the wrong order for a scene drawn in perspective: a
 character on a layer above the floor is in front of *everything*, so he can never walk behind a
@@ -187,7 +185,7 @@ Two things it deliberately does not do:
   layers: { hero: { dx, dy: dy - jump, base: 32 + jump } }   // rises, stays at the same depth
   ```
 
-#### Moving layers per frame — parallax
+## Moving layers per frame — parallax
 
 A frame names a sprite, but it can also say **where that sprite's layers sit for this frame only**.
 That is what makes a scrolling background one sprite rather than one sprite per frame:
@@ -335,7 +333,7 @@ does not keep sliding the layer down.
 frogsprite.move_layers(cells, { path: [[0, 0], [-1, 0]], unit: 128 });   // the view travels east
 ```
 
-#### Scenes bigger than the canvas
+## Scenes bigger than the canvas
 
 A sprite is clipped to its grid, so a map larger than one screen cannot be *drawn* — it has to be
 composed. Cut it into sections, one sprite each, and link them into a view sprite on a cell lattice:
@@ -412,7 +410,7 @@ await frogsprite.export_spritesheet({ cols, scale: 1, download: true });   // 2 
 That doubles as the check on everything above: a seam that does not line up is a visible jog across a
 cell boundary, in one picture.
 
-#### Stamping vs. arranging
+## Stamping vs. arranging
 
 Both put a picture somewhere else. Only one of them stays connected to the original.
 

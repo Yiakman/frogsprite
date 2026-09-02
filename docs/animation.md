@@ -2,8 +2,6 @@
 
 > Animations over shared sprites, frame effects, motion trails, transitions, and patching effects without rewriting frames.
 
-### Animation
-
 A set holds as many animations as you like, all over the same sprites.
 
 - `new_animation(name)` — add one and select it
@@ -21,7 +19,7 @@ set_animation([
 ]);
 ```
 
-#### Changing effects without rewriting the frames
+## Changing effects without rewriting the frames
 
 `set_animation` replaces a whole list. To change only the effects on frames that already exist:
 
@@ -43,7 +41,7 @@ more often than not, so reach for `'*'` before writing a per-frame loop.
 This is exactly what the frame panel in the right column calls, so anything you can do by hand you
 can do from here, with the same undo and the same validation.
 
-#### Frame effects
+## Frame effects
 
 `fx` is applied **when the frame is drawn**, never to the sprite — that is what lets the same sprite
 sit in two animations looking different in each. Applied in a fixed order: invert → hue → flip →
@@ -62,7 +60,7 @@ fail in that call, naming what is legal, rather than producing a wheel that neve
 damaged data still strips them. `rotate: 0` is dropped as a no-op, so don't expect it back from
 `state()`.
 
-#### Motion trails
+## Motion trails
 
 `trail` draws the frames *before* this one underneath it, dimmed — the earlier positions of a moving
 thing, where it actually was.
@@ -101,7 +99,7 @@ The rules worth knowing:
   with `hue`, which keeps each pixel's brightness, a grey-ramp sprite through
   `{ hue: 'red' }` + a trail comes out as a red comet that fades to `#330000`.
 
-#### Transitions
+## Transitions
 
 `transition` plays **over the frame's own `ms`**, so it costs no extra time: the frame's slot is
 subdivided (never finer than ~60fps, never finer than the grid) and redrawn as it goes.

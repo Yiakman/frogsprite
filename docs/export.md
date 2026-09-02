@@ -2,8 +2,6 @@
 
 > The three export scopes — sprite stills, animation clips, whole projects — and every format: SVG, PNG, ICO, APNG, spritesheet, ZIP.
 
-### Export
-
 Each returns its data (and also downloads a file when passed `{ download: true }`).
 
 Exports operate at three distinct scopes — know which you want:

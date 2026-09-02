@@ -23,8 +23,8 @@ const exampleDocs = (): string[] => dirDocs('examples')
 const referenceDocs = (): string[] => dirDocs('docs')
 
 /**
- * One llms.txt bullet per example, read out of the file itself: the `# title`, and the `> summary`
- * under it. That is the shape llms.txt already uses for the site as a whole, so an example carries
+ * One llms.txt bullet per document, read out of the file itself: the `# title`, and the `> summary`
+ * under it. That is the shape llms.txt already uses for the site as a whole, so a document carries
  * its own index entry rather than having one written about it somewhere else.
  */
 const indexEntry = (name: string): string => {
